@@ -353,10 +353,14 @@
     </div>
   </div>
 
+  <div id="submitted-lock-banner" style="display:none;background:#fdf3e7;border:1px solid #e8c99a;color:#8a6d1f;border-radius:var(--radius);padding:12px 16px;font-size:13px;line-height:1.5;"></div>
+
   <div>
     <h1>Trade Confirmation Table Generator</h1>
-    <p class="subtitle">Fill in the details below, generate the table, then copy it straight into your confirmation email — borders and "|" separators included.</p>
+    <p class="subtitle" id="page-subtitle">Fill in the details below, generate the table, then copy it straight into your confirmation email — borders and "|" separators included.</p>
   </div>
+
+  <div id="agreement-form-section" style="display:flex;flex-direction:column;gap:24px;">
 
   <div class="card">
     <div class="card-title-row">
@@ -408,6 +412,8 @@
 
   <div id="validation-warning" class="warning-box"></div>
 
+  </div>
+
   <div id="output-section" class="card">
     <div class="output-header">
       <p class="card-title" style="margin:0;">Preview</p>
@@ -418,7 +424,7 @@
     <p style="font-size:12px;color:var(--text-secondary);margin:0;">Tip: make sure your email is in rich text / HTML mode (not "plain text") before pasting, or the borders and black dividers won't show.</p>
   </div>
 
-  <div class="card">
+  <div class="card" id="my-history-card">
     <p class="card-title">My saved confirmations</p>
     <div id="history-list"><p style="font-size:13px;color:var(--text-secondary);">Loading...</p></div>
   </div>
@@ -644,6 +650,18 @@ async function loadUserRoles(){
 }
 function applyRoleUi(){
   document.getElementById('user-role-label').textContent = ' · ' + ROLE_LABELS[currentUserRole];
+  const isUserRole = currentUserRole === 'user';
+  // Only plain Users create/submit agreements. Every other role (admin1/2/3,
+  // superadmin) is here purely to review: they see the generated-table
+  // preview (when they click "View" from a queue/list), the Approval queue,
+  // and the full "All confirmations" list — never the creation form.
+  document.getElementById('agreement-form-section').style.display = isUserRole ? 'flex' : 'none';
+  document.getElementById('my-history-card').style.display = isUserRole ? 'block' : 'none';
+  document.getElementById('draft-status').style.display = isUserRole ? 'inline' : 'none';
+  document.getElementById('new-confirmation-btn').style.display = isUserRole ? 'inline-block' : 'none';
+  document.getElementById('page-subtitle').textContent = isUserRole
+    ? 'Fill in the details below, generate the table, then copy it straight into your confirmation email — borders and "|" separators included.'
+    : 'Review confirmations submitted by users — check the Approval queue for anything waiting on your level, or browse All confirmations for the full history.';
   document.getElementById('admin-history-card').style.display = isAdmin ? 'block' : 'none';
   document.getElementById('approval-queue-card').style.display = isAdmin ? 'block' : 'none';
   const isSuperadmin = currentUserRole === 'superadmin';
@@ -882,6 +900,12 @@ function applyDraftData(data){
   suppressAutosave = false;
 }
 async function loadDraftAndHistory(){
+  if(currentUserRole !== 'user'){
+    // Reviewers never create agreements, so there's no per-user draft to
+    // load for them — just pull the shared history/queue data.
+    await loadHistory();
+    return;
+  }
   setDraftStatus('Loading…');
   try{
     const rows = await getTableRows(DRAFT_TABLE_NAME);
@@ -899,14 +923,55 @@ async function loadDraftAndHistory(){
     setDraftStatus('Could not load draft: ' + err.message);
   }
   await loadHistory();
+  checkSubmittedLock();
+}
+
+/* ---- Locking a submitted deal ----
+   A Deal ID is only ever assigned the moment "Save agreement" first
+   succeeds, and once that write has happened, the agreement is done: it can
+   never be edited or resaved under that same ID, and a rejected deal is not
+   reopened for editing either — trying again means starting a New
+   confirmation, which gets a brand-new Deal ID. This function detects "the
+   currently loaded form's Deal ID already has rows in TradeDealLog" (either
+   right after a successful save, or on reload/reconnect) and locks the form
+   accordingly. The per-user draft row still autosaves the in-progress form
+   right up until that first successful save — its only purpose is to
+   protect unsaved work, never to enable post-submission edits. */
+function dealAlreadySubmitted(dealId){
+  if(!dealId) return false;
+  return logRowsCache.some(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+}
+function submittedDealStatus(dealId){
+  const row = logRowsCache.find(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  return row ? (row.values[0][MC.status] || STATUS_PENDING_1) : null;
+}
+function checkSubmittedLock(){
+  if(dealAlreadySubmitted(currentDealDocId)){
+    lockSubmittedForm(currentDealDocId);
+  }
+}
+function lockSubmittedForm(dealId){
+  const status = submittedDealStatus(dealId);
+  document.querySelectorAll('#header-fields input, #header-fields select, #header-fields textarea, ' +
+    '#trades-container input, #trades-container select, #trades-container textarea, #trade-count')
+    .forEach(el => el.disabled = true);
+  document.getElementById('generate-btn').style.display = 'none';
+  document.getElementById('save-agreement-btn').style.display = 'none';
+  const banner = document.getElementById('submitted-lock-banner');
+  banner.innerHTML = '<strong>Deal ID ' + escapeHtml(dealId) + ' has been submitted (status: ' + escapeHtml(status || STATUS_PENDING_1) +
+    ') and can no longer be edited — this Deal ID is locked permanently, even if it\'s rejected.</strong> ' +
+    'To submit a new agreement, use "New confirmation" above — it will get its own Deal ID.';
+  banner.style.display = 'block';
 }
 document.addEventListener('input', ()=>{
-  if(!currentAccount || suppressAutosave) return;
+  if(!currentAccount || suppressAutosave || currentUserRole !== 'user') return;
+  if(dealAlreadySubmitted(currentDealDocId)) return;
   clearTimeout(draftSaveTimer);
   draftSaveTimer = setTimeout(saveDraft, 1200);
 });
 document.addEventListener('change', ()=>{
-  if(!currentAccount || suppressAutosave) return;
+  if(!currentAccount || suppressAutosave || currentUserRole !== 'user') return;
+  if(dealAlreadySubmitted(currentDealDocId)) return;
   clearTimeout(draftSaveTimer);
   draftSaveTimer = setTimeout(saveDraft, 1200);
 });
@@ -922,59 +987,23 @@ document.getElementById('new-confirmation-btn').addEventListener('click', async 
 
 /* ---- Saved agreements (the shared, restructured TradeDealLog table) ----
    One physical row per TRADE within an agreement (a 3-trade submission under
-   one Deal ID produces 3 rows). Re-saving an already-saved agreement deletes
-   all existing rows for that Deal ID and re-inserts fresh ones for the
-   current trades — but Status/Approved By/Approved Date are always read from
-   the existing rows first and carried forward unchanged, so editing/resaving
-   an agreement can never accidentally wipe out approval progress. A
-   brand-new submission starts at "Pending Approval" with approver/date blank.
-   Nothing is ever written to this table with a status other than what an
-   admin explicitly set via the Approve action — pending submissions sit in
-   this same table (that's how admins see them to approve) but are not
-   distinguishable from "the main list" until Status flips to "Approved";
-   downstream consumers of this workbook should filter on Status = Approved.
-   Every signed-in user can technically read every row (that's inherent to a
-   shared Excel file) — "My saved confirmations" is a client-side filter,
-   not a security boundary. */
+   one Deal ID produces 3 rows). A Deal ID is only ever saved ONCE — if rows
+   already exist for it, saving is refused (the UI already prevents this via
+   lockSubmittedForm(), this is a server-side-equivalent guard in case of a
+   double-click or stale page). A brand-new submission always starts at
+   "Pending Level 1" with every approval/rejection field blank. Nothing is
+   ever written to this table's Status/approval columns except by the
+   Approve/Reject actions. Every signed-in user can technically read every
+   row (that's inherent to a shared Excel file) — "My saved confirmations" is
+   a client-side filter, not a security boundary. */
 async function saveConfirmationToHistory(includeBD, dealId){
   if(!currentAccount || !dealId) return;
   const rows = await getTableRows(LOG_TABLE_NAME);
   const existingRows = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
-  const first = existingRows[0];
-  const prevStatus = first ? first.values[0][MC.status] : null;
-  // Resubmitting a Rejected deal sends it back to the start of the approval
-  // chain, clears the prior rejection comment, and clears any earlier
-  // level sign-offs so it's reviewed fresh. A brand-new submission also
-  // starts at Pending Level 1. Editing/resaving a deal that's still
-  // in-flight (or already Approved) carries its approval progress forward
-  // unchanged, so nothing already signed off is silently wiped out.
-  let status, approvedBy1, approvedDate1, approvedBy2, approvedDate2,
-      approvedBy3, approvedDate3, rejectedBy, rejectedDate, rejectReason;
-  if(!first || prevStatus === STATUS_REJECTED){
-    status = STATUS_PENDING_1;
-    approvedBy1 = approvedDate1 = approvedBy2 = approvedDate2 = '';
-    approvedBy3 = approvedDate3 = rejectedBy = rejectedDate = rejectReason = '';
-  }else{
-    status = prevStatus;
-    approvedBy1 = first.values[0][MC.approvedBy1];
-    approvedDate1 = first.values[0][MC.approvedDate1];
-    approvedBy2 = first.values[0][MC.approvedBy2];
-    approvedDate2 = first.values[0][MC.approvedDate2];
-    approvedBy3 = first.values[0][MC.approvedBy3];
-    approvedDate3 = first.values[0][MC.approvedDate3];
-    rejectedBy = first.values[0][MC.rejectedBy];
-    rejectedDate = first.values[0][MC.rejectedDate];
-    rejectReason = first.values[0][MC.rejectReason];
+  if(existingRows.length){
+    throw new Error('Deal ID ' + dealId + ' has already been submitted and cannot be resaved. Start a New confirmation instead.');
   }
   const nowIso = new Date().toISOString();
-
-  // Delete existing rows for this Deal ID highest-index-first, so earlier
-  // deletes don't shift the index of rows we haven't deleted yet.
-  const toDelete = existingRows.map(r => r.index).sort((a,b)=> b - a);
-  for(const idx of toDelete){
-    await deleteTableRow(LOG_TABLE_NAME, idx);
-  }
-
   const tradeCount = parseInt(document.getElementById('trade-count').value, 10) || 1;
   for(let n = 1; n <= tradeCount; n++){
     const matching = val('t'+n+'-m-matching');
@@ -1011,16 +1040,16 @@ async function saveConfirmationToHistory(includeBD, dealId){
     row[MC.submittedBy] = currentAccount.username;
     row[MC.submittedDate] = nowIso;
     row[MC.generatedHtml] = (n === 1) ? lastHtml : '';
-    row[MC.status] = status;
-    row[MC.approvedBy1] = approvedBy1;
-    row[MC.approvedDate1] = approvedDate1;
-    row[MC.approvedBy2] = approvedBy2;
-    row[MC.approvedDate2] = approvedDate2;
-    row[MC.approvedBy3] = approvedBy3;
-    row[MC.approvedDate3] = approvedDate3;
-    row[MC.rejectedBy] = rejectedBy;
-    row[MC.rejectedDate] = rejectedDate;
-    row[MC.rejectReason] = rejectReason;
+    row[MC.status] = STATUS_PENDING_1;
+    row[MC.approvedBy1] = '';
+    row[MC.approvedDate1] = '';
+    row[MC.approvedBy2] = '';
+    row[MC.approvedDate2] = '';
+    row[MC.approvedBy3] = '';
+    row[MC.approvedDate3] = '';
+    row[MC.rejectedBy] = '';
+    row[MC.rejectedDate] = '';
+    row[MC.rejectReason] = '';
     await addTableRow(LOG_TABLE_NAME, row);
   }
   await loadHistory();
@@ -2223,10 +2252,11 @@ document.getElementById('save-agreement-btn').addEventListener('click', async ()
 
     await saveConfirmationToHistory(includeBD, currentDealDocId);
     saveDraft();
+    await loadHistory(); // refresh logRowsCache so dealAlreadySubmitted() sees this deal
 
     note.textContent = 'Submitted — Deal ID ' + currentDealDocId + '. Awaiting Level 1 approval.';
     note.style.display = 'block';
-    setTimeout(()=>{ note.style.display = 'none'; }, 4000);
+    lockSubmittedForm(currentDealDocId);
   }catch(err){
     console.error('Save agreement failed', err);
     note.textContent = 'Save failed: ' + err.message;
