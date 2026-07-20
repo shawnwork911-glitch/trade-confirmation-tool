@@ -525,7 +525,7 @@ const DRAFT_TABLE_NAME = "TradeDealDrafts";   // must match the Excel Table name
 const SETTINGS_TABLE_NAME = "TradeSettings";  // must match the Excel Table name you create
 const SC = { key:0, value:1 };
 const DEAL_ID_START_KEY = "dealIdStart";
-const GRAPH_SCOPES = ["Sites.ReadWrite.All", "User.Read"];
+const GRAPH_SCOPES = ["Sites.ReadWrite.All", "User.Read", "Mail.Send"];
 
 /* ---- Roles & 3-level approval ----
    Approval is now handled entirely inside this app (no external
@@ -766,6 +766,89 @@ async function assignRole(email, role){
   await loadUserRoles();
   renderUserMgmtList();
 }
+
+/* ---- Email notifications on submit / approve ----
+   Sent via Graph "sendMail" as whoever just took the action (the submitter
+   on first submit, the approving admin on each level-advance) — no separate
+   mail server needed. Requires the Mail.Send delegated permission to be
+   granted (admin consent) on the Azure app registration; if it isn't yet,
+   sending just throws and is caught/logged, so it never blocks the actual
+   submit/approve action itself. Only the *next* approver is notified — a
+   deal reaching Approved has no further approver, so nothing is sent then. */
+const APPROVER_ROLE_FOR_STATUS = {};
+APPROVER_ROLE_FOR_STATUS[STATUS_PENDING_1] = 'admin1';
+APPROVER_ROLE_FOR_STATUS[STATUS_PENDING_2] = 'admin2';
+APPROVER_ROLE_FOR_STATUS[STATUS_PENDING_3] = 'admin3';
+function emailsForRole(role){
+  const seen = new Set();
+  const emails = [];
+  userRolesCache.forEach(r=>{
+    if((r.values[0][RC.role]||'') !== role) return;
+    const email = (r.values[0][RC.email]||'').trim();
+    if(!email) return;
+    const key = email.toLowerCase();
+    if(seen.has(key)) return;
+    seen.add(key);
+    emails.push(email);
+  });
+  return emails;
+}
+function dealDeepLink(dealId){
+  return location.origin + location.pathname + '?deal=' + encodeURIComponent(dealId);
+}
+async function sendMailGraph(toEmails, subject, htmlBody){
+  if(!toEmails.length) return;
+  await graphFetch('/me/sendMail', {
+    method: 'POST',
+    body: JSON.stringify({
+      message: {
+        subject,
+        body: { contentType: 'HTML', content: htmlBody },
+        toRecipients: toEmails.map(e => ({ emailAddress: { address: e } }))
+      },
+      saveToSentItems: false
+    })
+  });
+}
+// status = the deal's status *after* this submit/approve just happened —
+// looks up which role is now responsible and emails everyone holding it.
+async function notifyNextApprover(status, dealId){
+  const role = APPROVER_ROLE_FOR_STATUS[status];
+  if(!role) return; // e.g. Approved — no next approver to notify
+  const toEmails = emailsForRole(role);
+  if(!toEmails.length){
+    console.warn('No ' + role + ' assigned — skipping approval notification for Deal ID ' + dealId);
+    return;
+  }
+  const levelLabel = ROLE_LABELS[role] || role;
+  const link = dealDeepLink(dealId);
+  const html = '<p>Deal ID <strong>' + escapeHtml(dealId) + '</strong> is waiting on your ' + escapeHtml(levelLabel) + ' approval.</p>' +
+    '<p><a href="' + link + '">Open it in the Trade Confirmation app</a></p>';
+  try{
+    await sendMailGraph(toEmails, 'Approval needed — Deal ID ' + dealId + ' (' + levelLabel + ')', html);
+  }catch(err){
+    console.error('Approval notification email failed', err);
+  }
+}
+
+// Opens a Deal ID straight into the Preview card when the app is loaded via
+// a notification email's "?deal=XXXXX" link, once logRowsCache has data.
+let urlDealOpened = false;
+function tryOpenDealFromUrl(){
+  if(urlDealOpened) return;
+  const dealId = new URLSearchParams(location.search).get('deal');
+  if(!dealId) { urlDealOpened = true; return; }
+  const group = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  const withHtml = group.find(r => r.values[0][MC.generatedHtml]);
+  if(!withHtml) return; // history may not have loaded this deal yet — try again next refresh
+  lastHtml = withHtml.values[0][MC.generatedHtml];
+  document.getElementById('table-preview').innerHTML = lastHtml;
+  setPreviewDealIdLabel(dealId);
+  document.getElementById('output-section').style.display = 'flex';
+  document.getElementById('copy-status').style.display = 'none';
+  document.getElementById('output-section').scrollIntoView({behavior:'smooth', block:'nearest'});
+  urlDealOpened = true;
+}
 function renderUserMgmtList(){
   const el = document.getElementById('user-mgmt-list');
   const rows = userRolesCache.filter(r => r.values[0][RC.email]);
@@ -854,8 +937,9 @@ async function graphFetch(path, options){
     const text = await res.text().catch(()=> '');
     throw new Error('Graph ' + res.status + ': ' + text.slice(0, 300));
   }
-  if(res.status === 204) return null;
-  return res.json();
+  if(res.status === 204 || res.status === 202) return null;
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
 }
 async function resolveWorkbook(){
   const site = await graphFetch('/sites/' + SP_HOSTNAME + ':' + SP_SITE_PATH);
@@ -1134,14 +1218,11 @@ async function saveConfirmationToHistory(includeBD, dealId){
   }
   await loadHistory();
 }
-/* Advances a deal through the approval chain. For admin1/2/3 this is one
-   step at a time, since each of them is only authorized at their own level.
-   Superadmin can act at any pending level, and for them a single Approve
-   fully approves the deal in one action — filling in every remaining level
-   (as themselves) and setting status straight to Approved — rather than
-   requiring three separate clicks. Levels already signed off by someone
-   else are left exactly as recorded. Blocked client-side unless
-   canActOnStatus() says this role may act on the deal's current status. */
+/* Advances a deal one step through the approval chain, writing the
+   approver + timestamp for whichever level the current status corresponds
+   to. Every role — including superadmin — only ever advances one level per
+   click; superadmin's only difference is which levels canActOnStatus() lets
+   them act on (any pending level, vs. admin1/2/3's own single level). */
 async function approveDeal(dealId){
   if(!dealId) return;
   const rows = await getTableRows(LOG_TABLE_NAME);
@@ -1150,37 +1231,19 @@ async function approveDeal(dealId){
   const currentStatus = matching[0].values[0][MC.status];
   if(!canActOnStatus(currentStatus)) throw new Error('You are not able to approve this deal at its current stage.');
   const nowIso = new Date().toISOString();
-
-  const isSuperadminApproving = currentUserRole === 'superadmin';
-
-  // Every stage from the current status through Level 3 that a superadmin
-  // approval should fill in.
-  const remainingStages = [];
-  if(currentStatus === STATUS_PENDING_1) remainingStages.push({byCol:MC.approvedBy1, dateCol:MC.approvedDate1});
-  if(currentStatus === STATUS_PENDING_1 || currentStatus === STATUS_PENDING_2) remainingStages.push({byCol:MC.approvedBy2, dateCol:MC.approvedDate2});
-  if(currentStatus === STATUS_PENDING_1 || currentStatus === STATUS_PENDING_2 || currentStatus === STATUS_PENDING_3) remainingStages.push({byCol:MC.approvedBy3, dateCol:MC.approvedDate3});
-
   let nextStatus, byCol, dateCol;
   if(currentStatus === STATUS_PENDING_1){ nextStatus = STATUS_PENDING_2; byCol = MC.approvedBy1; dateCol = MC.approvedDate1; }
   else if(currentStatus === STATUS_PENDING_2){ nextStatus = STATUS_PENDING_3; byCol = MC.approvedBy2; dateCol = MC.approvedDate2; }
   else if(currentStatus === STATUS_PENDING_3){ nextStatus = STATUS_APPROVED; byCol = MC.approvedBy3; dateCol = MC.approvedDate3; }
   else return;
-
   for(const r of matching){
     const values = r.values[0].slice();
-    if(isSuperadminApproving){
-      values[MC.status] = STATUS_APPROVED;
-      remainingStages.forEach(s=>{
-        values[s.byCol] = currentAccount.username;
-        values[s.dateCol] = nowIso;
-      });
-    } else {
-      values[MC.status] = nextStatus;
-      values[byCol] = currentAccount.username;
-      values[dateCol] = nowIso;
-    }
+    values[MC.status] = nextStatus;
+    values[byCol] = currentAccount.username;
+    values[dateCol] = nowIso;
     await updateTableRow(LOG_TABLE_NAME, r.index, values);
   }
+  await notifyNextApprover(nextStatus, dealId);
   await loadHistory();
 }
 /* Rejects a deal at whatever stage it's currently pending at, recording who
@@ -1240,6 +1303,7 @@ async function loadHistory(){
       const adminListEl = document.getElementById('admin-history-list');
       renderHistoryTable(adminListEl, allGroups, {showOwner:true, showActions:false});
     }
+    tryOpenDealFromUrl();
   }catch(err){
     listEl.innerHTML = '<p style="font-size:13px;color:#8a2d1f;">Could not load: ' + escapeHtml(err.message) + '</p>';
   }
@@ -1355,9 +1419,7 @@ document.addEventListener('click', (e)=>{
   const approveBtn = e.target.closest('.history-approve-btn');
   if(approveBtn){
     const dealId = approveBtn.getAttribute('data-dealid');
-    if(confirm(currentUserRole === 'superadmin'
-      ? 'Fully approve Deal ID ' + dealId + '? This will mark it Approved immediately, signing off any remaining levels as you.'
-      : 'Approve Deal ID ' + dealId + ' at your level? This will advance it to the next stage (or mark it fully Approved if this is the final level).')){
+    if(confirm('Approve Deal ID ' + dealId + ' at your level? This will advance it to the next stage (or mark it fully Approved if this is the final level).')){
       approveBtn.disabled = true;
       approveDeal(dealId).catch(err=>{ console.error('Approve failed', err); alert('Approve failed: ' + err.message); });
     }
@@ -2396,6 +2458,7 @@ document.getElementById('save-agreement-btn').addEventListener('click', async ()
     await saveConfirmationToHistory(includeBD, currentDealDocId);
     saveDraft();
     await loadHistory(); // refresh logRowsCache so dealAlreadySubmitted() sees this deal
+    await notifyNextApprover(STATUS_PENDING_1, currentDealDocId);
 
     note.textContent = 'Submitted — Deal ID ' + currentDealDocId + '. Awaiting Level 1 approval.';
     note.style.display = 'block';
