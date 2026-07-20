@@ -4,9 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Trade Confirmation Table Generator</title>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://unpkg.com/@azure/msal-browser@3/lib/msal-browser.min.js"></script>
 <style>
   :root{
     --bg:#f5f5f4;
@@ -332,19 +330,10 @@
 <div id="login-overlay">
   <div id="login-card">
     <h2>Sign in</h2>
-    <p>Each account only sees its own drafts and saved confirmations.</p>
+    <p>Sign in with your organization's Microsoft account. Saved agreements are stored in the shared SharePoint file — your view only filters to your own by default.</p>
     <div id="login-error"></div>
-    <div>
-      <label for="login-email">Email</label>
-      <input type="text" id="login-email" placeholder="you@company.com"/>
-    </div>
-    <div>
-      <label for="login-password">Password</label>
-      <input type="text" id="login-password" placeholder="Password" style="-webkit-text-security:disc;text-security:disc;"/>
-    </div>
     <div class="login-btn-row">
-      <button type="button" id="login-submit">Sign in</button>
-      <button type="button" id="signup-submit" class="secondary">Create account</button>
+      <button type="button" id="ms-signin-btn">Sign in with Microsoft</button>
     </div>
   </div>
 </div>
@@ -442,129 +431,179 @@
 
 <script>
 /* =======================================================================
-   FIREBASE SETUP — fill this in with YOUR project's config before use.
-   Get it from: Firebase console -> Project settings -> General ->
-   "Your apps" -> SDK setup and configuration -> Config.
+   MICROSOFT SIGN-IN + SHAREPOINT EXCEL SETUP — fill these in before use.
    ======================================================================= */
-const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID"
-};
-firebase.initializeApp(firebaseConfig);
-const auth = firebase.auth();
-const db = firebase.firestore();
+const TENANT_ID = "YOUR_TENANT_ID";           // Directory (tenant) ID from the Azure app registration overview page
+const CLIENT_ID = "YOUR_CLIENT_ID";           // Application (client) ID from the same page
+const SP_HOSTNAME = "saxonrenewables.sharepoint.com";
+const SP_SITE_PATH = "/sites/Operations";
+const SP_FILE_NAME = "Master Folder_250923 - Main.xlsx";
+const LOG_TABLE_NAME = "TradeDealLog";        // must match the Excel Table name you create
+const DRAFT_TABLE_NAME = "TradeDealDrafts";   // must match the Excel Table name you create
+const GRAPH_SCOPES = ["Sites.ReadWrite.All", "User.Read"];
 
-/* EDIT ME: who every "New Trade Deal Recap" email draft goes to by default. */
-const DEFAULT_RECAP_EMAIL = "ops-team@yourcompany.com";
+/* UI-only admin allowlist. This is NOT a real permission boundary — anyone
+   with SharePoint access to the file can already see every row by opening it
+   directly. This just controls whether the "All confirmations" section shows
+   inside the app itself. */
+const ADMIN_EMAILS = ["admin@yourcompany.com"];
 
-let currentUser = null;
+const msalInstance = new msal.PublicClientApplication({
+  auth: {
+    clientId: CLIENT_ID,
+    authority: "https://login.microsoftonline.com/" + TENANT_ID,
+    redirectUri: window.location.origin + window.location.pathname
+  },
+  cache: { cacheLocation: "sessionStorage" }
+});
+
+let currentAccount = null;
+let siteId = null;
+let fileItemId = null;
 let currentDealDocId = null;
+let draftRowIndex = null;      // this user's row index in the Drafts table, or null if none saved yet
+let logRowsCache = [];         // last-fetched rows from the log table, for the "View" buttons
+let isAdmin = false;
 let draftSaveTimer = null;
-let suppressAutosave = false; // true while we're programmatically filling the form from a loaded draft
+let suppressAutosave = false;  // true while programmatically filling the form from a loaded draft
 
 const loginOverlay = document.getElementById('login-overlay');
 const appContent = document.getElementById('app-content');
 const userBar = document.getElementById('user-bar');
 
-auth.onAuthStateChanged(user=>{
-  currentUser = user;
+function showLoginError(err){
   const errEl = document.getElementById('login-error');
-  if(errEl) errEl.style.display = 'none';
-  if(user){
-    loginOverlay.style.display = 'none';
-    appContent.style.display = 'flex';
-    userBar.style.display = 'flex';
-    document.getElementById('user-email-label').textContent = user.email;
-    loadDraftAndHistory();
-    checkAdminStatus();
-  } else {
+  errEl.textContent = (err && err.message) ? err.message : String(err);
+  errEl.style.display = 'block';
+}
+
+document.getElementById('ms-signin-btn').addEventListener('click', async ()=>{
+  const errEl = document.getElementById('login-error');
+  errEl.style.display = 'none';
+  try{
+    const result = await msalInstance.loginPopup({ scopes: GRAPH_SCOPES });
+    currentAccount = result.account;
+    await onSignedIn();
+  }catch(err){
+    showLoginError(err);
+  }
+});
+document.getElementById('signout-btn').addEventListener('click', ()=>{
+  const account = currentAccount;
+  msalInstance.logoutPopup({ account }).finally(()=> location.reload());
+});
+
+window.addEventListener('load', async ()=>{
+  const accounts = msalInstance.getAllAccounts();
+  if(accounts.length){
+    currentAccount = accounts[0];
+    await onSignedIn();
+  }else{
     loginOverlay.style.display = 'flex';
     appContent.style.display = 'none';
-    userBar.style.display = 'none';
   }
 });
 
-function showLoginError(err){
-  const errEl = document.getElementById('login-error');
-  errEl.textContent = err.message || String(err);
-  errEl.style.display = 'block';
+async function onSignedIn(){
+  loginOverlay.style.display = 'none';
+  appContent.style.display = 'flex';
+  userBar.style.display = 'flex';
+  document.getElementById('user-email-label').textContent = currentAccount.username;
+  isAdmin = ADMIN_EMAILS.map(e=>e.toLowerCase()).includes((currentAccount.username||'').toLowerCase());
+  document.getElementById('admin-history-card').style.display = isAdmin ? 'block' : 'none';
+  setDraftStatus('Connecting to SharePoint…');
+  try{
+    await resolveWorkbook();
+    await loadDraftAndHistory();
+  }catch(err){
+    console.error('Could not connect to the workbook', err);
+    setDraftStatus('Could not connect to SharePoint: ' + err.message);
+  }
 }
-document.getElementById('login-submit').addEventListener('click', ()=>{
-  const email = document.getElementById('login-email').value.trim();
-  const pass = document.getElementById('login-password').value;
-  auth.signInWithEmailAndPassword(email, pass).catch(showLoginError);
-});
-document.getElementById('signup-submit').addEventListener('click', ()=>{
-  const email = document.getElementById('login-email').value.trim();
-  const pass = document.getElementById('login-password').value;
-  auth.createUserWithEmailAndPassword(email, pass).catch(showLoginError);
-});
-document.getElementById('signout-btn').addEventListener('click', ()=> auth.signOut());
 
-/* ---- Global 5-digit Deal ID counter ----
-   One shared counter document at counters/dealId { next:<number> } drives
-   the number. On top of that, every assigned id is reserved as its own
-   document at dealIds/{padded} inside the SAME transaction — so even if the
-   counter were ever out of sync, two users can never end up holding the same
-   Deal ID: the transaction simply keeps advancing until it finds a number
-   with no existing reservation, then reserves it and increments the counter
-   atomically. This only runs once per agreement, the first time it's saved. */
-function assignNewDealId(){
-  const counterRef = db.collection('counters').doc('dealId');
-  return db.runTransaction(async tx=>{
-    const counterDoc = await tx.get(counterRef);
-    let next = counterDoc.exists ? (counterDoc.data().next || 1) : 1;
-    let padded = String(next).padStart(5,'0');
-    let regRef = db.collection('dealIds').doc(padded);
-    let regDoc = await tx.get(regRef);
-    while(regDoc.exists){
-      next += 1;
-      padded = String(next).padStart(5,'0');
-      regRef = db.collection('dealIds').doc(padded);
-      regDoc = await tx.get(regRef);
-    }
-    tx.set(counterRef, { next: next + 1 }, { merge:true });
-    tx.set(regRef, {
-      ownerUid: currentUser.uid,
-      ownerEmail: currentUser.email,
-      reservedAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
-    return padded;
-  }).then(padded=>{
-    document.getElementById('h-dealid-num').value = padded;
-    currentDealDocId = padded;
-    return padded;
+/* ---- Microsoft Graph plumbing ---- */
+async function getAccessToken(){
+  try{
+    const result = await msalInstance.acquireTokenSilent({ scopes: GRAPH_SCOPES, account: currentAccount });
+    return result.accessToken;
+  }catch(e){
+    const result = await msalInstance.acquireTokenPopup({ scopes: GRAPH_SCOPES });
+    return result.accessToken;
+  }
+}
+async function graphFetch(path, options){
+  options = options || {};
+  const token = await getAccessToken();
+  const res = await fetch('https://graph.microsoft.com/v1.0' + path, {
+    method: options.method || 'GET',
+    body: options.body,
+    headers: Object.assign({ 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, options.headers || {})
+  });
+  if(!res.ok){
+    const text = await res.text().catch(()=> '');
+    throw new Error('Graph ' + res.status + ': ' + text.slice(0, 300));
+  }
+  if(res.status === 204) return null;
+  return res.json();
+}
+async function resolveWorkbook(){
+  const site = await graphFetch('/sites/' + SP_HOSTNAME + ':' + SP_SITE_PATH);
+  siteId = site.id;
+  const search = await graphFetch('/sites/' + siteId + "/drive/root/search(q='" + encodeURIComponent(SP_FILE_NAME) + "')");
+  const match = (search.value || []).find(f => f.name === SP_FILE_NAME);
+  if(!match) throw new Error('Could not find "' + SP_FILE_NAME + '" in the Operations site.');
+  fileItemId = match.id;
+}
+function workbookTablePath(tableName){
+  return '/sites/' + siteId + '/drive/items/' + fileItemId + '/workbook/tables/' + encodeURIComponent(tableName);
+}
+async function getTableRows(tableName){
+  const data = await graphFetch(workbookTablePath(tableName) + '/rows');
+  return data.value || []; // each row: { index, values: [[col1, col2, ...]] }
+}
+async function addTableRow(tableName, values){
+  return graphFetch(workbookTablePath(tableName) + '/rows/add', {
+    method: 'POST',
+    body: JSON.stringify({ values: [values] })
   });
 }
-
-/* ---- Auto-draft recap email ----
-   Fires once an agreement is successfully saved. Opens the person's default
-   mail app with To/Subject/Body already filled in — mailto: links can't send
-   on their own (no backend here to do that), so this still needs a Send
-   click, but nothing needs typing. The body is always the Ops-version table
-   in plain text, regardless of which output version is selected on screen. */
-function opsPlainTextForEmail(){
-  return buildPlainText(buildTable());
+async function updateTableRow(tableName, rowIndex, values){
+  return graphFetch(workbookTablePath(tableName) + '/rows/' + rowIndex, {
+    method: 'PATCH',
+    body: JSON.stringify({ values: [values] })
+  });
 }
-function openRecapEmailDraft(dealId){
-  const subject = 'NEW TRADE DEAL RECAP (' + dealId + ')';
-  const body = opsPlainTextForEmail();
-  const mailto = 'mailto:' + DEFAULT_RECAP_EMAIL +
-    '?subject=' + encodeURIComponent(subject) +
-    '&body=' + encodeURIComponent(body);
-  const a = document.createElement('a');
-  a.href = mailto;
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+async function deleteTableRow(tableName, rowIndex){
+  return graphFetch(workbookTablePath(tableName) + '/rows/' + rowIndex, { method: 'DELETE' });
 }
 
-/* ---- Per-user draft (autosaves the in-progress form) ---- */
+/* ---- Global 5-digit Deal ID ----
+   Best-effort uniqueness: highest existing Deal ID in the log table, +1, then
+   re-checked against a fresh read right before committing. Excel/Graph has no
+   atomic transactions, so this can't offer the same hard guarantee the earlier
+   Firestore version did — but collisions are very unlikely under normal,
+   occasional saving (a true zero-risk guarantee needs a real backend). */
+async function assignNewDealId(){
+  const rows = await getTableRows(LOG_TABLE_NAME);
+  let maxNum = 0;
+  rows.forEach(r=>{
+    const n = parseInt(String(r.values[0][0] || '').trim(), 10);
+    if(!isNaN(n) && n > maxNum) maxNum = n;
+  });
+  let candidate = maxNum + 1;
+  const recheck = await getTableRows(LOG_TABLE_NAME);
+  const taken = new Set(recheck.map(r => String(r.values[0][0] || '').trim()));
+  let padded = String(candidate).padStart(5,'0');
+  while(taken.has(padded)){
+    candidate += 1;
+    padded = String(candidate).padStart(5,'0');
+  }
+  document.getElementById('h-dealid-num').value = padded;
+  currentDealDocId = padded;
+  return padded;
+}
+
+/* ---- Per-user draft (autosaves the in-progress form into the Drafts table) ---- */
 function gatherFormData(){
   const tradeCount = document.getElementById('trade-count').value;
   const allValues = {};
@@ -582,13 +621,25 @@ function setDraftStatus(text){
   const el = document.getElementById('draft-status');
   if(el) el.textContent = text;
 }
-function saveDraft(){
-  if(!currentUser) return;
-  const data = gatherFormData();
+async function saveDraft(){
+  if(!currentAccount || !fileItemId) return;
   setDraftStatus('Saving…');
-  db.collection('users').doc(currentUser.uid).collection('data').doc('draft').set(data)
-    .then(()=> setDraftStatus('Draft saved'))
-    .catch(err=>{ console.error('Draft save failed', err); setDraftStatus('Draft save failed'); });
+  const json = JSON.stringify(gatherFormData());
+  const nowIso = new Date().toISOString();
+  try{
+    if(draftRowIndex !== null){
+      await updateTableRow(DRAFT_TABLE_NAME, draftRowIndex, [currentAccount.username, json, nowIso]);
+    }else{
+      await addTableRow(DRAFT_TABLE_NAME, [currentAccount.username, json, nowIso]);
+      const rows = await getTableRows(DRAFT_TABLE_NAME);
+      const mine = rows.find(r => (r.values[0][0] || '').toLowerCase() === (currentAccount.username || '').toLowerCase());
+      if(mine) draftRowIndex = mine.index;
+    }
+    setDraftStatus('Draft saved');
+  }catch(err){
+    console.error('Draft save failed', err);
+    setDraftStatus('Draft save failed');
+  }
 }
 function applyDraftData(data){
   suppressAutosave = true;
@@ -614,167 +665,143 @@ function applyDraftData(data){
   currentDealDocId = data.dealId || val('h-dealid-num') || null;
   suppressAutosave = false;
 }
-function loadDraftAndHistory(){
-  if(!currentUser) return;
-  const draftRef = db.collection('users').doc(currentUser.uid).collection('data').doc('draft');
-  draftRef.get().then(doc=>{
-    if(doc.exists){
-      applyDraftData(doc.data());
-      setDraftStatus('Draft loaded');
-    } else {
+async function loadDraftAndHistory(){
+  setDraftStatus('Loading…');
+  try{
+    const rows = await getTableRows(DRAFT_TABLE_NAME);
+    const myEmail = (currentAccount.username || '').toLowerCase();
+    const mine = rows.find(r => (r.values[0][0] || '').toLowerCase() === myEmail);
+    draftRowIndex = mine ? mine.index : null;
+    if(mine){
+      try{ applyDraftData(JSON.parse(mine.values[0][1])); setDraftStatus('Draft loaded'); }
+      catch(e){ setDraftStatus('Draft could not be read'); }
+    }else{
       setDraftStatus('New draft — Deal ID is assigned once you save the agreement.');
     }
-  }).catch(err=>console.error('Draft load failed', err));
-  loadHistory();
+  }catch(err){
+    console.error('Draft load failed', err);
+    setDraftStatus('Could not load draft: ' + err.message);
+  }
+  await loadHistory();
 }
 document.addEventListener('input', ()=>{
-  if(!currentUser || suppressAutosave) return;
+  if(!currentAccount || suppressAutosave) return;
   clearTimeout(draftSaveTimer);
   draftSaveTimer = setTimeout(saveDraft, 1200);
 });
 document.addEventListener('change', ()=>{
-  if(!currentUser || suppressAutosave) return;
+  if(!currentAccount || suppressAutosave) return;
   clearTimeout(draftSaveTimer);
   draftSaveTimer = setTimeout(saveDraft, 1200);
 });
 
-document.getElementById('new-confirmation-btn').addEventListener('click', ()=>{
-  if(!currentUser) return;
+document.getElementById('new-confirmation-btn').addEventListener('click', async ()=>{
+  if(!currentAccount) return;
   if(!confirm('Start a new confirmation? Locked fields are kept; unlocked fields clear. A new Deal ID will be assigned once you save this new agreement. Your saved history is not affected.')) return;
-  db.collection('users').doc(currentUser.uid).collection('data').doc('draft').delete()
-    .finally(()=> location.reload());
+  try{
+    if(draftRowIndex !== null) await deleteTableRow(DRAFT_TABLE_NAME, draftRowIndex);
+  }catch(err){ console.error('Could not clear draft row', err); }
+  location.reload();
 });
 
-/* ---- Per-user history of saved agreements ----
-   Keyed by the Deal ID itself, so re-saving an already-saved agreement
-   updates that one record instead of creating a duplicate. */
-function saveConfirmationToHistory(includeBD, dealId){
-  if(!currentUser || !dealId) return Promise.resolve();
-  const record = {
-    dealId: dealId,
-    date: val('h-date'),
-    entity: val('h-entity'),
-    role: currentRole(),
-    counterparty: val('h-buyer'),
-    orderType: val('h-order'),
-    version: includeBD ? 'Ops' : 'Customer',
-    html: lastHtml,
-    plain: lastPlain,
-    ownerUid: currentUser.uid,
-    ownerEmail: currentUser.email,
-    savedAt: firebase.firestore.FieldValue.serverTimestamp()
-  };
-  return db.collection('users').doc(currentUser.uid).collection('confirmations').doc(dealId).set(record, { merge:true })
-    .then(loadHistory)
-    .catch(err=>{ console.error('History save failed', err); throw err; });
+/* ---- Saved agreements (the shared TradeDealLog table) ----
+   Keyed by Deal ID: re-saving an already-saved agreement updates that row
+   instead of adding a duplicate. Columns 10-13 (Status, Approved By L1/L2/L3)
+   belong to the Power Automate approval flow — re-saves here only touch the
+   deal-data columns and always leave Status/approver columns exactly as
+   Power Automate last set them, so editing/resaving an agreement can never
+   accidentally wipe out approval progress. A brand-new submission starts at
+   "Pending L1" with all three approver columns blank.
+   Every signed-in user can technically read every row (that's inherent to a
+   shared Excel file) — "My saved confirmations" is a client-side filter,
+   not a security boundary. */
+async function saveConfirmationToHistory(includeBD, dealId){
+  if(!currentAccount || !dealId) return;
+  const rows = await getTableRows(LOG_TABLE_NAME);
+  const existing = rows.find(r => String(r.values[0][0] || '').trim() === dealId);
+  const approvalCols = existing ? existing.values[0].slice(9, 13) : ['Pending L1', '', '', ''];
+  const rowValues = [
+    dealId,
+    val('h-date'),
+    val('h-entity'),
+    val('h-buyer'),
+    val('h-order'),
+    includeBD ? 'Ops' : 'Customer',
+    currentAccount.username,
+    new Date().toISOString(),
+    lastHtml
+  ].concat(approvalCols);
+  if(existing){
+    await updateTableRow(LOG_TABLE_NAME, existing.index, rowValues);
+  }else{
+    await addTableRow(LOG_TABLE_NAME, rowValues);
+  }
+  await loadHistory();
 }
-function loadHistory(){
-  if(!currentUser) return;
+async function loadHistory(){
   const listEl = document.getElementById('history-list');
   listEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Loading…</p>';
-  db.collection('users').doc(currentUser.uid).collection('confirmations')
-    .orderBy('savedAt','desc').limit(50).get().then(snap=>{
-      if(snap.empty){
-        listEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No saved confirmations yet — generate a table to save one here.</p>';
-        return;
-      }
-      let html = '<table><tr>'+
-        '<th style="text-align:left;padding:6px;">Deal ID</th>'+
-        '<th style="text-align:left;padding:6px;">Date</th>'+
-        '<th style="text-align:left;padding:6px;">Counterparty</th>'+
-        '<th style="text-align:left;padding:6px;">Version</th>'+
-        '<th style="padding:6px;"></th></tr>';
-      snap.forEach(doc=>{
-        const d = doc.data();
-        html += '<tr style="border-top:1px solid var(--border);">'+
-          '<td style="padding:6px;">'+escapeHtml(d.dealId||'')+'</td>'+
-          '<td style="padding:6px;">'+escapeHtml(d.date||'')+'</td>'+
-          '<td style="padding:6px;">'+escapeHtml(d.counterparty||'')+'</td>'+
-          '<td style="padding:6px;">'+escapeHtml(d.version||'')+'</td>'+
-          '<td style="padding:6px;"><button type="button" class="secondary history-view-btn" data-id="'+doc.id+'" style="padding:4px 10px;font-size:12px;">View</button></td>'+
-        '</tr>';
-      });
-      html += '</table>';
-      listEl.innerHTML = html;
-    }).catch(err=>{
-      listEl.innerHTML = '<p style="font-size:13px;color:#8a2d1f;">Could not load history: '+escapeHtml(err.message)+'</p>';
-    });
+  try{
+    const rows = await getTableRows(LOG_TABLE_NAME);
+    logRowsCache = rows;
+    const myEmail = (currentAccount.username || '').toLowerCase();
+    const mine = rows.filter(r => (String(r.values[0][6] || '')).toLowerCase() === myEmail)
+      .sort((a,b)=> String(b.values[0][7]||'').localeCompare(String(a.values[0][7]||'')));
+    renderHistoryTable(listEl, mine, false);
+    if(isAdmin){
+      const adminListEl = document.getElementById('admin-history-list');
+      const all = rows.slice().sort((a,b)=> String(b.values[0][7]||'').localeCompare(String(a.values[0][7]||'')));
+      renderHistoryTable(adminListEl, all, true);
+    }
+  }catch(err){
+    listEl.innerHTML = '<p style="font-size:13px;color:#8a2d1f;">Could not load: ' + escapeHtml(err.message) + '</p>';
+  }
+}
+function statusBadge(status){
+  const s = status || 'Pending L1';
+  const color = s === 'Approved' ? '#1f7a4d' : (s === 'Rejected' ? '#8a2d1f' : '#8a6d1f');
+  return '<span style="font-weight:600;color:'+color+';">'+escapeHtml(s)+'</span>';
+}
+function renderHistoryTable(el, rows, showOwner){
+  if(!rows.length){
+    el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No saved confirmations yet.</p>';
+    return;
+  }
+  let html = '<table><tr>' + (showOwner ? '<th style="text-align:left;padding:6px;">Owner</th>' : '') +
+    '<th style="text-align:left;padding:6px;">Deal ID</th>' +
+    '<th style="text-align:left;padding:6px;">Date</th>' +
+    '<th style="text-align:left;padding:6px;">Counterparty</th>' +
+    '<th style="text-align:left;padding:6px;">Version</th>' +
+    '<th style="text-align:left;padding:6px;">Status</th>' +
+    '<th style="padding:6px;"></th></tr>';
+  rows.forEach(r=>{
+    const v = r.values[0];
+    html += '<tr style="border-top:1px solid var(--border);">' +
+      (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[6]||'')+'</td>' : '') +
+      '<td style="padding:6px;">'+escapeHtml(v[0]||'')+'</td>' +
+      '<td style="padding:6px;">'+escapeHtml(v[1]||'')+'</td>' +
+      '<td style="padding:6px;">'+escapeHtml(v[3]||'')+'</td>' +
+      '<td style="padding:6px;">'+escapeHtml(v[5]||'')+'</td>' +
+      '<td style="padding:6px;">'+statusBadge(v[9])+'</td>' +
+      '<td style="padding:6px;"><button type="button" class="secondary history-view-btn" data-dealid="'+escapeHtml(v[0]||'')+'" style="padding:4px 10px;font-size:12px;">View</button></td>' +
+    '</tr>';
+  });
+  html += '</table>';
+  el.innerHTML = html;
 }
 document.addEventListener('click', (e)=>{
   const btn = e.target.closest('.history-view-btn');
-  if(!btn || !currentUser) return;
-  db.collection('users').doc(currentUser.uid).collection('confirmations').doc(btn.getAttribute('data-id')).get().then(doc=>{
-    if(!doc.exists) return;
-    const d = doc.data();
-    lastHtml = d.html; lastPlain = d.plain;
-    document.getElementById('table-preview').innerHTML = lastHtml;
-    document.getElementById('output-section').style.display = 'flex';
-    document.getElementById('copy-status').style.display = 'none';
-    document.getElementById('output-section').scrollIntoView({behavior:'smooth', block:'nearest'});
-  });
-});
-
-/* ---- Admin: see every user's saved confirmations ----
-   A user is an admin if a document exists at admins/{their uid}. Add that
-   document yourself in the Firestore console — there's no self-service way
-   to grant admin from inside the app. */
-let isAdmin = false;
-let adminHistoryCache = [];
-function checkAdminStatus(){
-  if(!currentUser) return;
-  db.collection('admins').doc(currentUser.uid).get().then(doc=>{
-    isAdmin = doc.exists;
-    document.getElementById('admin-history-card').style.display = isAdmin ? 'block' : 'none';
-    if(isAdmin) loadAllHistory();
-  }).catch(err=>console.error('Admin check failed', err));
-}
-function loadAllHistory(){
-  const listEl = document.getElementById('admin-history-list');
-  listEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Loading…</p>';
-  db.collectionGroup('confirmations').orderBy('savedAt','desc').limit(100).get().then(snap=>{
-    adminHistoryCache = [];
-    if(snap.empty){
-      listEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No confirmations saved by anyone yet.</p>';
-      return;
-    }
-    let html = '<table><tr>'+
-      '<th style="text-align:left;padding:6px;">Owner</th>'+
-      '<th style="text-align:left;padding:6px;">Deal ID</th>'+
-      '<th style="text-align:left;padding:6px;">Date</th>'+
-      '<th style="text-align:left;padding:6px;">Counterparty</th>'+
-      '<th style="text-align:left;padding:6px;">Version</th>'+
-      '<th style="padding:6px;"></th></tr>';
-    snap.forEach(doc=>{
-      const d = doc.data();
-      const idx = adminHistoryCache.length;
-      adminHistoryCache.push(d);
-      html += '<tr style="border-top:1px solid var(--border);">'+
-        '<td style="padding:6px;">'+escapeHtml(d.ownerEmail||d.ownerUid||'')+'</td>'+
-        '<td style="padding:6px;">'+escapeHtml(d.dealId||'')+'</td>'+
-        '<td style="padding:6px;">'+escapeHtml(d.date||'')+'</td>'+
-        '<td style="padding:6px;">'+escapeHtml(d.counterparty||'')+'</td>'+
-        '<td style="padding:6px;">'+escapeHtml(d.version||'')+'</td>'+
-        '<td style="padding:6px;"><button type="button" class="secondary admin-history-view-btn" data-idx="'+idx+'" style="padding:4px 10px;font-size:12px;">View</button></td>'+
-      '</tr>';
-    });
-    html += '</table>';
-    listEl.innerHTML = html;
-  }).catch(err=>{
-    listEl.innerHTML = '<p style="font-size:13px;color:#8a2d1f;">Could not load: '+escapeHtml(err.message)+
-      ' — if this mentions a missing index, open the link Firestore prints in the browser console once and click "Create index".</p>';
-  });
-}
-document.addEventListener('click', (e)=>{
-  const btn = e.target.closest('.admin-history-view-btn');
   if(!btn) return;
-  const d = adminHistoryCache[parseInt(btn.getAttribute('data-idx'),10)];
-  if(!d) return;
-  lastHtml = d.html; lastPlain = d.plain;
+  const dealId = btn.getAttribute('data-dealid');
+  const row = logRowsCache.find(r => String(r.values[0][0] || '').trim() === dealId);
+  if(!row) return;
+  lastHtml = row.values[0][8];
   document.getElementById('table-preview').innerHTML = lastHtml;
   document.getElementById('output-section').style.display = 'flex';
   document.getElementById('copy-status').style.display = 'none';
   document.getElementById('output-section').scrollIntoView({behavior:'smooth', block:'nearest'});
 });
+
 
 const COUNTRIES = ["MY","BN","CN","JP","SA","TH","IN","PH","SG","VN","INDO","AUS","TW"];
 const TECHS = ["SLR","ANY","GEO","BIO","HYD","BGS","SHY","LHY","CC","WND","S/WND"];
@@ -1746,7 +1773,7 @@ document.getElementById('copy-btn').addEventListener('click', async ()=>{
    never reassigned again for this agreement, so the same Deal ID always maps
    to exactly one saved record across every user. */
 document.getElementById('save-agreement-btn').addEventListener('click', async ()=>{
-  if(!currentUser) return;
+  if(!currentAccount) return;
   const btn = document.getElementById('save-agreement-btn');
   const note = document.getElementById('save-note');
   btn.disabled = true;
@@ -1764,9 +1791,8 @@ document.getElementById('save-agreement-btn').addEventListener('click', async ()
 
     await saveConfirmationToHistory(includeBD, currentDealDocId);
     saveDraft();
-    openRecapEmailDraft(currentDealDocId);
 
-    note.textContent = 'Saved — Deal ID ' + currentDealDocId + '. Email draft opened.';
+    note.textContent = 'Submitted — Deal ID ' + currentDealDocId + '. Awaiting Level 1 approval.';
     note.style.display = 'block';
     setTimeout(()=>{ note.style.display = 'none'; }, 4000);
   }catch(err){
