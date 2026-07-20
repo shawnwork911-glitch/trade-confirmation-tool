@@ -357,7 +357,7 @@
 
   <div>
     <h1>Trade Confirmation Table Generator</h1>
-    <p class="subtitle" id="page-subtitle">Fill in the details below, generate the table, then copy it straight into your confirmation email — borders and "|" separators included.</p>
+    <p class="subtitle" id="page-subtitle">Fill in the details below, generate the Customer version table, then copy and send to your customer.</p>
   </div>
 
   <div id="agreement-form-section" style="display:flex;flex-direction:column;gap:24px;">
@@ -388,20 +388,6 @@
       </select>
     </div>
     <div id="trades-container" style="margin-top:16px;"></div>
-  </div>
-
-  <div class="card">
-    <p class="card-title">Output version</p>
-    <div style="display:flex;gap:20px;flex-wrap:wrap;">
-      <label class="version-choice">
-        <input type="radio" name="output-version" id="version-full" value="full" checked>
-        Ops version
-      </label>
-      <label class="version-choice">
-        <input type="radio" name="output-version" id="version-no-bd" value="no-bd">
-        Customer version
-      </label>
-    </div>
   </div>
 
   <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
@@ -728,7 +714,7 @@ function applyRoleUi(){
   document.getElementById('draft-status').style.display = isUserRole ? 'inline' : 'none';
   document.getElementById('new-confirmation-btn').style.display = isUserRole ? 'inline-block' : 'none';
   document.getElementById('page-subtitle').textContent = isUserRole
-    ? 'Fill in the details below, generate the table, then copy it straight into your confirmation email — borders and "|" separators included.'
+    ? 'Fill in the details below, generate the Customer version table, then copy and send to your customer.'
     : 'Review confirmations submitted by users — check the Approval queue for anything waiting on your level, or browse All confirmations for the full history.';
   document.getElementById('admin-history-card').style.display = isAdmin ? 'block' : 'none';
   document.getElementById('approval-queue-card').style.display = isAdmin ? 'block' : 'none';
@@ -2338,7 +2324,9 @@ document.addEventListener('change', (e)=>{
 // Validates and builds the preview. Returns true/false for which version was
 // built (Ops/Customer), or null if validation failed (warning already shown).
 function generateOutput(){
-  const includeBD = document.querySelector('input[name="output-version"]:checked').value === 'full';
+  // Ops version has been removed — Customer version (point-format) is now
+  // the only output the form generates.
+  const includeBD = false;
 
   const missing = validateVersion(includeBD);
   if(missing.length){
