@@ -433,8 +433,8 @@
 /* =======================================================================
    MICROSOFT SIGN-IN + SHAREPOINT EXCEL SETUP — fill these in before use.
    ======================================================================= */
-const TENANT_ID = "YOUR_TENANT_ID";           // Directory (tenant) ID from the Azure app registration overview page
-const CLIENT_ID = "YOUR_CLIENT_ID";           // Application (client) ID from the same page
+const TENANT_ID = "ab7c8c1e-dc1d-431f-ba8b-e4de2b047f8b";           // Directory (tenant) ID from the Azure app registration overview page
+const CLIENT_ID = "5b17f2d1-ca2a-4521-9d03-01cda2e86c16";           // Application (client) ID from the same page
 const SP_HOSTNAME = "saxonrenewables.sharepoint.com";
 const SP_SITE_PATH = "/sites/Operations";
 const SP_FILE_NAME = "Master Folder_250923 - Main.xlsx";
@@ -446,7 +446,7 @@ const GRAPH_SCOPES = ["Sites.ReadWrite.All", "User.Read"];
    with SharePoint access to the file can already see every row by opening it
    directly. This just controls whether the "All confirmations" section shows
    inside the app itself. */
-const ADMIN_EMAILS = ["admin@yourcompany.com"];
+const ADMIN_EMAILS = ["shauyuan.tan@saxonrenewables.com"];
 
 const msalInstance = new msal.PublicClientApplication({
   auth: {
@@ -494,6 +494,7 @@ document.getElementById('signout-btn').addEventListener('click', ()=>{
 });
 
 window.addEventListener('load', async ()=>{
+  await msalInstance.initialize();
   const accounts = msalInstance.getAllAccounts();
   if(accounts.length){
     currentAccount = accounts[0];
