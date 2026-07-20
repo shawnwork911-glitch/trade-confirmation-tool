@@ -416,7 +416,7 @@
 
   <div id="output-section" class="card">
     <div class="output-header">
-      <p class="card-title" style="margin:0;">Preview</p>
+      <p class="card-title" style="margin:0;">Preview<span id="preview-dealid-label" style="font-weight:normal;color:var(--text-secondary);"></span></p>
       <button id="copy-btn" class="secondary">Copy table</button>
     </div>
     <div id="table-preview"></div>
@@ -462,6 +462,20 @@
       <button type="button" id="user-mgmt-assign-btn">Assign role</button>
     </div>
     <div id="user-mgmt-list"><p style="font-size:13px;color:var(--text-secondary);">Loading...</p></div>
+  </div>
+
+  <div class="card" id="dealid-settings-card" style="display:none;">
+    <p class="card-title">Deal ID numbering</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Superadmin only. Sets the lowest 5-digit number the next new Deal ID can start from — e.g. to line this system up with numbering used elsewhere, or to pick a clean range for testing. It's a floor, not a reset: once any deal has been issued at or above that number, this has no further effect and nothing already issued is renumbered.</p>
+    <div id="dealid-settings-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;margin-bottom:10px;"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+      <div style="min-width:170px;">
+        <label>Starting number</label>
+        <input type="text" id="dealid-start-input" maxlength="5" inputmode="numeric" placeholder="e.g. 500">
+      </div>
+      <button type="button" id="dealid-start-save-btn">Save starting number</button>
+    </div>
+    <p id="dealid-start-current" style="font-size:12px;color:var(--text-secondary);margin:10px 0 0;"></p>
   </div>
 
   <footer>Built from the Trade Confirmation email SOP · draft autosaves per account, approval and history saved to the shared SharePoint workbook</footer>
@@ -518,6 +532,13 @@ const MC = {
 };
 const COL_COUNT = 41;
 const DRAFT_TABLE_NAME = "TradeDealDrafts";   // must match the Excel Table name you create
+// Small generic key/value settings table. Currently holds one row:
+// key="dealIdStart", value=the lowest 5-digit number the next new Deal ID
+// is allowed to start from (superadmin-editable — see "Deal ID numbering").
+// Create the Excel Table with just these 2 columns: Key, Value.
+const SETTINGS_TABLE_NAME = "TradeSettings";  // must match the Excel Table name you create
+const SC = { key:0, value:1 };
+const DEAL_ID_START_KEY = "dealIdStart";
 const GRAPH_SCOPES = ["Sites.ReadWrite.All", "User.Read"];
 
 /* ---- Roles & 3-level approval ----
@@ -567,6 +588,8 @@ let logRowsCache = [];         // last-fetched rows from the log table, for the 
 let userRolesCache = [];       // last-fetched rows from the TradeUserRoles table
 let currentUserRole = 'user';
 let isAdmin = false;           // true for admin1/admin2/admin3/superadmin — any elevated role
+let settingsCache = [];
+let dealIdStartOverride = 0;   // 0 = no override, use the normal max+1 behavior
 let draftSaveTimer = null;
 let suppressAutosave = false;  // true while programmatically filling the form from a loaded draft
 
@@ -617,6 +640,7 @@ async function onSignedIn(){
   try{
     await resolveWorkbook();
     await loadUserRoles();
+    await loadDealIdSettings();
     applyRoleUi();
     await loadDraftAndHistory();
   }catch(err){
@@ -648,13 +672,57 @@ async function loadUserRoles(){
   currentUserRole = getUserRole(currentAccount.username);
   isAdmin = currentUserRole !== 'user';
 }
+
+/* ---- Deal ID starting number (superadmin only) ----
+   A floor under the normal "highest existing + 1" logic in assignNewDealId.
+   Lets a superadmin set where numbering should begin — e.g. to line this
+   system up with an existing external sequence, or to pick a clean range for
+   testing — without renumbering anything already issued. */
+async function loadDealIdSettings(){
+  try{
+    settingsCache = await getTableRows(SETTINGS_TABLE_NAME);
+  }catch(err){
+    console.error('Could not load settings', err);
+    settingsCache = [];
+  }
+  const row = settingsCache.find(r => (r.values[0][SC.key]||'') === DEAL_ID_START_KEY);
+  const n = row ? parseInt(String(row.values[0][SC.value]||'').trim(), 10) : 0;
+  dealIdStartOverride = (!isNaN(n) && n > 0) ? n : 0;
+}
+async function setDealIdStart(numStr){
+  const n = parseInt(String(numStr||'').trim(), 10);
+  if(isNaN(n) || n < 1 || n > 99999) throw new Error('Enter a whole number between 1 and 99999.');
+  const existing = settingsCache.find(r => (r.values[0][SC.key]||'') === DEAL_ID_START_KEY);
+  if(existing){
+    await updateTableRow(SETTINGS_TABLE_NAME, existing.index, [DEAL_ID_START_KEY, String(n)]);
+  }else{
+    await addTableRow(SETTINGS_TABLE_NAME, [DEAL_ID_START_KEY, String(n)]);
+  }
+  await loadDealIdSettings();
+  renderDealIdSettings();
+}
+function renderDealIdSettings(){
+  const el = document.getElementById('dealid-start-current');
+  if(!el) return;
+  el.textContent = dealIdStartOverride
+    ? 'Current starting number: ' + String(dealIdStartOverride).padStart(5,'0') + ' — only applies once no higher Deal ID has been issued yet.'
+    : 'No starting number set — the next Deal ID will just be the highest issued so far, + 1.';
+}
+// Plain Users create/submit agreements as their normal job. Superadmin also
+// gets the creation form — purely so they can build a test agreement and run
+// it through the full flow — in addition to their normal review access
+// (Approval queue, All confirmations, "View" on any deal). Admin1/2/3 stay
+// review-only.
+function canBuildAgreement(){
+  return currentUserRole === 'user' || currentUserRole === 'superadmin';
+}
 function applyRoleUi(){
   document.getElementById('user-role-label').textContent = ' · ' + ROLE_LABELS[currentUserRole];
-  const isUserRole = currentUserRole === 'user';
-  // Only plain Users create/submit agreements. Every other role (admin1/2/3,
-  // superadmin) is here purely to review: they see the generated-table
-  // preview (when they click "View" from a queue/list), the Approval queue,
-  // and the full "All confirmations" list — never the creation form.
+  const isUserRole = canBuildAgreement();
+  // Plain Users and Superadmin create/submit agreements. Admin1/2/3 are here
+  // purely to review: they see the generated-table preview (when they click
+  // "View" from a queue/list), the Approval queue, and the full "All
+  // confirmations" list — never the creation form.
   document.getElementById('agreement-form-section').style.display = isUserRole ? 'flex' : 'none';
   document.getElementById('my-history-card').style.display = isUserRole ? 'block' : 'none';
   document.getElementById('draft-status').style.display = isUserRole ? 'inline' : 'none';
@@ -666,7 +734,11 @@ function applyRoleUi(){
   document.getElementById('approval-queue-card').style.display = isAdmin ? 'block' : 'none';
   const isSuperadmin = currentUserRole === 'superadmin';
   document.getElementById('user-mgmt-card').style.display = isSuperadmin ? 'block' : 'none';
-  if(isSuperadmin) renderUserMgmtList();
+  document.getElementById('dealid-settings-card').style.display = isSuperadmin ? 'block' : 'none';
+  if(isSuperadmin){
+    renderUserMgmtList();
+    renderDealIdSettings();
+  }
 }
 /* Which pending status (if any) the current user's role is allowed to act
    on. Superadmin can act on any pending stage. */
@@ -755,6 +827,25 @@ if(userMgmtAssignBtn){
   });
 }
 
+const dealIdStartInput = document.getElementById('dealid-start-input');
+const dealIdStartSaveBtn = document.getElementById('dealid-start-save-btn');
+if(dealIdStartSaveBtn){
+  dealIdStartSaveBtn.addEventListener('click', async ()=>{
+    const errEl = document.getElementById('dealid-settings-error');
+    errEl.style.display = 'none';
+    dealIdStartSaveBtn.disabled = true;
+    try{
+      await setDealIdStart(dealIdStartInput.value);
+      dealIdStartInput.value = '';
+    }catch(err){
+      errEl.textContent = err.message;
+      errEl.style.display = 'block';
+    }finally{
+      dealIdStartSaveBtn.disabled = false;
+    }
+  });
+}
+
 /* ---- Microsoft Graph plumbing ---- */
 async function getAccessToken(){
   try{
@@ -824,7 +915,10 @@ async function assignNewDealId(){
     const n = parseInt(String(r.values[0][MC.dealId] || '').trim(), 10);
     if(!isNaN(n) && n > maxNum) maxNum = n;
   });
-  let candidate = maxNum + 1;
+  // The superadmin-set starting number is a floor: it only matters while
+  // nothing has been issued yet at or above it, and never moves a number
+  // backwards or renumbers anything already saved.
+  let candidate = Math.max(maxNum + 1, dealIdStartOverride || 1);
   const recheck = await getTableRows(LOG_TABLE_NAME);
   const taken = new Set(recheck.map(r => String(r.values[0][MC.dealId] || '').trim()));
   let padded = String(candidate).padStart(5,'0');
@@ -900,9 +994,9 @@ function applyDraftData(data){
   suppressAutosave = false;
 }
 async function loadDraftAndHistory(){
-  if(currentUserRole !== 'user'){
-    // Reviewers never create agreements, so there's no per-user draft to
-    // load for them — just pull the shared history/queue data.
+  if(!canBuildAgreement()){
+    // Review-only roles never create agreements, so there's no per-user
+    // draft to load for them — just pull the shared history/queue data.
     await loadHistory();
     return;
   }
@@ -964,13 +1058,13 @@ function lockSubmittedForm(dealId){
   banner.style.display = 'block';
 }
 document.addEventListener('input', ()=>{
-  if(!currentAccount || suppressAutosave || currentUserRole !== 'user') return;
+  if(!currentAccount || suppressAutosave || !canBuildAgreement()) return;
   if(dealAlreadySubmitted(currentDealDocId)) return;
   clearTimeout(draftSaveTimer);
   draftSaveTimer = setTimeout(saveDraft, 1200);
 });
 document.addEventListener('change', ()=>{
-  if(!currentAccount || suppressAutosave || currentUserRole !== 'user') return;
+  if(!currentAccount || suppressAutosave || !canBuildAgreement()) return;
   if(dealAlreadySubmitted(currentDealDocId)) return;
   clearTimeout(draftSaveTimer);
   draftSaveTimer = setTimeout(saveDraft, 1200);
@@ -1054,10 +1148,14 @@ async function saveConfirmationToHistory(includeBD, dealId){
   }
   await loadHistory();
 }
-/* Advances a deal one step through the approval chain, writing the
-   approver + timestamp for whichever level the current status corresponds
-   to. Blocked client-side unless canActOnStatus() says this role may act on
-   the deal's current status — superadmin can act at any pending level. */
+/* Advances a deal through the approval chain. For admin1/2/3 this is one
+   step at a time, since each of them is only authorized at their own level.
+   Superadmin can act at any pending level, and for them a single Approve
+   fully approves the deal in one action — filling in every remaining level
+   (as themselves) and setting status straight to Approved — rather than
+   requiring three separate clicks. Levels already signed off by someone
+   else are left exactly as recorded. Blocked client-side unless
+   canActOnStatus() says this role may act on the deal's current status. */
 async function approveDeal(dealId){
   if(!dealId) return;
   const rows = await getTableRows(LOG_TABLE_NAME);
@@ -1066,16 +1164,35 @@ async function approveDeal(dealId){
   const currentStatus = matching[0].values[0][MC.status];
   if(!canActOnStatus(currentStatus)) throw new Error('You are not able to approve this deal at its current stage.');
   const nowIso = new Date().toISOString();
+
+  const isSuperadminApproving = currentUserRole === 'superadmin';
+
+  // Every stage from the current status through Level 3 that a superadmin
+  // approval should fill in.
+  const remainingStages = [];
+  if(currentStatus === STATUS_PENDING_1) remainingStages.push({byCol:MC.approvedBy1, dateCol:MC.approvedDate1});
+  if(currentStatus === STATUS_PENDING_1 || currentStatus === STATUS_PENDING_2) remainingStages.push({byCol:MC.approvedBy2, dateCol:MC.approvedDate2});
+  if(currentStatus === STATUS_PENDING_1 || currentStatus === STATUS_PENDING_2 || currentStatus === STATUS_PENDING_3) remainingStages.push({byCol:MC.approvedBy3, dateCol:MC.approvedDate3});
+
   let nextStatus, byCol, dateCol;
   if(currentStatus === STATUS_PENDING_1){ nextStatus = STATUS_PENDING_2; byCol = MC.approvedBy1; dateCol = MC.approvedDate1; }
   else if(currentStatus === STATUS_PENDING_2){ nextStatus = STATUS_PENDING_3; byCol = MC.approvedBy2; dateCol = MC.approvedDate2; }
   else if(currentStatus === STATUS_PENDING_3){ nextStatus = STATUS_APPROVED; byCol = MC.approvedBy3; dateCol = MC.approvedDate3; }
   else return;
+
   for(const r of matching){
     const values = r.values[0].slice();
-    values[MC.status] = nextStatus;
-    values[byCol] = currentAccount.username;
-    values[dateCol] = nowIso;
+    if(isSuperadminApproving){
+      values[MC.status] = STATUS_APPROVED;
+      remainingStages.forEach(s=>{
+        values[s.byCol] = currentAccount.username;
+        values[s.dateCol] = nowIso;
+      });
+    } else {
+      values[MC.status] = nextStatus;
+      values[byCol] = currentAccount.username;
+      values[dateCol] = nowIso;
+    }
     await updateTableRow(LOG_TABLE_NAME, r.index, values);
   }
   await loadHistory();
@@ -1243,6 +1360,7 @@ document.addEventListener('click', (e)=>{
     if(!withHtml) return;
     lastHtml = withHtml.values[0][MC.generatedHtml];
     document.getElementById('table-preview').innerHTML = lastHtml;
+    setPreviewDealIdLabel(dealId);
     document.getElementById('output-section').style.display = 'flex';
     document.getElementById('copy-status').style.display = 'none';
     document.getElementById('output-section').scrollIntoView({behavior:'smooth', block:'nearest'});
@@ -1251,7 +1369,9 @@ document.addEventListener('click', (e)=>{
   const approveBtn = e.target.closest('.history-approve-btn');
   if(approveBtn){
     const dealId = approveBtn.getAttribute('data-dealid');
-    if(confirm('Approve Deal ID ' + dealId + ' at your level? This will advance it to the next stage (or mark it fully Approved if this is the final level).')){
+    if(confirm(currentUserRole === 'superadmin'
+      ? 'Fully approve Deal ID ' + dealId + '? This will mark it Approved immediately, signing off any remaining levels as you.'
+      : 'Approve Deal ID ' + dealId + ' at your level? This will advance it to the next stage (or mark it fully Approved if this is the final level).')){
       approveBtn.disabled = true;
       approveDeal(dealId).catch(err=>{ console.error('Approve failed', err); alert('Approve failed: ' + err.message); });
     }
@@ -1266,6 +1386,29 @@ document.addEventListener('click', (e)=>{
 
 const COUNTRIES = ["MY","BN","CN","JP","SA","TH","IN","PH","SG","VN","INDO","AUS","TW"];
 const TECHS = ["SLR","ANY","GEO","BIO","HYD","BGS","SHY","LHY","CC","WND","S/WND"];
+
+// Hardcoded code -> full name lookups for the Customer version output (per
+// the reference sheet). Keys are matched case-insensitively; anything not
+// found here just falls back to showing the original code as typed.
+const COUNTRY_FULLNAMES = {
+  'MY':'Malaysia', 'BN':'Brunei', 'CN':'China', 'JP':'Japan', 'SA':'South Asia',
+  'TH':'Thailand', 'IN':'India', 'PH':'Philipine', 'SG':'Singapore', 'VN':'Vietnam',
+  'ID':'Indonesia', 'INDO':'Indonesia', 'AU':'Australia', 'AUS':'Australia', 'TW':'Taiwan'
+};
+const TECH_FULLNAMES = {
+  'SLR':'Solar', 'ANY':'Any tech', 'GEO':'Geothermal', 'BIO':'Biomass', 'HYD':'Hydro',
+  'BGS':'Biogas', 'SHY':'Small Hydro', 'LHY':'Large Hydro', 'CC':'Carbon Credit',
+  'WND':'Wind', 'SLR/WND':'Solar/Wind', 'S/WND':'Solar/Wind', 'SLR/BIO':'Solar/Biomass',
+  'SLR/WND/SHY':'Solar/Wind/Small Hydro', 'SLR/WND/LHY':'Solar/Wind/Large Hydro'
+};
+function countryFullName(code){
+  const key = String(code||'').trim().toUpperCase();
+  return COUNTRY_FULLNAMES[key] || code;
+}
+function techFullName(code){
+  const key = String(code||'').trim().toUpperCase();
+  return TECH_FULLNAMES[key] || code;
+}
 const REGISTRIES = ["IREC","TIGR","GEC","Rehash","JEPX","BCX","Verra","LGC","T-REC","K-REC"];
 const ORDER_TYPES = ["Stock-In (T)","Stock-Out (T)","Stock-Out (R)"];
 const CURRENCIES = ["USD","SGD","MYR"];
@@ -1854,6 +1997,16 @@ function escapeHtml(s){
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+// Keeps the Preview card's title in sync with whichever Deal ID is currently
+// loaded into it — set on self-generate, and on "View" from the Approval
+// queue / All confirmations lists — so an admin flipping between deals
+// always knows which one they're looking at.
+function setPreviewDealIdLabel(dealId){
+  const el = document.getElementById('preview-dealid-label');
+  if(!el) return;
+  el.textContent = dealId ? ' — Deal ID: ' + dealId : '';
+}
+
 function cellStyle(align, extra, widthPx){
   const w = widthPx ? 'width:'+widthPx+'px;' : '';
   return 'border:2px solid #000000;padding:6px 10px;font-family:Arial,Helvetica,sans-serif;font-size:13px;'+w+(align?'text-align:'+align+';':'')+(extra||'');
@@ -2017,7 +2170,9 @@ function buildPointFormat(){
   addField('Entity', val('h-entity'));
   addField('BD in-charge', val('h-bd'));
   addField(currentRole(), val('h-buyer'));
-  addField('Order Type', val('h-order'));
+  // Counterparty line: our own side is always "Saxon", shown with whichever
+  // role is the opposite of the agreement's Buyer/Seller above.
+  addField(currentRole() === 'Seller' ? 'Buyer' : 'Seller', 'Saxon');
 
   for(let i=1;i<=filled;i++){
     addBlank();
@@ -2026,13 +2181,12 @@ function buildPointFormat(){
     addField('Dealership', val('t'+i+'-dealership'));
     addField(currentRole() + ' Transfer Account', val('t'+i+'-transfer'));
     addField('Vintage', val('t'+i+'-vintage-start-month')+' '+val('t'+i+'-vintage-start-year')+' - '+val('t'+i+'-vintage-end-month')+' '+val('t'+i+'-vintage-end-year'));
-    addField('Tech', val('t'+i+'-tech'));
-    addField('Country', val('t'+i+'-country'));
+    addField('Tech', techFullName(val('t'+i+'-tech')));
+    addField('Country', countryFullName(val('t'+i+'-country')));
     addField('Volume (RECs)', val('t'+i+'-volume'));
     addField('Price / RECs', val('t'+i+'-currency')+' '+val('t'+i+'-price'));
     addField('Payment Term', val('t'+i+'-payterm'));
-    addField('Delivery Start Date', fmtDateOrdinal(val('t'+i+'-dstart')));
-    addField('Delivery End Date', fmtDateOrdinal(val('t'+i+'-dend')));
+    addField('Delivery', fmtDateOrdinal(val('t'+i+'-dstart'))+' - '+fmtDateOrdinal(val('t'+i+'-dend')));
     addField('COD (if applicable)', val('t'+i+'-m-cod'));
     addField('Special Remarks Request', val('t'+i+'-remarks'));
   }
@@ -2204,6 +2358,7 @@ function generateOutput(){
     document.getElementById('table-preview').innerHTML = lastHtml;
     lastPlain = buildPointFormatText(lines);
   }
+  setPreviewDealIdLabel(opsDealId());
   document.getElementById('output-section').style.display = 'flex';
   document.getElementById('copy-status').style.display = 'none';
   document.getElementById('output-section').scrollIntoView({behavior:'smooth', block:'nearest'});
