@@ -323,6 +323,10 @@
   #history-list table{width:100%;border-collapse:collapse;}
   #history-list th{font-size:12px;color:var(--text-secondary);border-bottom:1px solid var(--border);}
   #draft-status{font-size:12px;color:var(--text-secondary);margin:0;}
+  #user-role-label{color:var(--text-secondary);font-weight:400;}
+  #user-mgmt-list table{width:100%;border-collapse:collapse;}
+  #user-mgmt-list th{font-size:12px;color:var(--text-secondary);border-bottom:1px solid var(--border);text-align:left;padding:6px;}
+  #user-mgmt-list td{padding:6px;font-size:13px;}
 </style>
 </head>
 <body>
@@ -341,7 +345,7 @@
 <div class="wrap" id="app-content" style="display:none;">
 
   <div id="user-bar">
-    <span>Signed in as <strong id="user-email-label"></strong></span>
+    <span>Signed in as <strong id="user-email-label"></strong><span id="user-role-label"></span></span>
     <div class="right">
       <span id="draft-status"></span>
       <button type="button" id="new-confirmation-btn" class="secondary">New confirmation</button>
@@ -419,14 +423,57 @@
     <div id="history-list"><p style="font-size:13px;color:var(--text-secondary);">Loading...</p></div>
   </div>
 
+  <div class="card" id="approval-queue-card" style="display:none;">
+    <p class="card-title">Approval queue</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Confirmations currently waiting on your approval level. Superadmins see every pending stage.</p>
+    <div id="approval-queue-list"><p style="font-size:13px;color:var(--text-secondary);">Loading...</p></div>
+  </div>
+
   <div class="card" id="admin-history-card" style="display:none;">
     <p class="card-title">All confirmations (Admin)</p>
-    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Visible only to admin accounts — shows every saved confirmation across every user.</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Visible to Admin/Super Admin accounts — shows every saved confirmation across every user, read-only, with the full approval trail.</p>
     <div id="admin-history-list"><p style="font-size:13px;color:var(--text-secondary);">Loading...</p></div>
   </div>
 
-  <footer>Built from the Trade Confirmation email SOP · draft autosaves per account, history saved to your private Firestore records</footer>
+  <div class="card" id="user-mgmt-card" style="display:none;">
+    <p class="card-title">User management</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Superadmin only. Assign each person's approval level — Admin Level 1, 2, 3, or plain User. Levels approve in order (1 → 2 → 3) before a deal counts as fully Approved.</p>
+    <div id="user-mgmt-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;margin-bottom:10px;"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;">
+      <div style="flex:1;min-width:220px;">
+        <label>Email</label>
+        <input type="text" id="user-mgmt-email" placeholder="name@company.com">
+      </div>
+      <div style="min-width:170px;">
+        <label>Role</label>
+        <select id="user-mgmt-role">
+          <option value="admin1">Admin — Level 1</option>
+          <option value="admin2">Admin — Level 2</option>
+          <option value="admin3">Admin — Level 3</option>
+          <option value="user" selected>User</option>
+        </select>
+      </div>
+      <button type="button" id="user-mgmt-assign-btn">Assign role</button>
+    </div>
+    <div id="user-mgmt-list"><p style="font-size:13px;color:var(--text-secondary);">Loading...</p></div>
+  </div>
 
+  <footer>Built from the Trade Confirmation email SOP · draft autosaves per account, approval and history saved to the shared SharePoint workbook</footer>
+
+</div>
+
+<div id="reject-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
+  <div style="width:100%;max-width:420px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:10px;">
+    <h2 style="margin:0;font-size:16px;">Reject Deal ID <span id="reject-modal-dealid"></span></h2>
+    <p style="margin:0;font-size:13px;color:var(--text-secondary);">This comment is shown to the person who submitted the confirmation so they know what to fix.</p>
+    <label style="margin:4px 0 0;">Comment (required)</label>
+    <textarea id="reject-comment" placeholder="e.g. Price/REC doesn't match the agreed rate — please confirm and resubmit." style="min-height:90px;"></textarea>
+    <div id="reject-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
+      <button type="button" class="secondary" id="reject-modal-cancel">Cancel</button>
+      <button type="button" id="reject-modal-submit" style="background:#c1493a;">Reject</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -439,14 +486,62 @@ const SP_HOSTNAME = "saxonrenewables.sharepoint.com";
 const SP_SITE_PATH = "/sites/Operations";
 const SP_FILE_NAME = "Master Folder_250923 - Main.xlsx";
 const LOG_TABLE_NAME = "TradeDealLog";        // must match the Excel Table name you create
+// Column layout of the restructured TradeDealLog "main list" table.
+// One physical row per TRADE (a multi-trade agreement produces several rows
+// sharing the same Agreement ID). Create the Excel Table with these 41
+// columns in exactly this order:
+// Sales PIC, Entity, Agreement Date, Agreement ID, Supply/Demand, Company,
+// Broker, Country, Registry, Tech, Match/Open Position, Volume (RECs),
+// Delivery (Start date), Delivery (End date), V (From MM), V (From YY),
+// V (To MM), V (To YY), Currency, Unit Price, Special Requirement, COD,
+// TIGRS / IREC NAME, Payment Term, Buyer/Seller, No of RECs, Which deal,
+// Delivery Date, Submitted By, Submitted Date, Generated HTML, Status,
+// Approved By (Level 1), Approved Date (Level 1), Approved By (Level 2),
+// Approved Date (Level 2), Approved By (Level 3), Approved Date (Level 3),
+// Rejected By, Rejected Date, Rejection Comment
+const MC = {
+  salesPic:0, entity:1, agreementDate:2, dealId:3, supplyDemand:4, company:5,
+  broker:6, country:7, registry:8, tech:9, matching:10, volume:11,
+  deliveryStart:12, deliveryEnd:13, vFromMM:14, vFromYY:15, vToMM:16, vToYY:17,
+  currency:18, unitPrice:19, specialReq:20, cod:21, tigrsIrecName:22,
+  paymentTerm:23, buyerSeller:24, noOfRecs:25, whichDeal:26, deliveryDateM:27,
+  submittedBy:28, submittedDate:29, generatedHtml:30, status:31,
+  approvedBy1:32, approvedDate1:33, approvedBy2:34, approvedDate2:35,
+  approvedBy3:36, approvedDate3:37, rejectedBy:38, rejectedDate:39,
+  rejectReason:40
+};
+const COL_COUNT = 41;
 const DRAFT_TABLE_NAME = "TradeDealDrafts";   // must match the Excel Table name you create
 const GRAPH_SCOPES = ["Sites.ReadWrite.All", "User.Read"];
 
-/* UI-only admin allowlist. This is NOT a real permission boundary — anyone
-   with SharePoint access to the file can already see every row by opening it
-   directly. This just controls whether the "All confirmations" section shows
-   inside the app itself. */
-const ADMIN_EMAILS = ["shauyuan.tan@saxonrenewables.com"];
+/* ---- Roles & 3-level approval ----
+   Approval is now handled entirely inside this app (no external
+   PowerAutomate approval flow) — if a PowerAutomate "start and wait for
+   approval" flow is still attached to this workbook/table, turn it off so it
+   doesn't also try to write to the Status/Approved columns.
+
+   Roles: 'superadmin', 'admin1', 'admin2', 'admin3', 'user'.
+   A deal moves Pending Level 1 -> Pending Level 2 -> Pending Level 3 ->
+   Approved as each admin level signs off in order. Any admin level (or the
+   superadmin) can Reject at any pending stage, which requires a comment the
+   submitter can see. Superadmin can act at any level, in addition to
+   managing who holds each role. */
+const ROLES = ["superadmin","admin1","admin2","admin3","user"];
+const ROLE_LABELS = {
+  superadmin:"Super Admin", admin1:"Admin — Level 1", admin2:"Admin — Level 2",
+  admin3:"Admin — Level 3", user:"User"
+};
+// Hardcoded, UI-inaccessible superadmin(s) — a safety net so the role
+// assignment table can never be edited into a state with zero superadmins.
+const SUPERADMIN_EMAILS = ["shauyuan.tan@saxonrenewables.com"];
+const USER_ROLES_TABLE_NAME = "TradeUserRoles"; // must match the Excel Table name you create
+// Column layout for the TradeUserRoles table: Email, Role, Assigned By, Assigned Date
+const RC = { email:0, role:1, assignedBy:2, assignedDate:3 };
+const STATUS_PENDING_1 = "Pending Level 1";
+const STATUS_PENDING_2 = "Pending Level 2";
+const STATUS_PENDING_3 = "Pending Level 3";
+const STATUS_APPROVED = "Approved";
+const STATUS_REJECTED = "Rejected";
 
 const msalInstance = new msal.PublicClientApplication({
   auth: {
@@ -463,7 +558,9 @@ let fileItemId = null;
 let currentDealDocId = null;
 let draftRowIndex = null;      // this user's row index in the Drafts table, or null if none saved yet
 let logRowsCache = [];         // last-fetched rows from the log table, for the "View" buttons
-let isAdmin = false;
+let userRolesCache = [];       // last-fetched rows from the TradeUserRoles table
+let currentUserRole = 'user';
+let isAdmin = false;           // true for admin1/admin2/admin3/superadmin — any elevated role
 let draftSaveTimer = null;
 let suppressAutosave = false;  // true while programmatically filling the form from a loaded draft
 
@@ -510,16 +607,134 @@ async function onSignedIn(){
   appContent.style.display = 'flex';
   userBar.style.display = 'flex';
   document.getElementById('user-email-label').textContent = currentAccount.username;
-  isAdmin = ADMIN_EMAILS.map(e=>e.toLowerCase()).includes((currentAccount.username||'').toLowerCase());
-  document.getElementById('admin-history-card').style.display = isAdmin ? 'block' : 'none';
   setDraftStatus('Connecting to SharePoint…');
   try{
     await resolveWorkbook();
+    await loadUserRoles();
+    applyRoleUi();
     await loadDraftAndHistory();
   }catch(err){
     console.error('Could not connect to the workbook', err);
     setDraftStatus('Could not connect to SharePoint: ' + err.message);
   }
+}
+
+/* ---- Role resolution ----
+   Superadmin is a hardcoded allowlist (can't be edited away via the UI).
+   Every other role comes from the TradeUserRoles table, which the superadmin
+   manages from the "User management" panel. Anyone not listed is 'user'.
+   This is UI-only, same caveat as before: anyone with SharePoint access to
+   the file can already see/edit every row directly. */
+function getUserRole(email){
+  email = (email||'').toLowerCase();
+  if(SUPERADMIN_EMAILS.map(e=>e.toLowerCase()).includes(email)) return 'superadmin';
+  const entry = userRolesCache.find(r => (r.values[0][RC.email]||'').toLowerCase() === email);
+  const role = entry ? entry.values[0][RC.role] : 'user';
+  return ROLES.includes(role) ? role : 'user';
+}
+async function loadUserRoles(){
+  try{
+    userRolesCache = await getTableRows(USER_ROLES_TABLE_NAME);
+  }catch(err){
+    console.error('Could not load user roles', err);
+    userRolesCache = [];
+  }
+  currentUserRole = getUserRole(currentAccount.username);
+  isAdmin = currentUserRole !== 'user';
+}
+function applyRoleUi(){
+  document.getElementById('user-role-label').textContent = ' · ' + ROLE_LABELS[currentUserRole];
+  document.getElementById('admin-history-card').style.display = isAdmin ? 'block' : 'none';
+  document.getElementById('approval-queue-card').style.display = isAdmin ? 'block' : 'none';
+  const isSuperadmin = currentUserRole === 'superadmin';
+  document.getElementById('user-mgmt-card').style.display = isSuperadmin ? 'block' : 'none';
+  if(isSuperadmin) renderUserMgmtList();
+}
+/* Which pending status (if any) the current user's role is allowed to act
+   on. Superadmin can act on any pending stage. */
+function actionableStatusesForRole(role){
+  if(role === 'superadmin') return [STATUS_PENDING_1, STATUS_PENDING_2, STATUS_PENDING_3];
+  if(role === 'admin1') return [STATUS_PENDING_1];
+  if(role === 'admin2') return [STATUS_PENDING_2];
+  if(role === 'admin3') return [STATUS_PENDING_3];
+  return [];
+}
+function canActOnStatus(status){
+  return actionableStatusesForRole(currentUserRole).includes(status);
+}
+
+/* ---- User management (superadmin only) ----
+   Writes to the TradeUserRoles table: one row per email that's been given a
+   non-default role. Assigning a role to an email that already has a row
+   updates it in place; assigning 'user' to someone with an existing row
+   removes the row entirely (since 'user' is already the default for anyone
+   not listed). */
+async function assignRole(email, role){
+  email = (email||'').trim().toLowerCase();
+  if(!email) throw new Error('Enter an email address.');
+  if(SUPERADMIN_EMAILS.map(e=>e.toLowerCase()).includes(email)){
+    throw new Error('That address is already a hardcoded superadmin and can\'t be reassigned here.');
+  }
+  const existing = userRolesCache.find(r => (r.values[0][RC.email]||'').toLowerCase() === email);
+  if(role === 'user'){
+    if(existing) await deleteTableRow(USER_ROLES_TABLE_NAME, existing.index);
+  }else if(existing){
+    const values = existing.values[0].slice();
+    values[RC.role] = role;
+    values[RC.assignedBy] = currentAccount.username;
+    values[RC.assignedDate] = new Date().toISOString();
+    await updateTableRow(USER_ROLES_TABLE_NAME, existing.index, values);
+  }else{
+    await addTableRow(USER_ROLES_TABLE_NAME, [email, role, currentAccount.username, new Date().toISOString()]);
+  }
+  await loadUserRoles();
+  renderUserMgmtList();
+}
+function renderUserMgmtList(){
+  const el = document.getElementById('user-mgmt-list');
+  const rows = userRolesCache.filter(r => r.values[0][RC.email]);
+  let html = '<table><tr><th>Email</th><th>Role</th><th>Assigned by</th><th></th></tr>';
+  html += '<tr style="border-top:1px solid var(--border);"><td>' + SUPERADMIN_EMAILS.map(escapeHtml).join(', ') +
+    '</td><td>Super Admin</td><td>—</td><td style="font-size:11px;color:var(--text-secondary);">hardcoded</td></tr>';
+  rows.forEach(r=>{
+    const v = r.values[0];
+    html += '<tr style="border-top:1px solid var(--border);">' +
+      '<td>'+escapeHtml(v[RC.email]||'')+'</td>' +
+      '<td>'+escapeHtml(ROLE_LABELS[v[RC.role]] || v[RC.role] || '')+'</td>' +
+      '<td>'+escapeHtml(v[RC.assignedBy]||'')+'</td>' +
+      '<td><button type="button" class="secondary user-mgmt-remove-btn" data-email="'+escapeHtml(v[RC.email]||'')+'" style="padding:3px 8px;font-size:12px;">Remove</button></td>' +
+    '</tr>';
+  });
+  html += '</table>';
+  el.innerHTML = html;
+}
+const userMgmtEmailInput = document.getElementById('user-mgmt-email');
+const userMgmtRoleSelect = document.getElementById('user-mgmt-role');
+const userMgmtAssignBtn = document.getElementById('user-mgmt-assign-btn');
+if(userMgmtAssignBtn){
+  userMgmtAssignBtn.addEventListener('click', async ()=>{
+    const errEl = document.getElementById('user-mgmt-error');
+    errEl.style.display = 'none';
+    userMgmtAssignBtn.disabled = true;
+    try{
+      await assignRole(userMgmtEmailInput.value, userMgmtRoleSelect.value);
+      userMgmtEmailInput.value = '';
+    }catch(err){
+      errEl.textContent = err.message;
+      errEl.style.display = 'block';
+    }finally{
+      userMgmtAssignBtn.disabled = false;
+    }
+  });
+  document.getElementById('user-mgmt-list').addEventListener('click', async (e)=>{
+    const btn = e.target.closest('.user-mgmt-remove-btn');
+    if(!btn) return;
+    const email = btn.getAttribute('data-email');
+    if(!confirm('Remove role assignment for ' + email + '? They will become a plain User.')) return;
+    btn.disabled = true;
+    try{ await assignRole(email, 'user'); }
+    catch(err){ alert('Could not remove: ' + err.message); }
+  });
 }
 
 /* ---- Microsoft Graph plumbing ---- */
@@ -582,18 +797,18 @@ async function deleteTableRow(tableName, rowIndex){
    Best-effort uniqueness: highest existing Deal ID in the log table, +1, then
    re-checked against a fresh read right before committing. Excel/Graph has no
    atomic transactions, so this can't offer the same hard guarantee the earlier
-   Firestore version did — but collisions are very unlikely under normal,
+   old single-cell counter version did — but collisions are very unlikely under normal,
    occasional saving (a true zero-risk guarantee needs a real backend). */
 async function assignNewDealId(){
   const rows = await getTableRows(LOG_TABLE_NAME);
   let maxNum = 0;
   rows.forEach(r=>{
-    const n = parseInt(String(r.values[0][0] || '').trim(), 10);
+    const n = parseInt(String(r.values[0][MC.dealId] || '').trim(), 10);
     if(!isNaN(n) && n > maxNum) maxNum = n;
   });
   let candidate = maxNum + 1;
   const recheck = await getTableRows(LOG_TABLE_NAME);
-  const taken = new Set(recheck.map(r => String(r.values[0][0] || '').trim()));
+  const taken = new Set(recheck.map(r => String(r.values[0][MC.dealId] || '').trim()));
   let padded = String(candidate).padStart(5,'0');
   while(taken.has(padded)){
     candidate += 1;
@@ -705,39 +920,170 @@ document.getElementById('new-confirmation-btn').addEventListener('click', async 
   location.reload();
 });
 
-/* ---- Saved agreements (the shared TradeDealLog table) ----
-   Keyed by Deal ID: re-saving an already-saved agreement updates that row
-   instead of adding a duplicate. Columns 10-13 (Status, Approved By L1/L2/L3)
-   belong to the Power Automate approval flow — re-saves here only touch the
-   deal-data columns and always leave Status/approver columns exactly as
-   Power Automate last set them, so editing/resaving an agreement can never
-   accidentally wipe out approval progress. A brand-new submission starts at
-   "Pending L1" with all three approver columns blank.
+/* ---- Saved agreements (the shared, restructured TradeDealLog table) ----
+   One physical row per TRADE within an agreement (a 3-trade submission under
+   one Deal ID produces 3 rows). Re-saving an already-saved agreement deletes
+   all existing rows for that Deal ID and re-inserts fresh ones for the
+   current trades — but Status/Approved By/Approved Date are always read from
+   the existing rows first and carried forward unchanged, so editing/resaving
+   an agreement can never accidentally wipe out approval progress. A
+   brand-new submission starts at "Pending Approval" with approver/date blank.
+   Nothing is ever written to this table with a status other than what an
+   admin explicitly set via the Approve action — pending submissions sit in
+   this same table (that's how admins see them to approve) but are not
+   distinguishable from "the main list" until Status flips to "Approved";
+   downstream consumers of this workbook should filter on Status = Approved.
    Every signed-in user can technically read every row (that's inherent to a
    shared Excel file) — "My saved confirmations" is a client-side filter,
    not a security boundary. */
 async function saveConfirmationToHistory(includeBD, dealId){
   if(!currentAccount || !dealId) return;
   const rows = await getTableRows(LOG_TABLE_NAME);
-  const existing = rows.find(r => String(r.values[0][0] || '').trim() === dealId);
-  const approvalCols = existing ? existing.values[0].slice(9, 13) : ['Pending L1', '', '', ''];
-  const rowValues = [
-    dealId,
-    val('h-date'),
-    val('h-entity'),
-    val('h-buyer'),
-    val('h-order'),
-    includeBD ? 'Ops' : 'Customer',
-    currentAccount.username,
-    new Date().toISOString(),
-    lastHtml
-  ].concat(approvalCols);
-  if(existing){
-    await updateTableRow(LOG_TABLE_NAME, existing.index, rowValues);
+  const existingRows = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  const first = existingRows[0];
+  const prevStatus = first ? first.values[0][MC.status] : null;
+  // Resubmitting a Rejected deal sends it back to the start of the approval
+  // chain, clears the prior rejection comment, and clears any earlier
+  // level sign-offs so it's reviewed fresh. A brand-new submission also
+  // starts at Pending Level 1. Editing/resaving a deal that's still
+  // in-flight (or already Approved) carries its approval progress forward
+  // unchanged, so nothing already signed off is silently wiped out.
+  let status, approvedBy1, approvedDate1, approvedBy2, approvedDate2,
+      approvedBy3, approvedDate3, rejectedBy, rejectedDate, rejectReason;
+  if(!first || prevStatus === STATUS_REJECTED){
+    status = STATUS_PENDING_1;
+    approvedBy1 = approvedDate1 = approvedBy2 = approvedDate2 = '';
+    approvedBy3 = approvedDate3 = rejectedBy = rejectedDate = rejectReason = '';
   }else{
-    await addTableRow(LOG_TABLE_NAME, rowValues);
+    status = prevStatus;
+    approvedBy1 = first.values[0][MC.approvedBy1];
+    approvedDate1 = first.values[0][MC.approvedDate1];
+    approvedBy2 = first.values[0][MC.approvedBy2];
+    approvedDate2 = first.values[0][MC.approvedDate2];
+    approvedBy3 = first.values[0][MC.approvedBy3];
+    approvedDate3 = first.values[0][MC.approvedDate3];
+    rejectedBy = first.values[0][MC.rejectedBy];
+    rejectedDate = first.values[0][MC.rejectedDate];
+    rejectReason = first.values[0][MC.rejectReason];
+  }
+  const nowIso = new Date().toISOString();
+
+  // Delete existing rows for this Deal ID highest-index-first, so earlier
+  // deletes don't shift the index of rows we haven't deleted yet.
+  const toDelete = existingRows.map(r => r.index).sort((a,b)=> b - a);
+  for(const idx of toDelete){
+    await deleteTableRow(LOG_TABLE_NAME, idx);
+  }
+
+  const tradeCount = parseInt(document.getElementById('trade-count').value, 10) || 1;
+  for(let n = 1; n <= tradeCount; n++){
+    const matching = val('t'+n+'-m-matching');
+    const matchingActive = matching && matching !== 'Open Position';
+    const row = new Array(COL_COUNT).fill('');
+    row[MC.salesPic] = val('h-bd');
+    row[MC.entity] = val('h-entity');
+    row[MC.agreementDate] = val('h-date');
+    row[MC.dealId] = dealId;
+    row[MC.supplyDemand] = val('h-order');
+    row[MC.company] = val('h-buyer');
+    row[MC.broker] = val('t'+n+'-broker');
+    row[MC.country] = val('t'+n+'-country');
+    row[MC.registry] = val('t'+n+'-registry');
+    row[MC.tech] = val('t'+n+'-tech');
+    row[MC.matching] = matching;
+    row[MC.volume] = val('t'+n+'-volume');
+    row[MC.deliveryStart] = val('t'+n+'-dstart');
+    row[MC.deliveryEnd] = val('t'+n+'-dend');
+    row[MC.vFromMM] = val('t'+n+'-vintage-start-month');
+    row[MC.vFromYY] = val('t'+n+'-vintage-start-year');
+    row[MC.vToMM] = val('t'+n+'-vintage-end-month');
+    row[MC.vToYY] = val('t'+n+'-vintage-end-year');
+    row[MC.currency] = val('t'+n+'-currency');
+    row[MC.unitPrice] = val('t'+n+'-price');
+    row[MC.specialReq] = val('t'+n+'-remarks');
+    row[MC.cod] = val('t'+n+'-m-cod');
+    row[MC.tigrsIrecName] = val('t'+n+'-transfer');
+    row[MC.paymentTerm] = val('t'+n+'-payterm');
+    row[MC.buyerSeller] = matchingActive ? val('t'+n+'-m-name') : '';
+    row[MC.noOfRecs] = matchingActive ? val('t'+n+'-m-recs') : '';
+    row[MC.whichDeal] = val('t'+n+'-m-deal');
+    row[MC.deliveryDateM] = val('t'+n+'-m-ddate');
+    row[MC.submittedBy] = currentAccount.username;
+    row[MC.submittedDate] = nowIso;
+    row[MC.generatedHtml] = (n === 1) ? lastHtml : '';
+    row[MC.status] = status;
+    row[MC.approvedBy1] = approvedBy1;
+    row[MC.approvedDate1] = approvedDate1;
+    row[MC.approvedBy2] = approvedBy2;
+    row[MC.approvedDate2] = approvedDate2;
+    row[MC.approvedBy3] = approvedBy3;
+    row[MC.approvedDate3] = approvedDate3;
+    row[MC.rejectedBy] = rejectedBy;
+    row[MC.rejectedDate] = rejectedDate;
+    row[MC.rejectReason] = rejectReason;
+    await addTableRow(LOG_TABLE_NAME, row);
   }
   await loadHistory();
+}
+/* Advances a deal one step through the approval chain, writing the
+   approver + timestamp for whichever level the current status corresponds
+   to. Blocked client-side unless canActOnStatus() says this role may act on
+   the deal's current status — superadmin can act at any pending level. */
+async function approveDeal(dealId){
+  if(!dealId) return;
+  const rows = await getTableRows(LOG_TABLE_NAME);
+  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  if(!matching.length) return;
+  const currentStatus = matching[0].values[0][MC.status];
+  if(!canActOnStatus(currentStatus)) throw new Error('You are not able to approve this deal at its current stage.');
+  const nowIso = new Date().toISOString();
+  let nextStatus, byCol, dateCol;
+  if(currentStatus === STATUS_PENDING_1){ nextStatus = STATUS_PENDING_2; byCol = MC.approvedBy1; dateCol = MC.approvedDate1; }
+  else if(currentStatus === STATUS_PENDING_2){ nextStatus = STATUS_PENDING_3; byCol = MC.approvedBy2; dateCol = MC.approvedDate2; }
+  else if(currentStatus === STATUS_PENDING_3){ nextStatus = STATUS_APPROVED; byCol = MC.approvedBy3; dateCol = MC.approvedDate3; }
+  else return;
+  for(const r of matching){
+    const values = r.values[0].slice();
+    values[MC.status] = nextStatus;
+    values[byCol] = currentAccount.username;
+    values[dateCol] = nowIso;
+    await updateTableRow(LOG_TABLE_NAME, r.index, values);
+  }
+  await loadHistory();
+}
+/* Rejects a deal at whatever stage it's currently pending at, recording who
+   rejected it, when, and the comment the submitter will see. Rejection
+   doesn't erase earlier level sign-offs — they stay visible in the approval
+   trail — but the deal must restart from Level 1 if resubmitted. */
+async function rejectDeal(dealId, reason){
+  if(!dealId) return;
+  const trimmedReason = (reason||'').trim();
+  if(!trimmedReason) throw new Error('A comment is required so the submitter knows why this was rejected.');
+  const rows = await getTableRows(LOG_TABLE_NAME);
+  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  if(!matching.length) return;
+  const currentStatus = matching[0].values[0][MC.status];
+  if(!canActOnStatus(currentStatus)) throw new Error('You are not able to reject this deal at its current stage.');
+  const nowIso = new Date().toISOString();
+  for(const r of matching){
+    const values = r.values[0].slice();
+    values[MC.status] = STATUS_REJECTED;
+    values[MC.rejectedBy] = currentAccount.username;
+    values[MC.rejectedDate] = nowIso;
+    values[MC.rejectReason] = trimmedReason;
+    await updateTableRow(LOG_TABLE_NAME, r.index, values);
+  }
+  await loadHistory();
+}
+function groupByDealId(rows){
+  const groups = {};
+  const order = [];
+  rows.forEach(r=>{
+    const id = String(r.values[0][MC.dealId] || '').trim();
+    if(!groups[id]){ groups[id] = []; order.push(id); }
+    groups[id].push(r);
+  });
+  return order.map(id => ({ dealId: id, rows: groups[id] }));
 }
 async function loadHistory(){
   const listEl = document.getElementById('history-list');
@@ -746,61 +1092,146 @@ async function loadHistory(){
     const rows = await getTableRows(LOG_TABLE_NAME);
     logRowsCache = rows;
     const myEmail = (currentAccount.username || '').toLowerCase();
-    const mine = rows.filter(r => (String(r.values[0][6] || '')).toLowerCase() === myEmail)
-      .sort((a,b)=> String(b.values[0][7]||'').localeCompare(String(a.values[0][7]||'')));
-    renderHistoryTable(listEl, mine, false);
+    const mineGroups = groupByDealId(
+      rows.filter(r => (String(r.values[0][MC.submittedBy] || '')).toLowerCase() === myEmail)
+    ).sort((a,b)=> String(b.rows[0].values[0][MC.submittedDate]||'').localeCompare(String(a.rows[0].values[0][MC.submittedDate]||'')));
+    renderHistoryTable(listEl, mineGroups, {showOwner:false, showActions:false});
+
     if(isAdmin){
+      const allGroups = groupByDealId(rows)
+        .sort((a,b)=> String(b.rows[0].values[0][MC.submittedDate]||'').localeCompare(String(a.rows[0].values[0][MC.submittedDate]||'')));
+
+      const queueEl = document.getElementById('approval-queue-list');
+      const queueGroups = allGroups.filter(g => canActOnStatus(g.rows[0].values[0][MC.status] || STATUS_PENDING_1));
+      renderHistoryTable(queueEl, queueGroups, {showOwner:true, showActions:true, emptyText:'Nothing waiting on your approval right now.'});
+
       const adminListEl = document.getElementById('admin-history-list');
-      const all = rows.slice().sort((a,b)=> String(b.values[0][7]||'').localeCompare(String(a.values[0][7]||'')));
-      renderHistoryTable(adminListEl, all, true);
+      renderHistoryTable(adminListEl, allGroups, {showOwner:true, showActions:false});
     }
   }catch(err){
     listEl.innerHTML = '<p style="font-size:13px;color:#8a2d1f;">Could not load: ' + escapeHtml(err.message) + '</p>';
   }
 }
 function statusBadge(status){
-  const s = status || 'Pending L1';
-  const color = s === 'Approved' ? '#1f7a4d' : (s === 'Rejected' ? '#8a2d1f' : '#8a6d1f');
+  const s = status || STATUS_PENDING_1;
+  const color = s === STATUS_APPROVED ? '#1f7a4d' : (s === STATUS_REJECTED ? '#8a2d1f' : '#8a6d1f');
   return '<span style="font-weight:600;color:'+color+';">'+escapeHtml(s)+'</span>';
 }
-function renderHistoryTable(el, rows, showOwner){
-  if(!rows.length){
-    el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No saved confirmations yet.</p>';
+// Short "L1 ✓ name · L2 ✓ name" trail of whoever has signed off so far.
+function approvalTrailText(v){
+  const parts = [];
+  if(v[MC.approvedBy1]) parts.push('L1 ✓ '+v[MC.approvedBy1]);
+  if(v[MC.approvedBy2]) parts.push('L2 ✓ '+v[MC.approvedBy2]);
+  if(v[MC.approvedBy3]) parts.push('L3 ✓ '+v[MC.approvedBy3]);
+  return parts.join(' · ');
+}
+function renderHistoryTable(el, groups, opts){
+  opts = opts || {};
+  const showOwner = !!opts.showOwner;
+  const showActions = !!opts.showActions;
+  const colCount = showOwner ? 7 : 6;
+  if(!groups.length){
+    el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">'+escapeHtml(opts.emptyText || 'No saved confirmations yet.')+'</p>';
     return;
   }
   let html = '<table><tr>' + (showOwner ? '<th style="text-align:left;padding:6px;">Owner</th>' : '') +
     '<th style="text-align:left;padding:6px;">Deal ID</th>' +
     '<th style="text-align:left;padding:6px;">Date</th>' +
     '<th style="text-align:left;padding:6px;">Counterparty</th>' +
-    '<th style="text-align:left;padding:6px;">Version</th>' +
+    '<th style="text-align:left;padding:6px;">Trades</th>' +
     '<th style="text-align:left;padding:6px;">Status</th>' +
     '<th style="padding:6px;"></th></tr>';
-  rows.forEach(r=>{
-    const v = r.values[0];
+  groups.forEach(g=>{
+    const v = g.rows[0].values[0];
+    const status = v[MC.status] || STATUS_PENDING_1;
+    const canAct = showActions && canActOnStatus(status);
+    const trail = approvalTrailText(v);
     html += '<tr style="border-top:1px solid var(--border);">' +
-      (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[6]||'')+'</td>' : '') +
-      '<td style="padding:6px;">'+escapeHtml(v[0]||'')+'</td>' +
-      '<td style="padding:6px;">'+escapeHtml(v[1]||'')+'</td>' +
-      '<td style="padding:6px;">'+escapeHtml(v[3]||'')+'</td>' +
-      '<td style="padding:6px;">'+escapeHtml(v[5]||'')+'</td>' +
-      '<td style="padding:6px;">'+statusBadge(v[9])+'</td>' +
-      '<td style="padding:6px;"><button type="button" class="secondary history-view-btn" data-dealid="'+escapeHtml(v[0]||'')+'" style="padding:4px 10px;font-size:12px;">View</button></td>' +
+      (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[MC.submittedBy]||'')+'</td>' : '') +
+      '<td style="padding:6px;">'+escapeHtml(v[MC.dealId]||'')+'</td>' +
+      '<td style="padding:6px;">'+escapeHtml(v[MC.agreementDate]||'')+'</td>' +
+      '<td style="padding:6px;">'+escapeHtml(v[MC.company]||'')+'</td>' +
+      '<td style="padding:6px;">'+g.rows.length+'</td>' +
+      '<td style="padding:6px;">'+statusBadge(status)+
+        (trail ? '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">'+escapeHtml(trail)+'</div>' : '')+
+      '</td>' +
+      '<td style="padding:6px;white-space:nowrap;">' +
+        '<button type="button" class="secondary history-view-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;">View</button>' +
+        (canAct ? ' <button type="button" class="secondary history-approve-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;">Approve</button>' +
+                  ' <button type="button" class="secondary history-reject-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;color:#8a2d1f;border-color:#c1493a;">Reject</button>' : '') +
+      '</td>' +
     '</tr>';
+    if(status === STATUS_REJECTED && v[MC.rejectReason]){
+      html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
+        '<div style="background:#fdecea;border:1px solid #e2a49a;color:#8a2d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
+        '<strong>Rejected'+(v[MC.rejectedBy]?(' by '+escapeHtml(v[MC.rejectedBy])):'')+':</strong> '+escapeHtml(v[MC.rejectReason]) +
+        '</div></td></tr>';
+    }
   });
   html += '</table>';
   el.innerHTML = html;
 }
+let rejectModalDealId = null;
+function openRejectModal(dealId){
+  rejectModalDealId = dealId;
+  document.getElementById('reject-modal-dealid').textContent = dealId;
+  document.getElementById('reject-comment').value = '';
+  document.getElementById('reject-modal-error').style.display = 'none';
+  document.getElementById('reject-modal-overlay').style.display = 'flex';
+  document.getElementById('reject-comment').focus();
+}
+function closeRejectModal(){
+  document.getElementById('reject-modal-overlay').style.display = 'none';
+  rejectModalDealId = null;
+}
+document.getElementById('reject-modal-cancel').addEventListener('click', closeRejectModal);
+document.getElementById('reject-modal-overlay').addEventListener('click', (e)=>{
+  if(e.target.id === 'reject-modal-overlay') closeRejectModal();
+});
+document.getElementById('reject-modal-submit').addEventListener('click', async ()=>{
+  const dealId = rejectModalDealId;
+  const reason = document.getElementById('reject-comment').value;
+  const errEl = document.getElementById('reject-modal-error');
+  const btn = document.getElementById('reject-modal-submit');
+  errEl.style.display = 'none';
+  btn.disabled = true;
+  try{
+    await rejectDeal(dealId, reason);
+    closeRejectModal();
+  }catch(err){
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
+  }finally{
+    btn.disabled = false;
+  }
+});
 document.addEventListener('click', (e)=>{
-  const btn = e.target.closest('.history-view-btn');
-  if(!btn) return;
-  const dealId = btn.getAttribute('data-dealid');
-  const row = logRowsCache.find(r => String(r.values[0][0] || '').trim() === dealId);
-  if(!row) return;
-  lastHtml = row.values[0][8];
-  document.getElementById('table-preview').innerHTML = lastHtml;
-  document.getElementById('output-section').style.display = 'flex';
-  document.getElementById('copy-status').style.display = 'none';
-  document.getElementById('output-section').scrollIntoView({behavior:'smooth', block:'nearest'});
+  const viewBtn = e.target.closest('.history-view-btn');
+  if(viewBtn){
+    const dealId = viewBtn.getAttribute('data-dealid');
+    const group = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+    const withHtml = group.find(r => r.values[0][MC.generatedHtml]);
+    if(!withHtml) return;
+    lastHtml = withHtml.values[0][MC.generatedHtml];
+    document.getElementById('table-preview').innerHTML = lastHtml;
+    document.getElementById('output-section').style.display = 'flex';
+    document.getElementById('copy-status').style.display = 'none';
+    document.getElementById('output-section').scrollIntoView({behavior:'smooth', block:'nearest'});
+    return;
+  }
+  const approveBtn = e.target.closest('.history-approve-btn');
+  if(approveBtn){
+    const dealId = approveBtn.getAttribute('data-dealid');
+    if(confirm('Approve Deal ID ' + dealId + ' at your level? This will advance it to the next stage (or mark it fully Approved if this is the final level).')){
+      approveBtn.disabled = true;
+      approveDeal(dealId).catch(err=>{ console.error('Approve failed', err); alert('Approve failed: ' + err.message); });
+    }
+    return;
+  }
+  const rejectBtn = e.target.closest('.history-reject-btn');
+  if(rejectBtn){
+    openRejectModal(rejectBtn.getAttribute('data-dealid'));
+  }
 });
 
 
@@ -1768,7 +2199,7 @@ document.getElementById('copy-btn').addEventListener('click', async ()=>{
 });
 
 /* ---- Save agreement: assigns the global Deal ID (first save only) and
-   writes the confirmation into this user's private Firestore record ----
+   writes the confirmation into the shared SharePoint log table ----
    The Deal ID stays unassigned/blank while a draft is only being edited; it's
    claimed from the shared counter the moment "Save agreement" succeeds, and
    never reassigned again for this agreement, so the same Deal ID always maps
