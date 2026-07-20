@@ -2,213 +2,2270 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Trade Confirmation Table Generator</title>
-
+<script src="https://unpkg.com/@azure/msal-browser@3/lib/msal-browser.min.js"></script>
 <style>
-body { font-family: Arial; padding:20px; }
-.card { border:1px solid #ddd; padding:15px; margin-bottom:20px; }
-.output-header { display:flex; justify-content:space-between; }
-#preview-meta { font-size:12px; color:#666; }
-table { border-collapse: collapse; width:100%; }
-td { border:1px solid #333; padding:6px; }
-.small { font-size:12px; color:#666; }
+  :root{
+    --bg:#f5f5f4;
+    --surface:#ffffff;
+    --surface-2:#fafaf9;
+    --border:#e2e0dc;
+    --border-strong:#3a3a38;
+    --text:#2b2a28;
+    --text-secondary:#6b6963;
+    --accent:#c15f3c;
+    --accent-hover:#a94f30;
+    --success:#3f7d4f;
+    --radius:8px;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    padding:32px 16px 64px;
+  }
+  .wrap{
+    max-width:960px;
+    margin:0 auto;
+    display:flex;
+    flex-direction:column;
+    gap:24px;
+  }
+  h1{
+    font-size:20px;
+    font-weight:600;
+    margin:0;
+  }
+  p.subtitle{
+    margin:4px 0 0;
+    color:var(--text-secondary);
+    font-size:14px;
+  }
+  .card{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:12px;
+    padding:20px 24px;
+  }
+  .card-title{
+    font-size:14px;
+    font-weight:600;
+    margin:0 0 14px;
+  }
+  .grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+    gap:12px 16px;
+  }
+  label{
+    font-size:12px;
+    color:var(--text-secondary);
+    display:block;
+    margin-bottom:4px;
+  }
+  input[type=text], input[type=date], select, textarea{
+    width:100%;
+    padding:8px 10px;
+    font-size:14px;
+    border:1px solid var(--border);
+    border-radius:6px;
+    background:var(--surface);
+    color:var(--text);
+    font-family:inherit;
+  }
+  textarea{
+    resize:vertical;
+    min-height:70px;
+    line-height:1.4;
+  }
+  input:focus, select:focus, textarea:focus{
+    outline:2px solid var(--accent);
+    outline-offset:1px;
+    border-color:var(--accent);
+  }
+  input[readonly]{
+    background:var(--surface-2);
+    color:var(--text-secondary);
+    cursor:not-allowed;
+  }
+  input[readonly]:focus{
+    outline:none;
+    border-color:var(--border);
+  }
+  .trade-count-row{
+    display:flex;
+    align-items:center;
+    gap:12px;
+  }
+  select#trade-count{width:90px;}
+  .trade-block{
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    padding:16px;
+    background:var(--surface-2);
+  }
+  .trade-block + .trade-block{margin-top:12px;}
+  .trade-title{
+    font-size:13px;
+    font-weight:600;
+    margin:0 0 12px;
+  }
+  .sub-title{
+    font-size:12px;
+    color:var(--text-secondary);
+    margin:16px 0 6px;
+  }
+  button{
+    font-family:inherit;
+    font-size:14px;
+    font-weight:600;
+    padding:10px 18px;
+    border-radius:8px;
+    border:none;
+    cursor:pointer;
+    background:var(--accent);
+    color:#fff;
+    transition:background .15s ease;
+  }
+  button:hover{background:var(--accent-hover);}
+  button.secondary{
+    background:transparent;
+    color:var(--text);
+    border:1px solid var(--border-strong);
+  }
+  button.secondary:hover{background:var(--surface-2);}
+  #output-section{
+    display:none;
+    flex-direction:column;
+    gap:12px;
+  }
+  .output-header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    flex-wrap:wrap;
+    gap:10px;
+  }
+  #table-preview{
+    overflow-x:auto;
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    padding:10px;
+    background:var(--surface-2);
+  }
+  #table-preview table{
+    border-collapse:collapse;
+    width:100%;
+    font-size:13px;
+    table-layout:fixed;
+  }
+  #table-preview td{
+    border:2px solid var(--border-strong);
+    padding:6px 10px;
+    word-wrap:break-word;
+    overflow-wrap:break-word;
+  }
+  #copy-status{
+    font-size:13px;
+    color:var(--success);
+    margin:0;
+    display:none;
+  }
+  footer{
+    text-align:center;
+    font-size:12px;
+    color:var(--text-secondary);
+    margin-top:12px;
+  }
+  .card-title-row{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    margin:0 0 6px;
+  }
+  .card-title-row .card-title{margin:0;}
+  #lock-note{
+    font-size:12px;
+    color:var(--text-secondary);
+    margin:0 0 14px;
+  }
+  .field-label-row{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:6px;
+    margin-bottom:4px;
+  }
+  .field-label-row label{margin-bottom:0;}
+  .field-lock{
+    background:transparent;
+    border:none;
+    padding:0;
+    margin:0;
+    font-size:13px;
+    line-height:1;
+    cursor:pointer;
+    color:var(--text-secondary);
+    flex-shrink:0;
+  }
+  .field-lock:hover{color:var(--text);}
+  .field-lock.is-locked{color:var(--accent);}
+  .field-locked input,
+  .field-locked select,
+  .field-locked textarea{
+    background:var(--surface-2);
+    color:var(--text-secondary);
+    border-color:var(--border);
+    cursor:not-allowed;
+    pointer-events:none;
+  }
+  .section-lock{
+    background:transparent;
+    color:var(--text-secondary);
+    border:1px solid var(--border-strong);
+    font-size:12px;
+    font-weight:600;
+    padding:6px 12px;
+    border-radius:6px;
+    cursor:pointer;
+    flex-shrink:0;
+    white-space:nowrap;
+  }
+  .section-lock:hover{background:var(--surface-2);color:var(--text);}
+  .section-lock.is-locked{
+    background:var(--accent);
+    color:#fff;
+    border-color:var(--accent);
+  }
+  .section-lock.is-locked:hover{background:var(--accent-hover);}
+  .field-lock:disabled{
+    opacity:.35;
+    cursor:not-allowed;
+  }
+  .version-choice{
+    display:flex;
+    align-items:center;
+    gap:6px;
+    font-size:13px;
+    color:var(--text);
+    cursor:pointer;
+  }
+  .version-choice input{width:auto;margin:0;}
+  .warning-box{
+    display:none;
+    background:#fdecea;
+    border:1px solid #e2a49a;
+    color:#8a2d1f;
+    border-radius:var(--radius);
+    padding:14px 18px;
+    font-size:13px;
+    line-height:1.5;
+  }
+  .warning-box strong{display:block;margin-bottom:6px;font-size:13px;}
+  .warning-box ul{margin:0;padding-left:20px;columns:2;-webkit-columns:2;column-gap:24px;}
+  .warning-box li{margin:2px 0;break-inside:avoid;}
+  @media (max-width:600px){
+    .warning-box ul{columns:1;}
+  }
+  .field-missing input,
+  .field-missing select,
+  .field-missing textarea{
+    border-color:#c1493a !important;
+    box-shadow:0 0 0 1px #c1493a;
+  }
+  #login-overlay{
+    position:fixed;
+    inset:0;
+    background:var(--bg);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    z-index:1000;
+    padding:16px;
+  }
+  #login-card{
+    width:100%;
+    max-width:360px;
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:12px;
+    padding:28px 24px;
+    display:flex;
+    flex-direction:column;
+    gap:12px;
+  }
+  #login-card h2{margin:0 0 4px;font-size:17px;}
+  #login-card p{margin:0 0 8px;font-size:13px;color:var(--text-secondary);}
+  #login-error{
+    display:none;
+    font-size:12px;
+    color:#8a2d1f;
+    background:#fdecea;
+    border:1px solid #e2a49a;
+    border-radius:6px;
+    padding:8px 10px;
+  }
+  .login-btn-row{display:flex;gap:8px;margin-top:4px;}
+  .login-btn-row button{flex:1;}
+  #user-bar{
+    display:none;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    flex-wrap:wrap;
+    font-size:13px;
+    color:var(--text-secondary);
+  }
+  #user-bar .right{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  #history-list table{width:100%;border-collapse:collapse;}
+  #history-list th{font-size:12px;color:var(--text-secondary);border-bottom:1px solid var(--border);}
+  #draft-status{font-size:12px;color:var(--text-secondary);margin:0;}
+  #user-role-label{color:var(--text-secondary);font-weight:400;}
+  #user-mgmt-list table{width:100%;border-collapse:collapse;}
+  #user-mgmt-list th{font-size:12px;color:var(--text-secondary);border-bottom:1px solid var(--border);text-align:left;padding:6px;}
+  #user-mgmt-list td{padding:6px;font-size:13px;}
 </style>
 </head>
-
 <body>
 
-<div class="card">
-  <h3>Agreement</h3>
-
-  Deal ID:
-  <input id="dealId" type="text"><br><br>
-
-  Agreement Type:
-  <select id="agreementType">
-    <option value="Buyer">Buyer</option>
-    <option value="Seller">Seller</option>
-  </select><br><br>
-
-  Counterparty:
-  <input id="counterparty" type="text"><br><br>
-
-  Delivery Start:
-  <input id="startDate" type="date"><br><br>
-
-  Delivery End:
-  <input id="endDate" type="date"><br><br>
-
-  Tech (e.g. SLR):
-  <input id="tech" type="text"><br><br>
-
-  Country (e.g. MY):
-  <input id="country" type="text"><br><br>
-
-  <button onclick="generate()">Generate</button>
+<div id="login-overlay">
+  <div id="login-card">
+    <h2>Sign in</h2>
+    <p>Sign in with your organization's Microsoft account. Saved agreements are stored in the shared SharePoint file — your view only filters to your own by default.</p>
+    <div id="login-error"></div>
+    <div class="login-btn-row">
+      <button type="button" id="ms-signin-btn">Sign in with Microsoft</button>
+    </div>
+  </div>
 </div>
 
-<div id="output-section" class="card" style="display:none;">
-  <div class="output-header">
-    <div>
-      <b>Preview</b>
-      <div id="preview-meta"></div>
+<div class="wrap" id="app-content" style="display:none;">
+
+  <div id="user-bar">
+    <span>Signed in as <strong id="user-email-label"></strong><span id="user-role-label"></span></span>
+    <div class="right">
+      <span id="draft-status"></span>
+      <button type="button" id="new-confirmation-btn" class="secondary">New confirmation</button>
+      <button type="button" id="signout-btn" class="secondary">Sign out</button>
     </div>
-    <button onclick="copyTable()">Copy</button>
   </div>
 
-  <div id="table-preview"></div>
+  <div id="submitted-lock-banner" style="display:none;background:#fdf3e7;border:1px solid #e8c99a;color:#8a6d1f;border-radius:var(--radius);padding:12px 16px;font-size:13px;line-height:1.5;"></div>
+
+  <div>
+    <h1>Trade Confirmation Table Generator</h1>
+    <p class="subtitle" id="page-subtitle">Fill in the details below, generate the table, then copy it straight into your confirmation email — borders and "|" separators included.</p>
+  </div>
+
+  <div id="agreement-form-section" style="display:flex;flex-direction:column;gap:24px;">
+
+  <div class="card">
+    <div class="card-title-row">
+      <p class="card-title">Details</p>
+      <button type="button" class="section-lock" data-section="header" title="Lock this whole section">🔓 Lock section</button>
+    </div>
+    <p id="lock-note">Click the 🔓 next to any field to lock just that field, or use "Lock section" above to lock every field in Details at once. Locked fields stay filled in and protected the next time you open this file, even when you change the number of trades. While a section is locked, its individual field locks are held in place — unlock the section to edit again.</p>
+    <div id="header-fields" class="grid"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title-row">
+      <p class="card-title">Trades</p>
+      <button type="button" class="section-lock" data-section="trades" title="Lock this whole section">🔓 Lock section</button>
+    </div>
+    <div class="trade-count-row">
+      <label style="margin:0;">Number of trades</label>
+      <select id="trade-count">
+        <option value="1">1</option>
+        <option value="2">2</option>
+        <option value="3" selected>3</option>
+        <option value="4">4</option>
+        <option value="5">5</option>
+        <option value="6">6</option>
+      </select>
+    </div>
+    <div id="trades-container" style="margin-top:16px;"></div>
+  </div>
+
+  <div class="card">
+    <p class="card-title">Output version</p>
+    <div style="display:flex;gap:20px;flex-wrap:wrap;">
+      <label class="version-choice">
+        <input type="radio" name="output-version" id="version-full" value="full" checked>
+        Ops version
+      </label>
+      <label class="version-choice">
+        <input type="radio" name="output-version" id="version-no-bd" value="no-bd">
+        Customer version
+      </label>
+    </div>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+    <button id="generate-btn">Generate table</button>
+    <button id="save-agreement-btn" class="secondary" type="button">Save agreement</button>
+  </div>
+  <p id="save-note" style="font-size:12px;color:var(--text-secondary);margin:-14px 0 0;display:none;"></p>
+
+  <div id="validation-warning" class="warning-box"></div>
+
+  </div>
+
+  <div id="output-section" class="card">
+    <div class="output-header">
+      <p class="card-title" style="margin:0;">Preview</p>
+      <button id="copy-btn" class="secondary">Copy table</button>
+    </div>
+    <div id="table-preview"></div>
+    <p id="copy-status">Copied — paste directly into your email.</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0;">Tip: make sure your email is in rich text / HTML mode (not "plain text") before pasting, or the borders and black dividers won't show.</p>
+  </div>
+
+  <div class="card" id="my-history-card">
+    <p class="card-title">My saved confirmations</p>
+    <div id="history-list"><p style="font-size:13px;color:var(--text-secondary);">Loading...</p></div>
+  </div>
+
+  <div class="card" id="approval-queue-card" style="display:none;">
+    <p class="card-title">Approval queue</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Confirmations currently waiting on your approval level. Superadmins see every pending stage.</p>
+    <div id="approval-queue-list"><p style="font-size:13px;color:var(--text-secondary);">Loading...</p></div>
+  </div>
+
+  <div class="card" id="admin-history-card" style="display:none;">
+    <p class="card-title">All confirmations (Admin)</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Visible to Admin/Super Admin accounts — shows every saved confirmation across every user, read-only, with the full approval trail.</p>
+    <div id="admin-history-list"><p style="font-size:13px;color:var(--text-secondary);">Loading...</p></div>
+  </div>
+
+  <div class="card" id="user-mgmt-card" style="display:none;">
+    <p class="card-title">User management</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Superadmin only. Assign each person's approval level — Admin Level 1, 2, 3, or plain User. Levels approve in order (1 → 2 → 3) before a deal counts as fully Approved.</p>
+    <div id="user-mgmt-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;margin-bottom:10px;"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;">
+      <div style="flex:1;min-width:220px;">
+        <label>Email</label>
+        <input type="text" id="user-mgmt-email" placeholder="name@company.com">
+      </div>
+      <div style="min-width:170px;">
+        <label>Role</label>
+        <select id="user-mgmt-role">
+          <option value="admin1">Admin — Level 1</option>
+          <option value="admin2">Admin — Level 2</option>
+          <option value="admin3">Admin — Level 3</option>
+          <option value="user" selected>User</option>
+        </select>
+      </div>
+      <button type="button" id="user-mgmt-assign-btn">Assign role</button>
+    </div>
+    <div id="user-mgmt-list"><p style="font-size:13px;color:var(--text-secondary);">Loading...</p></div>
+  </div>
+
+  <footer>Built from the Trade Confirmation email SOP · draft autosaves per account, approval and history saved to the shared SharePoint workbook</footer>
+
+</div>
+
+<div id="reject-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
+  <div style="width:100%;max-width:420px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:10px;">
+    <h2 style="margin:0;font-size:16px;">Reject Deal ID <span id="reject-modal-dealid"></span></h2>
+    <p style="margin:0;font-size:13px;color:var(--text-secondary);">This comment is shown to the person who submitted the confirmation so they know what to fix.</p>
+    <label style="margin:4px 0 0;">Comment (required)</label>
+    <textarea id="reject-comment" placeholder="e.g. Price/REC doesn't match the agreed rate — please confirm and resubmit." style="min-height:90px;"></textarea>
+    <div id="reject-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
+      <button type="button" class="secondary" id="reject-modal-cancel">Cancel</button>
+      <button type="button" id="reject-modal-submit" style="background:#c1493a;">Reject</button>
+    </div>
+  </div>
 </div>
 
 <script>
+/* =======================================================================
+   MICROSOFT SIGN-IN + SHAREPOINT EXCEL SETUP — fill these in before use.
+   ======================================================================= */
+const TENANT_ID = "ab7c8c1e-dc1d-431f-ba8b-e4de2b047f8b";           // Directory (tenant) ID from the Azure app registration overview page
+const CLIENT_ID = "5b17f2d1-ca2a-4521-9d03-01cda2e86c16";           // Application (client) ID from the same page
+const SP_HOSTNAME = "saxonrenewables.sharepoint.com";
+const SP_SITE_PATH = "/sites/Operations";
+const SP_FILE_NAME = "Master Folder_250923 - Main.xlsx";
+const LOG_TABLE_NAME = "TradeDealLog";        // must match the Excel Table name you create
+// Column layout of the restructured TradeDealLog "main list" table.
+// One physical row per TRADE (a multi-trade agreement produces several rows
+// sharing the same Agreement ID). Create the Excel Table with these 41
+// columns in exactly this order:
+// Sales PIC, Entity, Agreement Date, Agreement ID, Supply/Demand, Company,
+// Broker, Country, Registry, Tech, Match/Open Position, Volume (RECs),
+// Delivery (Start date), Delivery (End date), V (From MM), V (From YY),
+// V (To MM), V (To YY), Currency, Unit Price, Special Requirement, COD,
+// TIGRS / IREC NAME, Payment Term, Buyer/Seller, No of RECs, Which deal,
+// Delivery Date, Submitted By, Submitted Date, Generated HTML, Status,
+// Approved By (Level 1), Approved Date (Level 1), Approved By (Level 2),
+// Approved Date (Level 2), Approved By (Level 3), Approved Date (Level 3),
+// Rejected By, Rejected Date, Rejection Comment
+const MC = {
+  salesPic:0, entity:1, agreementDate:2, dealId:3, supplyDemand:4, company:5,
+  broker:6, country:7, registry:8, tech:9, matching:10, volume:11,
+  deliveryStart:12, deliveryEnd:13, vFromMM:14, vFromYY:15, vToMM:16, vToYY:17,
+  currency:18, unitPrice:19, specialReq:20, cod:21, tigrsIrecName:22,
+  paymentTerm:23, buyerSeller:24, noOfRecs:25, whichDeal:26, deliveryDateM:27,
+  submittedBy:28, submittedDate:29, generatedHtml:30, status:31,
+  approvedBy1:32, approvedDate1:33, approvedBy2:34, approvedDate2:35,
+  approvedBy3:36, approvedDate3:37, rejectedBy:38, rejectedDate:39,
+  rejectReason:40
+};
+const COL_COUNT = 41;
+const DRAFT_TABLE_NAME = "TradeDealDrafts";   // must match the Excel Table name you create
+const GRAPH_SCOPES = ["Sites.ReadWrite.All", "User.Read"];
 
-/* ===============================
-   FULL HARDCODED MAPPING (FROM EXCEL)
-================================= */
+/* ---- Roles & 3-level approval ----
+   Approval is now handled entirely inside this app (no external
+   PowerAutomate approval flow) — if a PowerAutomate "start and wait for
+   approval" flow is still attached to this workbook/table, turn it off so it
+   doesn't also try to write to the Status/Approved columns.
 
-const COUNTRY_FULLNAME = {
-  "MY": "Malaysia",
-  "BN": "Brunei",
-  "CN": "China",
-  "JP": "Japan",
-  "SA": "South Asia",
-  "TH": "Thailand",
-  "IN": "India",
-  "PH": "Philipine",
-  "SG": "Singapore",
-  "VN": "Vietnam",
-  "ID": "Indonesia",
-  "AU": "Australia",
-  "TW": "Taiwan"
+   Roles: 'superadmin', 'admin1', 'admin2', 'admin3', 'user'.
+   A deal moves Pending Level 1 -> Pending Level 2 -> Pending Level 3 ->
+   Approved as each admin level signs off in order. Any admin level (or the
+   superadmin) can Reject at any pending stage, which requires a comment the
+   submitter can see. Superadmin can act at any level, in addition to
+   managing who holds each role. */
+const ROLES = ["superadmin","admin1","admin2","admin3","user"];
+const ROLE_LABELS = {
+  superadmin:"Super Admin", admin1:"Admin — Level 1", admin2:"Admin — Level 2",
+  admin3:"Admin — Level 3", user:"User"
+};
+// Hardcoded, UI-inaccessible superadmin(s) — a safety net so the role
+// assignment table can never be edited into a state with zero superadmins.
+const SUPERADMIN_EMAILS = ["shauyuan.tan@saxonrenewables.com"];
+const USER_ROLES_TABLE_NAME = "TradeUserRoles"; // must match the Excel Table name you create
+// Column layout for the TradeUserRoles table: Email, Role, Assigned By, Assigned Date
+const RC = { email:0, role:1, assignedBy:2, assignedDate:3 };
+const STATUS_PENDING_1 = "Pending Level 1";
+const STATUS_PENDING_2 = "Pending Level 2";
+const STATUS_PENDING_3 = "Pending Level 3";
+const STATUS_APPROVED = "Approved";
+const STATUS_REJECTED = "Rejected";
+
+const msalInstance = new msal.PublicClientApplication({
+  auth: {
+    clientId: CLIENT_ID,
+    authority: "https://login.microsoftonline.com/" + TENANT_ID,
+    redirectUri: window.location.origin + window.location.pathname
+  },
+  cache: { cacheLocation: "sessionStorage" }
+});
+
+let currentAccount = null;
+let siteId = null;
+let fileItemId = null;
+let currentDealDocId = null;
+let draftRowIndex = null;      // this user's row index in the Drafts table, or null if none saved yet
+let logRowsCache = [];         // last-fetched rows from the log table, for the "View" buttons
+let userRolesCache = [];       // last-fetched rows from the TradeUserRoles table
+let currentUserRole = 'user';
+let isAdmin = false;           // true for admin1/admin2/admin3/superadmin — any elevated role
+let draftSaveTimer = null;
+let suppressAutosave = false;  // true while programmatically filling the form from a loaded draft
+
+const loginOverlay = document.getElementById('login-overlay');
+const appContent = document.getElementById('app-content');
+const userBar = document.getElementById('user-bar');
+
+function showLoginError(err){
+  const errEl = document.getElementById('login-error');
+  errEl.textContent = (err && err.message) ? err.message : String(err);
+  errEl.style.display = 'block';
+}
+
+document.getElementById('ms-signin-btn').addEventListener('click', async ()=>{
+  const errEl = document.getElementById('login-error');
+  errEl.style.display = 'none';
+  try{
+    const result = await msalInstance.loginPopup({ scopes: GRAPH_SCOPES });
+    currentAccount = result.account;
+    await onSignedIn();
+  }catch(err){
+    showLoginError(err);
+  }
+});
+document.getElementById('signout-btn').addEventListener('click', ()=>{
+  const account = currentAccount;
+  msalInstance.logoutPopup({ account }).finally(()=> location.reload());
+});
+
+window.addEventListener('load', async ()=>{
+  await msalInstance.initialize();
+  const accounts = msalInstance.getAllAccounts();
+  if(accounts.length){
+    currentAccount = accounts[0];
+    await onSignedIn();
+  }else{
+    loginOverlay.style.display = 'flex';
+    appContent.style.display = 'none';
+  }
+});
+
+async function onSignedIn(){
+  loginOverlay.style.display = 'none';
+  appContent.style.display = 'flex';
+  userBar.style.display = 'flex';
+  document.getElementById('user-email-label').textContent = currentAccount.username;
+  setDraftStatus('Connecting to SharePoint…');
+  try{
+    await resolveWorkbook();
+    await loadUserRoles();
+    applyRoleUi();
+    await loadDraftAndHistory();
+  }catch(err){
+    console.error('Could not connect to the workbook', err);
+    setDraftStatus('Could not connect to SharePoint: ' + err.message);
+  }
+}
+
+/* ---- Role resolution ----
+   Superadmin is a hardcoded allowlist (can't be edited away via the UI).
+   Every other role comes from the TradeUserRoles table, which the superadmin
+   manages from the "User management" panel. Anyone not listed is 'user'.
+   This is UI-only, same caveat as before: anyone with SharePoint access to
+   the file can already see/edit every row directly. */
+function getUserRole(email){
+  email = (email||'').toLowerCase();
+  if(SUPERADMIN_EMAILS.map(e=>e.toLowerCase()).includes(email)) return 'superadmin';
+  const entry = userRolesCache.find(r => (r.values[0][RC.email]||'').toLowerCase() === email);
+  const role = entry ? entry.values[0][RC.role] : 'user';
+  return ROLES.includes(role) ? role : 'user';
+}
+async function loadUserRoles(){
+  try{
+    userRolesCache = await getTableRows(USER_ROLES_TABLE_NAME);
+  }catch(err){
+    console.error('Could not load user roles', err);
+    userRolesCache = [];
+  }
+  currentUserRole = getUserRole(currentAccount.username);
+  isAdmin = currentUserRole !== 'user';
+}
+function applyRoleUi(){
+  document.getElementById('user-role-label').textContent = ' · ' + ROLE_LABELS[currentUserRole];
+  const isUserRole = currentUserRole === 'user';
+  // Only plain Users create/submit agreements. Every other role (admin1/2/3,
+  // superadmin) is here purely to review: they see the generated-table
+  // preview (when they click "View" from a queue/list), the Approval queue,
+  // and the full "All confirmations" list — never the creation form.
+  document.getElementById('agreement-form-section').style.display = isUserRole ? 'flex' : 'none';
+  document.getElementById('my-history-card').style.display = isUserRole ? 'block' : 'none';
+  document.getElementById('draft-status').style.display = isUserRole ? 'inline' : 'none';
+  document.getElementById('new-confirmation-btn').style.display = isUserRole ? 'inline-block' : 'none';
+  document.getElementById('page-subtitle').textContent = isUserRole
+    ? 'Fill in the details below, generate the table, then copy it straight into your confirmation email — borders and "|" separators included.'
+    : 'Review confirmations submitted by users — check the Approval queue for anything waiting on your level, or browse All confirmations for the full history.';
+  document.getElementById('admin-history-card').style.display = isAdmin ? 'block' : 'none';
+  document.getElementById('approval-queue-card').style.display = isAdmin ? 'block' : 'none';
+  const isSuperadmin = currentUserRole === 'superadmin';
+  document.getElementById('user-mgmt-card').style.display = isSuperadmin ? 'block' : 'none';
+  if(isSuperadmin) renderUserMgmtList();
+}
+/* Which pending status (if any) the current user's role is allowed to act
+   on. Superadmin can act on any pending stage. */
+function actionableStatusesForRole(role){
+  if(role === 'superadmin') return [STATUS_PENDING_1, STATUS_PENDING_2, STATUS_PENDING_3];
+  if(role === 'admin1') return [STATUS_PENDING_1];
+  if(role === 'admin2') return [STATUS_PENDING_2];
+  if(role === 'admin3') return [STATUS_PENDING_3];
+  return [];
+}
+function canActOnStatus(status){
+  return actionableStatusesForRole(currentUserRole).includes(status);
+}
+
+/* ---- User management (superadmin only) ----
+   Writes to the TradeUserRoles table: one row per email that's been given a
+   non-default role. Assigning a role to an email that already has a row
+   updates it in place; assigning 'user' to someone with an existing row
+   removes the row entirely (since 'user' is already the default for anyone
+   not listed). */
+async function assignRole(email, role){
+  email = (email||'').trim().toLowerCase();
+  if(!email) throw new Error('Enter an email address.');
+  if(SUPERADMIN_EMAILS.map(e=>e.toLowerCase()).includes(email)){
+    throw new Error('That address is already a hardcoded superadmin and can\'t be reassigned here.');
+  }
+  const existing = userRolesCache.find(r => (r.values[0][RC.email]||'').toLowerCase() === email);
+  if(role === 'user'){
+    if(existing) await deleteTableRow(USER_ROLES_TABLE_NAME, existing.index);
+  }else if(existing){
+    const values = existing.values[0].slice();
+    values[RC.role] = role;
+    values[RC.assignedBy] = currentAccount.username;
+    values[RC.assignedDate] = new Date().toISOString();
+    await updateTableRow(USER_ROLES_TABLE_NAME, existing.index, values);
+  }else{
+    await addTableRow(USER_ROLES_TABLE_NAME, [email, role, currentAccount.username, new Date().toISOString()]);
+  }
+  await loadUserRoles();
+  renderUserMgmtList();
+}
+function renderUserMgmtList(){
+  const el = document.getElementById('user-mgmt-list');
+  const rows = userRolesCache.filter(r => r.values[0][RC.email]);
+  let html = '<table><tr><th>Email</th><th>Role</th><th>Assigned by</th><th></th></tr>';
+  html += '<tr style="border-top:1px solid var(--border);"><td>' + SUPERADMIN_EMAILS.map(escapeHtml).join(', ') +
+    '</td><td>Super Admin</td><td>—</td><td style="font-size:11px;color:var(--text-secondary);">hardcoded</td></tr>';
+  rows.forEach(r=>{
+    const v = r.values[0];
+    html += '<tr style="border-top:1px solid var(--border);">' +
+      '<td>'+escapeHtml(v[RC.email]||'')+'</td>' +
+      '<td>'+escapeHtml(ROLE_LABELS[v[RC.role]] || v[RC.role] || '')+'</td>' +
+      '<td>'+escapeHtml(v[RC.assignedBy]||'')+'</td>' +
+      '<td><button type="button" class="secondary user-mgmt-remove-btn" data-email="'+escapeHtml(v[RC.email]||'')+'" style="padding:3px 8px;font-size:12px;">Remove</button></td>' +
+    '</tr>';
+  });
+  html += '</table>';
+  el.innerHTML = html;
+}
+const userMgmtEmailInput = document.getElementById('user-mgmt-email');
+const userMgmtRoleSelect = document.getElementById('user-mgmt-role');
+const userMgmtAssignBtn = document.getElementById('user-mgmt-assign-btn');
+if(userMgmtAssignBtn){
+  userMgmtAssignBtn.addEventListener('click', async ()=>{
+    const errEl = document.getElementById('user-mgmt-error');
+    errEl.style.display = 'none';
+    userMgmtAssignBtn.disabled = true;
+    try{
+      await assignRole(userMgmtEmailInput.value, userMgmtRoleSelect.value);
+      userMgmtEmailInput.value = '';
+    }catch(err){
+      errEl.textContent = err.message;
+      errEl.style.display = 'block';
+    }finally{
+      userMgmtAssignBtn.disabled = false;
+    }
+  });
+  document.getElementById('user-mgmt-list').addEventListener('click', async (e)=>{
+    const btn = e.target.closest('.user-mgmt-remove-btn');
+    if(!btn) return;
+    const email = btn.getAttribute('data-email');
+    if(!confirm('Remove role assignment for ' + email + '? They will become a plain User.')) return;
+    btn.disabled = true;
+    try{ await assignRole(email, 'user'); }
+    catch(err){ alert('Could not remove: ' + err.message); }
+  });
+}
+
+/* ---- Microsoft Graph plumbing ---- */
+async function getAccessToken(){
+  try{
+    const result = await msalInstance.acquireTokenSilent({ scopes: GRAPH_SCOPES, account: currentAccount });
+    return result.accessToken;
+  }catch(e){
+    const result = await msalInstance.acquireTokenPopup({ scopes: GRAPH_SCOPES });
+    return result.accessToken;
+  }
+}
+async function graphFetch(path, options){
+  options = options || {};
+  const token = await getAccessToken();
+  const res = await fetch('https://graph.microsoft.com/v1.0' + path, {
+    method: options.method || 'GET',
+    body: options.body,
+    headers: Object.assign({ 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, options.headers || {})
+  });
+  if(!res.ok){
+    const text = await res.text().catch(()=> '');
+    throw new Error('Graph ' + res.status + ': ' + text.slice(0, 300));
+  }
+  if(res.status === 204) return null;
+  return res.json();
+}
+async function resolveWorkbook(){
+  const site = await graphFetch('/sites/' + SP_HOSTNAME + ':' + SP_SITE_PATH);
+  siteId = site.id;
+  const search = await graphFetch('/sites/' + siteId + "/drive/root/search(q='" + encodeURIComponent(SP_FILE_NAME) + "')");
+  const match = (search.value || []).find(f => f.name === SP_FILE_NAME);
+  if(!match) throw new Error('Could not find "' + SP_FILE_NAME + '" in the Operations site.');
+  fileItemId = match.id;
+}
+function workbookTablePath(tableName){
+  return '/sites/' + siteId + '/drive/items/' + fileItemId + '/workbook/tables/' + encodeURIComponent(tableName);
+}
+async function getTableRows(tableName){
+  const data = await graphFetch(workbookTablePath(tableName) + '/rows');
+  return data.value || []; // each row: { index, values: [[col1, col2, ...]] }
+}
+async function addTableRow(tableName, values){
+  return graphFetch(workbookTablePath(tableName) + '/rows/add', {
+    method: 'POST',
+    body: JSON.stringify({ values: [values] })
+  });
+}
+async function updateTableRow(tableName, rowIndex, values){
+  return graphFetch(workbookTablePath(tableName) + '/rows/' + rowIndex, {
+    method: 'PATCH',
+    body: JSON.stringify({ values: [values] })
+  });
+}
+async function deleteTableRow(tableName, rowIndex){
+  return graphFetch(workbookTablePath(tableName) + '/rows/' + rowIndex, { method: 'DELETE' });
+}
+
+/* ---- Global 5-digit Deal ID ----
+   Best-effort uniqueness: highest existing Deal ID in the log table, +1, then
+   re-checked against a fresh read right before committing. Excel/Graph has no
+   atomic transactions, so this can't offer the same hard guarantee the earlier
+   old single-cell counter version did — but collisions are very unlikely under normal,
+   occasional saving (a true zero-risk guarantee needs a real backend). */
+async function assignNewDealId(){
+  const rows = await getTableRows(LOG_TABLE_NAME);
+  let maxNum = 0;
+  rows.forEach(r=>{
+    const n = parseInt(String(r.values[0][MC.dealId] || '').trim(), 10);
+    if(!isNaN(n) && n > maxNum) maxNum = n;
+  });
+  let candidate = maxNum + 1;
+  const recheck = await getTableRows(LOG_TABLE_NAME);
+  const taken = new Set(recheck.map(r => String(r.values[0][MC.dealId] || '').trim()));
+  let padded = String(candidate).padStart(5,'0');
+  while(taken.has(padded)){
+    candidate += 1;
+    padded = String(candidate).padStart(5,'0');
+  }
+  document.getElementById('h-dealid-num').value = padded;
+  currentDealDocId = padded;
+  return padded;
+}
+
+/* ---- Per-user draft (autosaves the in-progress form into the Drafts table) ---- */
+function gatherFormData(){
+  const tradeCount = document.getElementById('trade-count').value;
+  const allValues = {};
+  const checkedIds = [];
+  document.querySelectorAll('input[id], select[id], textarea[id]').forEach(el=>{
+    if(el.type === 'radio' || el.type === 'checkbox'){
+      if(el.checked) checkedIds.push(el.id);
+    } else {
+      allValues[el.id] = el.value;
+    }
+  });
+  return { tradeCount, allValues, checkedIds, dealId: val('h-dealid-num') };
+}
+function setDraftStatus(text){
+  const el = document.getElementById('draft-status');
+  if(el) el.textContent = text;
+}
+async function saveDraft(){
+  if(!currentAccount || !fileItemId) return;
+  setDraftStatus('Saving…');
+  const json = JSON.stringify(gatherFormData());
+  const nowIso = new Date().toISOString();
+  try{
+    if(draftRowIndex !== null){
+      await updateTableRow(DRAFT_TABLE_NAME, draftRowIndex, [currentAccount.username, json, nowIso]);
+    }else{
+      await addTableRow(DRAFT_TABLE_NAME, [currentAccount.username, json, nowIso]);
+      const rows = await getTableRows(DRAFT_TABLE_NAME);
+      const mine = rows.find(r => (r.values[0][0] || '').toLowerCase() === (currentAccount.username || '').toLowerCase());
+      if(mine) draftRowIndex = mine.index;
+    }
+    setDraftStatus('Draft saved');
+  }catch(err){
+    console.error('Draft save failed', err);
+    setDraftStatus('Draft save failed');
+  }
+}
+function applyDraftData(data){
+  suppressAutosave = true;
+  document.getElementById('trade-count').value = data.tradeCount || '3';
+  renderTrades();
+  Object.keys(data.allValues || {}).forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.value = data.allValues[id];
+  });
+  (data.checkedIds || []).forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.checked = true;
+  });
+  const n = parseInt(document.getElementById('trade-count').value, 10);
+  for(let i=1;i<=n;i++){
+    updateDealField(i);
+    const dealEl = document.getElementById('t'+i+'-m-deal');
+    if(dealEl && data.allValues && data.allValues['t'+i+'-m-deal'] !== undefined) dealEl.value = data.allValues['t'+i+'-m-deal'];
+    handleMatchingChange(i);
+  }
+  updateBuyerSellerFieldLabel();
+  updateTransferAccountLabels();
+  currentDealDocId = data.dealId || val('h-dealid-num') || null;
+  suppressAutosave = false;
+}
+async function loadDraftAndHistory(){
+  if(currentUserRole !== 'user'){
+    // Reviewers never create agreements, so there's no per-user draft to
+    // load for them — just pull the shared history/queue data.
+    await loadHistory();
+    return;
+  }
+  setDraftStatus('Loading…');
+  try{
+    const rows = await getTableRows(DRAFT_TABLE_NAME);
+    const myEmail = (currentAccount.username || '').toLowerCase();
+    const mine = rows.find(r => (r.values[0][0] || '').toLowerCase() === myEmail);
+    draftRowIndex = mine ? mine.index : null;
+    if(mine){
+      try{ applyDraftData(JSON.parse(mine.values[0][1])); setDraftStatus('Draft loaded'); }
+      catch(e){ setDraftStatus('Draft could not be read'); }
+    }else{
+      setDraftStatus('New draft — Deal ID is assigned once you save the agreement.');
+    }
+  }catch(err){
+    console.error('Draft load failed', err);
+    setDraftStatus('Could not load draft: ' + err.message);
+  }
+  await loadHistory();
+  checkSubmittedLock();
+}
+
+/* ---- Locking a submitted deal ----
+   A Deal ID is only ever assigned the moment "Save agreement" first
+   succeeds, and once that write has happened, the agreement is done: it can
+   never be edited or resaved under that same ID, and a rejected deal is not
+   reopened for editing either — trying again means starting a New
+   confirmation, which gets a brand-new Deal ID. This function detects "the
+   currently loaded form's Deal ID already has rows in TradeDealLog" (either
+   right after a successful save, or on reload/reconnect) and locks the form
+   accordingly. The per-user draft row still autosaves the in-progress form
+   right up until that first successful save — its only purpose is to
+   protect unsaved work, never to enable post-submission edits. */
+function dealAlreadySubmitted(dealId){
+  if(!dealId) return false;
+  return logRowsCache.some(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+}
+function submittedDealStatus(dealId){
+  const row = logRowsCache.find(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  return row ? (row.values[0][MC.status] || STATUS_PENDING_1) : null;
+}
+function checkSubmittedLock(){
+  if(dealAlreadySubmitted(currentDealDocId)){
+    lockSubmittedForm(currentDealDocId);
+  }
+}
+function lockSubmittedForm(dealId){
+  const status = submittedDealStatus(dealId);
+  document.querySelectorAll('#header-fields input, #header-fields select, #header-fields textarea, ' +
+    '#trades-container input, #trades-container select, #trades-container textarea, #trade-count')
+    .forEach(el => el.disabled = true);
+  document.getElementById('generate-btn').style.display = 'none';
+  document.getElementById('save-agreement-btn').style.display = 'none';
+  const banner = document.getElementById('submitted-lock-banner');
+  banner.innerHTML = '<strong>Deal ID ' + escapeHtml(dealId) + ' has been submitted (status: ' + escapeHtml(status || STATUS_PENDING_1) +
+    ') and can no longer be edited — this Deal ID is locked permanently, even if it\'s rejected.</strong> ' +
+    'To submit a new agreement, use "New confirmation" above — it will get its own Deal ID.';
+  banner.style.display = 'block';
+}
+document.addEventListener('input', ()=>{
+  if(!currentAccount || suppressAutosave || currentUserRole !== 'user') return;
+  if(dealAlreadySubmitted(currentDealDocId)) return;
+  clearTimeout(draftSaveTimer);
+  draftSaveTimer = setTimeout(saveDraft, 1200);
+});
+document.addEventListener('change', ()=>{
+  if(!currentAccount || suppressAutosave || currentUserRole !== 'user') return;
+  if(dealAlreadySubmitted(currentDealDocId)) return;
+  clearTimeout(draftSaveTimer);
+  draftSaveTimer = setTimeout(saveDraft, 1200);
+});
+
+document.getElementById('new-confirmation-btn').addEventListener('click', async ()=>{
+  if(!currentAccount) return;
+  if(!confirm('Start a new confirmation? Locked fields are kept; unlocked fields clear. A new Deal ID will be assigned once you save this new agreement. Your saved history is not affected.')) return;
+  try{
+    if(draftRowIndex !== null) await deleteTableRow(DRAFT_TABLE_NAME, draftRowIndex);
+  }catch(err){ console.error('Could not clear draft row', err); }
+  location.reload();
+});
+
+/* ---- Saved agreements (the shared, restructured TradeDealLog table) ----
+   One physical row per TRADE within an agreement (a 3-trade submission under
+   one Deal ID produces 3 rows). A Deal ID is only ever saved ONCE — if rows
+   already exist for it, saving is refused (the UI already prevents this via
+   lockSubmittedForm(), this is a server-side-equivalent guard in case of a
+   double-click or stale page). A brand-new submission always starts at
+   "Pending Level 1" with every approval/rejection field blank. Nothing is
+   ever written to this table's Status/approval columns except by the
+   Approve/Reject actions. Every signed-in user can technically read every
+   row (that's inherent to a shared Excel file) — "My saved confirmations" is
+   a client-side filter, not a security boundary. */
+async function saveConfirmationToHistory(includeBD, dealId){
+  if(!currentAccount || !dealId) return;
+  const rows = await getTableRows(LOG_TABLE_NAME);
+  const existingRows = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  if(existingRows.length){
+    throw new Error('Deal ID ' + dealId + ' has already been submitted and cannot be resaved. Start a New confirmation instead.');
+  }
+  const nowIso = new Date().toISOString();
+  const tradeCount = parseInt(document.getElementById('trade-count').value, 10) || 1;
+  for(let n = 1; n <= tradeCount; n++){
+    const matching = val('t'+n+'-m-matching');
+    const matchingActive = matching && matching !== 'Open Position';
+    const row = new Array(COL_COUNT).fill('');
+    row[MC.salesPic] = val('h-bd');
+    row[MC.entity] = val('h-entity');
+    row[MC.agreementDate] = val('h-date');
+    row[MC.dealId] = dealId;
+    row[MC.supplyDemand] = val('h-order');
+    row[MC.company] = val('h-buyer');
+    row[MC.broker] = val('t'+n+'-broker');
+    row[MC.country] = val('t'+n+'-country');
+    row[MC.registry] = val('t'+n+'-registry');
+    row[MC.tech] = val('t'+n+'-tech');
+    row[MC.matching] = matching;
+    row[MC.volume] = val('t'+n+'-volume');
+    row[MC.deliveryStart] = val('t'+n+'-dstart');
+    row[MC.deliveryEnd] = val('t'+n+'-dend');
+    row[MC.vFromMM] = val('t'+n+'-vintage-start-month');
+    row[MC.vFromYY] = val('t'+n+'-vintage-start-year');
+    row[MC.vToMM] = val('t'+n+'-vintage-end-month');
+    row[MC.vToYY] = val('t'+n+'-vintage-end-year');
+    row[MC.currency] = val('t'+n+'-currency');
+    row[MC.unitPrice] = val('t'+n+'-price');
+    row[MC.specialReq] = val('t'+n+'-remarks');
+    row[MC.cod] = val('t'+n+'-m-cod');
+    row[MC.tigrsIrecName] = val('t'+n+'-transfer');
+    row[MC.paymentTerm] = val('t'+n+'-payterm');
+    row[MC.buyerSeller] = matchingActive ? val('t'+n+'-m-name') : '';
+    row[MC.noOfRecs] = matchingActive ? val('t'+n+'-m-recs') : '';
+    row[MC.whichDeal] = val('t'+n+'-m-deal');
+    row[MC.deliveryDateM] = val('t'+n+'-m-ddate');
+    row[MC.submittedBy] = currentAccount.username;
+    row[MC.submittedDate] = nowIso;
+    row[MC.generatedHtml] = (n === 1) ? lastHtml : '';
+    row[MC.status] = STATUS_PENDING_1;
+    row[MC.approvedBy1] = '';
+    row[MC.approvedDate1] = '';
+    row[MC.approvedBy2] = '';
+    row[MC.approvedDate2] = '';
+    row[MC.approvedBy3] = '';
+    row[MC.approvedDate3] = '';
+    row[MC.rejectedBy] = '';
+    row[MC.rejectedDate] = '';
+    row[MC.rejectReason] = '';
+    await addTableRow(LOG_TABLE_NAME, row);
+  }
+  await loadHistory();
+}
+/* Advances a deal one step through the approval chain, writing the
+   approver + timestamp for whichever level the current status corresponds
+   to. Blocked client-side unless canActOnStatus() says this role may act on
+   the deal's current status — superadmin can act at any pending level. */
+async function approveDeal(dealId){
+  if(!dealId) return;
+  const rows = await getTableRows(LOG_TABLE_NAME);
+  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  if(!matching.length) return;
+  const currentStatus = matching[0].values[0][MC.status];
+  if(!canActOnStatus(currentStatus)) throw new Error('You are not able to approve this deal at its current stage.');
+  const nowIso = new Date().toISOString();
+  let nextStatus, byCol, dateCol;
+  if(currentStatus === STATUS_PENDING_1){ nextStatus = STATUS_PENDING_2; byCol = MC.approvedBy1; dateCol = MC.approvedDate1; }
+  else if(currentStatus === STATUS_PENDING_2){ nextStatus = STATUS_PENDING_3; byCol = MC.approvedBy2; dateCol = MC.approvedDate2; }
+  else if(currentStatus === STATUS_PENDING_3){ nextStatus = STATUS_APPROVED; byCol = MC.approvedBy3; dateCol = MC.approvedDate3; }
+  else return;
+  for(const r of matching){
+    const values = r.values[0].slice();
+    values[MC.status] = nextStatus;
+    values[byCol] = currentAccount.username;
+    values[dateCol] = nowIso;
+    await updateTableRow(LOG_TABLE_NAME, r.index, values);
+  }
+  await loadHistory();
+}
+/* Rejects a deal at whatever stage it's currently pending at, recording who
+   rejected it, when, and the comment the submitter will see. Rejection
+   doesn't erase earlier level sign-offs — they stay visible in the approval
+   trail — but the deal must restart from Level 1 if resubmitted. */
+async function rejectDeal(dealId, reason){
+  if(!dealId) return;
+  const trimmedReason = (reason||'').trim();
+  if(!trimmedReason) throw new Error('A comment is required so the submitter knows why this was rejected.');
+  const rows = await getTableRows(LOG_TABLE_NAME);
+  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  if(!matching.length) return;
+  const currentStatus = matching[0].values[0][MC.status];
+  if(!canActOnStatus(currentStatus)) throw new Error('You are not able to reject this deal at its current stage.');
+  const nowIso = new Date().toISOString();
+  for(const r of matching){
+    const values = r.values[0].slice();
+    values[MC.status] = STATUS_REJECTED;
+    values[MC.rejectedBy] = currentAccount.username;
+    values[MC.rejectedDate] = nowIso;
+    values[MC.rejectReason] = trimmedReason;
+    await updateTableRow(LOG_TABLE_NAME, r.index, values);
+  }
+  await loadHistory();
+}
+function groupByDealId(rows){
+  const groups = {};
+  const order = [];
+  rows.forEach(r=>{
+    const id = String(r.values[0][MC.dealId] || '').trim();
+    if(!groups[id]){ groups[id] = []; order.push(id); }
+    groups[id].push(r);
+  });
+  return order.map(id => ({ dealId: id, rows: groups[id] }));
+}
+async function loadHistory(){
+  const listEl = document.getElementById('history-list');
+  listEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Loading…</p>';
+  try{
+    const rows = await getTableRows(LOG_TABLE_NAME);
+    logRowsCache = rows;
+    const myEmail = (currentAccount.username || '').toLowerCase();
+    const mineGroups = groupByDealId(
+      rows.filter(r => (String(r.values[0][MC.submittedBy] || '')).toLowerCase() === myEmail)
+    ).sort((a,b)=> String(b.rows[0].values[0][MC.submittedDate]||'').localeCompare(String(a.rows[0].values[0][MC.submittedDate]||'')));
+    renderHistoryTable(listEl, mineGroups, {showOwner:false, showActions:false});
+
+    if(isAdmin){
+      const allGroups = groupByDealId(rows)
+        .sort((a,b)=> String(b.rows[0].values[0][MC.submittedDate]||'').localeCompare(String(a.rows[0].values[0][MC.submittedDate]||'')));
+
+      const queueEl = document.getElementById('approval-queue-list');
+      const queueGroups = allGroups.filter(g => canActOnStatus(g.rows[0].values[0][MC.status] || STATUS_PENDING_1));
+      renderHistoryTable(queueEl, queueGroups, {showOwner:true, showActions:true, emptyText:'Nothing waiting on your approval right now.'});
+
+      const adminListEl = document.getElementById('admin-history-list');
+      renderHistoryTable(adminListEl, allGroups, {showOwner:true, showActions:false});
+    }
+  }catch(err){
+    listEl.innerHTML = '<p style="font-size:13px;color:#8a2d1f;">Could not load: ' + escapeHtml(err.message) + '</p>';
+  }
+}
+function statusBadge(status){
+  const s = status || STATUS_PENDING_1;
+  const color = s === STATUS_APPROVED ? '#1f7a4d' : (s === STATUS_REJECTED ? '#8a2d1f' : '#8a6d1f');
+  return '<span style="font-weight:600;color:'+color+';">'+escapeHtml(s)+'</span>';
+}
+// Short "L1 ✓ name · L2 ✓ name" trail of whoever has signed off so far.
+function approvalTrailText(v){
+  const parts = [];
+  if(v[MC.approvedBy1]) parts.push('L1 ✓ '+v[MC.approvedBy1]);
+  if(v[MC.approvedBy2]) parts.push('L2 ✓ '+v[MC.approvedBy2]);
+  if(v[MC.approvedBy3]) parts.push('L3 ✓ '+v[MC.approvedBy3]);
+  return parts.join(' · ');
+}
+function renderHistoryTable(el, groups, opts){
+  opts = opts || {};
+  const showOwner = !!opts.showOwner;
+  const showActions = !!opts.showActions;
+  const colCount = showOwner ? 7 : 6;
+  if(!groups.length){
+    el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">'+escapeHtml(opts.emptyText || 'No saved confirmations yet.')+'</p>';
+    return;
+  }
+  let html = '<table><tr>' + (showOwner ? '<th style="text-align:left;padding:6px;">Owner</th>' : '') +
+    '<th style="text-align:left;padding:6px;">Deal ID</th>' +
+    '<th style="text-align:left;padding:6px;">Date</th>' +
+    '<th style="text-align:left;padding:6px;">Counterparty</th>' +
+    '<th style="text-align:left;padding:6px;">Trades</th>' +
+    '<th style="text-align:left;padding:6px;">Status</th>' +
+    '<th style="padding:6px;"></th></tr>';
+  groups.forEach(g=>{
+    const v = g.rows[0].values[0];
+    const status = v[MC.status] || STATUS_PENDING_1;
+    const canAct = showActions && canActOnStatus(status);
+    const trail = approvalTrailText(v);
+    html += '<tr style="border-top:1px solid var(--border);">' +
+      (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[MC.submittedBy]||'')+'</td>' : '') +
+      '<td style="padding:6px;">'+escapeHtml(v[MC.dealId]||'')+'</td>' +
+      '<td style="padding:6px;">'+escapeHtml(v[MC.agreementDate]||'')+'</td>' +
+      '<td style="padding:6px;">'+escapeHtml(v[MC.company]||'')+'</td>' +
+      '<td style="padding:6px;">'+g.rows.length+'</td>' +
+      '<td style="padding:6px;">'+statusBadge(status)+
+        (trail ? '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">'+escapeHtml(trail)+'</div>' : '')+
+      '</td>' +
+      '<td style="padding:6px;white-space:nowrap;">' +
+        '<button type="button" class="secondary history-view-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;">View</button>' +
+        (canAct ? ' <button type="button" class="secondary history-approve-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;">Approve</button>' +
+                  ' <button type="button" class="secondary history-reject-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;color:#8a2d1f;border-color:#c1493a;">Reject</button>' : '') +
+      '</td>' +
+    '</tr>';
+    if(status === STATUS_REJECTED && v[MC.rejectReason]){
+      html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
+        '<div style="background:#fdecea;border:1px solid #e2a49a;color:#8a2d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
+        '<strong>Rejected'+(v[MC.rejectedBy]?(' by '+escapeHtml(v[MC.rejectedBy])):'')+':</strong> '+escapeHtml(v[MC.rejectReason]) +
+        '</div></td></tr>';
+    }
+  });
+  html += '</table>';
+  el.innerHTML = html;
+}
+let rejectModalDealId = null;
+function openRejectModal(dealId){
+  rejectModalDealId = dealId;
+  document.getElementById('reject-modal-dealid').textContent = dealId;
+  document.getElementById('reject-comment').value = '';
+  document.getElementById('reject-modal-error').style.display = 'none';
+  document.getElementById('reject-modal-overlay').style.display = 'flex';
+  document.getElementById('reject-comment').focus();
+}
+function closeRejectModal(){
+  document.getElementById('reject-modal-overlay').style.display = 'none';
+  rejectModalDealId = null;
+}
+document.getElementById('reject-modal-cancel').addEventListener('click', closeRejectModal);
+document.getElementById('reject-modal-overlay').addEventListener('click', (e)=>{
+  if(e.target.id === 'reject-modal-overlay') closeRejectModal();
+});
+document.getElementById('reject-modal-submit').addEventListener('click', async ()=>{
+  const dealId = rejectModalDealId;
+  const reason = document.getElementById('reject-comment').value;
+  const errEl = document.getElementById('reject-modal-error');
+  const btn = document.getElementById('reject-modal-submit');
+  errEl.style.display = 'none';
+  btn.disabled = true;
+  try{
+    await rejectDeal(dealId, reason);
+    closeRejectModal();
+  }catch(err){
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
+  }finally{
+    btn.disabled = false;
+  }
+});
+document.addEventListener('click', (e)=>{
+  const viewBtn = e.target.closest('.history-view-btn');
+  if(viewBtn){
+    const dealId = viewBtn.getAttribute('data-dealid');
+    const group = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+    const withHtml = group.find(r => r.values[0][MC.generatedHtml]);
+    if(!withHtml) return;
+    lastHtml = withHtml.values[0][MC.generatedHtml];
+    document.getElementById('table-preview').innerHTML = lastHtml;
+    document.getElementById('output-section').style.display = 'flex';
+    document.getElementById('copy-status').style.display = 'none';
+    document.getElementById('output-section').scrollIntoView({behavior:'smooth', block:'nearest'});
+    return;
+  }
+  const approveBtn = e.target.closest('.history-approve-btn');
+  if(approveBtn){
+    const dealId = approveBtn.getAttribute('data-dealid');
+    if(confirm('Approve Deal ID ' + dealId + ' at your level? This will advance it to the next stage (or mark it fully Approved if this is the final level).')){
+      approveBtn.disabled = true;
+      approveDeal(dealId).catch(err=>{ console.error('Approve failed', err); alert('Approve failed: ' + err.message); });
+    }
+    return;
+  }
+  const rejectBtn = e.target.closest('.history-reject-btn');
+  if(rejectBtn){
+    openRejectModal(rejectBtn.getAttribute('data-dealid'));
+  }
+});
+
+
+const COUNTRIES = ["MY","BN","CN","JP","SA","TH","IN","PH","SG","VN","INDO","AUS","TW"];
+const TECHS = ["SLR","ANY","GEO","BIO","HYD","BGS","SHY","LHY","CC","WND","S/WND"];
+const REGISTRIES = ["IREC","TIGR","GEC","Rehash","JEPX","BCX","Verra","LGC","T-REC","K-REC"];
+const ORDER_TYPES = ["Stock-In (T)","Stock-Out (T)","Stock-Out (R)"];
+const CURRENCIES = ["USD","SGD","MYR"];
+const MATCHING = ["Partially Matched","Open Position","Matched","V-Matched"];
+const BD_NAMES = ["Addam","Aston U","Colwen Chan","Edmund Lam","Jordan Tan","Reik Ong","Roseanne Png","Sharon Lim","Thao","TM Lim"];
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const YEARS = ["2025","2026","2027","2028","2029","2030"];
+
+/* ---- "From which deal" tickbox + dropdown (BD source matching) ----
+   Ticking "Own RECs" or "Proceed Share" swaps the "From which deal" text
+   box for a dropdown of the relevant options, and the generated table fills
+   in a short code for that selection rather than the option's display text. */
+const OWN_RECS_OPTIONS = ["TIGR/I-REC MY SLR","TIGR MY SLR","TIGR SG SLR","I-REC MY SLR","I-REC SG SLR"];
+const PROCEED_SHARE_OPTIONS = ["Tadau","IS Energy","Aenergy","PLTM"];
+const OWN_RECS_CODE_MAP = {
+  "TIGR/I-REC MY SLR":"OR-TI-MY-SLR",
+  "TIGR MY SLR":"OR-TIGR-MY-SLR",
+  "TIGR SG SLR":"OR-TIGR-SG-SLR",
+  "I-REC MY SLR":"OR-IREC-MY-SLR",
+  "I-REC SG SLR":"OR-IREC-SG-SLR"
+};
+const PROCEED_SHARE_CODE_MAP = {
+  "Tadau":"Tadau",
+  "IS Energy":"IS Energy",
+  "Aenergy":"Aenergy",
+  "PLTM":"PLTM"
 };
 
-const TECH_FULLNAME = {
-  "SLR": "Solar",
-  "ANY": "Any tech",
-  "GEO": "Geothermal",
-  "BIO": "Biomass",
-  "HYD": "Hydro",
-  "BGS": "Biogas",
-  "SHY": "Small Hydro",
-  "LHY": "Large Hydro",
-  "CC": "Carbon Credit",
-  "WND": "Wind",
-
-  // Combined tech (important)
-  "SLR/WND": "Solar/Wind",
-  "SLR/BIO": "Solar/Biomass",
-  "SLR/WND/SHY": "Solar/Wind/Small Hydro",
-  "SLR/WND/LHY": "Solar/Wind/Large Hydro"
-};
-
-/* ===============================
-   NORMALIZATION
-================================= */
-
-function normalize(val) {
-  return val ? val.trim().toUpperCase() : "";
+/* Generic lockable field wrapper — works for a single input/select, or a
+   compound field made of several inputs sharing one lock button (e.g. a
+   month + year pair). `ids` can be a single id string or an array of ids. */
+function lockableField(label, inputHtml, ids){
+  const idArr = Array.isArray(ids) ? ids : [ids];
+  const key = idArr.join(',');
+  return '<div id="'+key+'-wrap"><div class="field-label-row"><label for="'+idArr[0]+'">'+label+'</label>'+
+    '<button type="button" class="field-lock" data-field="'+key+'" title="Lock this field">🔓</button></div>'+
+    inputHtml+'</div>';
+}
+// Back-compat aliases — same thing, different names used historically.
+function headerField(label, inputHtml, id){ return lockableField(label, inputHtml, id); }
+function field(label, inputHtml, id){ return lockableField(label, inputHtml, id); }
+function selectHtml(id, options, def){
+  let o = options.map(v => '<option value="'+v+'"'+(v===def?' selected':'')+'>'+v+'</option>').join('');
+  return '<select id="'+id+'">'+o+'</select>';
+}
+function textHtml(id, placeholder, val){
+  return '<input type="text" id="'+id+'" placeholder="'+(placeholder||'')+'" value="'+(val||'')+'"/>';
+}
+function dateHtml(id){
+  return '<input type="date" id="'+id+'"/>';
+}
+function comboHtml(id, listId, options, def){
+  const dl = '<datalist id="'+listId+'">' + options.map(v=>'<option value="'+v+'">').join('') + '</datalist>';
+  return '<input type="text" list="'+listId+'" id="'+id+'" value="'+(def||'')+'"/>' + dl;
 }
 
-function getFullCountry(val) {
-  const key = normalize(val);
-  return COUNTRY_FULLNAME[key] || val;
+document.getElementById('header-fields').innerHTML =
+  headerField('Deal ID',
+    '<div style="display:flex;gap:6px;">'+
+      '<input type="text" id="h-dealid-num" maxlength="5" inputmode="numeric" placeholder="auto-assigned" style="flex:1;" readonly/>'+
+      '<input type="text" id="h-dealid-alpha" maxlength="3" placeholder="Max 3 letters" style="flex:1;"/>'+
+    '</div>',
+    ['h-dealid-num','h-dealid-alpha']) +
+  headerField('Date','<input type="date" id="h-date"/>','h-date') +
+  headerField('Entity', selectHtml('h-entity',['MY','SG'],'MY'),'h-entity') +
+  headerField('BD in-charge', selectHtml('h-bd',BD_NAMES,BD_NAMES[0]),'h-bd') +
+  headerField('Buyer or Seller', selectHtml('h-role',['Buyer','Seller'],'Buyer'),'h-role') +
+  headerField('Buyer Name', textHtml('h-buyer','Company name'),'h-buyer') +
+  headerField('Order type', selectHtml('h-order',ORDER_TYPES,'Stock-In (T)'),'h-order');
+
+/* Keeps the "Buyer/Seller" field's on-screen label, "Transfer Account" label, and the generated table's
+   row labels in sync with the Buyer-or-Seller role selector. */
+function currentRole(){
+  return val('h-role') === 'Seller' ? 'Seller' : 'Buyer';
+}
+function updateBuyerSellerFieldLabel(){
+  const label = document.querySelector('label[for="h-buyer"]');
+  if(label) label.textContent = currentRole() + ' Name';
+}
+function updateTransferAccountLabels(){
+  const role = currentRole();
+  const tradeCount = parseInt(document.getElementById('trade-count').value, 10);
+  for(let i = 1; i <= tradeCount; i++) {
+    const label = document.querySelector(`label[for="t${i}-transfer"]`);
+    if(label) label.textContent = role + ' Transfer Account';
+  }
+}
+document.addEventListener('change', (e)=>{
+  if(e.target && e.target.id === 'h-role') {
+    updateBuyerSellerFieldLabel();
+    updateTransferAccountLabels();
+  }
+});
+updateBuyerSellerFieldLabel();
+
+// Deal ID is split into a compulsory 5-digit box and an optional max-3-letter
+// box; strip anything that doesn't belong as the person types.
+document.addEventListener('input', (e)=>{
+  if(e.target && e.target.id === 'h-dealid-num'){
+    const cleaned = e.target.value.replace(/[^0-9]/g,'').slice(0,5);
+    if(cleaned !== e.target.value) e.target.value = cleaned;
+  }
+  if(e.target && e.target.id === 'h-dealid-alpha'){
+    const cleaned = e.target.value.replace(/[^a-zA-Z]/g,'').slice(0,3).toUpperCase();
+    if(cleaned !== e.target.value) e.target.value = cleaned;
+    // Once the person types their own letters here, stop auto-filling from
+    // the Buyer/Seller name. Clearing it back out resumes auto-fill.
+    dealIdAlphaManuallyEdited = cleaned !== '';
+  }
+});
+
+// Deal ID letters auto-fill from the first 3 letters of the Buyer/Seller
+// Name's first word (skipping common legal-entity suffixes like Sdn/Bhd/Ltd
+// if they happen to lead), like a surname abbreviation — e.g. "Saxon
+// Renewables Energy Sdn Bhd" -> "SAX". The person can still overwrite the
+// letters themselves; once they do, auto-fill stops touching that field.
+let dealIdAlphaManuallyEdited = false;
+const DEAL_ID_SUFFIX_WORDS = new Set(['sdn','bhd','berhad','ltd','limited','pte','pty','llc','inc','incorporated','corp','corporation','co','plc']);
+function initialsFromCompanyName(name){
+  const words = (name||'').split(/\s+/).filter(Boolean).filter(w=>!DEAL_ID_SUFFIX_WORDS.has(w.toLowerCase()));
+  if(!words.length) return '';
+  return words[0].slice(0,3).toUpperCase();
+}
+document.addEventListener('input', (e)=>{
+  if(e.target && e.target.id === 'h-buyer' && !dealIdAlphaManuallyEdited){
+    const alphaField = document.getElementById('h-dealid-alpha');
+    if(alphaField) alphaField.value = initialsFromCompanyName(e.target.value);
+  }
+});
+
+/* ---- Per-field lock/persist (generic — covers header fields AND every
+   trade's fields, including compound fields sharing one lock button) ---- */
+const LOCK_STORAGE_KEY = 'tradeConfirmFieldLocks';
+
+function readLockState(){
+  try{
+    const raw = localStorage.getItem(LOCK_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  }catch(e){ return {}; }
+}
+function writeLockState(state){
+  try{ localStorage.setItem(LOCK_STORAGE_KEY, JSON.stringify(state)); }catch(e){}
+}
+function applyFieldLockUi(key, locked){
+  const ids = key.split(',');
+  const wrap = document.getElementById(key+'-wrap');
+  const btn = document.querySelector('.field-lock[data-field="'+key+'"]');
+  ids.forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.disabled = locked;
+  });
+  if(wrap) wrap.classList.toggle('field-locked', locked);
+  if(btn){
+    btn.textContent = locked ? '🔒' : '🔓';
+    btn.classList.toggle('is-locked', locked);
+    btn.title = locked ? 'Unlock this field' : 'Lock this field';
+  }
+}
+// Restores saved values/lock state for every lockable field found inside `container`.
+// Safe to call repeatedly (e.g. every time trade blocks are re-rendered).
+function initLocksIn(container){
+  if(!container) return;
+  const state = readLockState();
+  container.querySelectorAll('.field-lock').forEach(btn=>{
+    const key = btn.getAttribute('data-field');
+    const saved = state[key];
+    if(saved){
+      const ids = key.split(',');
+      ids.forEach(id=>{
+        const el = document.getElementById(id);
+        if(el && saved.values && saved.values[id] !== undefined) el.value = saved.values[id];
+      });
+      applyFieldLockUi(key, !!saved.locked);
+    }
+  });
 }
 
-function getFullTech(val) {
-  const key = normalize(val);
-  return TECH_FULLNAME[key] || val;
+// One delegated click handler covers header fields, all trade fields, and
+// any trade blocks added later when the trade count changes.
+document.addEventListener('click', (e)=>{
+  const btn = e.target.closest('.field-lock');
+  if(!btn) return;
+  const key = btn.getAttribute('data-field');
+  const ids = key.split(',');
+  const state = readLockState();
+  const currentlyLocked = !!(state[key] && state[key].locked);
+  if(currentlyLocked){
+    // Unlock, keep the last saved values in storage
+    state[key] = { locked:false, values: state[key].values };
+    writeLockState(state);
+    applyFieldLockUi(key, false);
+  } else {
+    // Lock: save current values for every id in this field
+    const values = {};
+    ids.forEach(id=>{ const el = document.getElementById(id); values[id] = el ? el.value : ''; });
+    state[key] = { locked:true, values };
+    writeLockState(state);
+    applyFieldLockUi(key, true);
+  }
+});
+
+initLocksIn(document.getElementById('header-fields'));
+updateBuyerSellerFieldLabel();
+
+/* ---- Section-level lock/persist (Details / Trades) ----
+   Locking a section locks every field inside it in one go, and disables the
+   individual field 🔓 buttons so fields can't be cherry-picked back open —
+   the section has to be unlocked as a whole first. */
+const SECTION_LOCK_KEY = 'tradeConfirmSectionLocks';
+
+function readSectionLockState(){
+  try{
+    const raw = localStorage.getItem(SECTION_LOCK_KEY);
+    return raw ? JSON.parse(raw) : {};
+  }catch(e){ return {}; }
+}
+function writeSectionLockState(state){
+  try{ localStorage.setItem(SECTION_LOCK_KEY, JSON.stringify(state)); }catch(e){}
+}
+function getSectionContainer(section){
+  return section === 'header' ? document.getElementById('header-fields') : document.getElementById('trades-container');
+}
+// Locks or unlocks every field found inside a section container, reusing the
+// same lock-state storage the individual field locks use.
+function setAllFieldLocksIn(container, locked){
+  if(!container) return;
+  const state = readLockState();
+  container.querySelectorAll('.field-lock').forEach(btn=>{
+    const key = btn.getAttribute('data-field');
+    const ids = key.split(',');
+    if(locked){
+      const values = {};
+      ids.forEach(id=>{ const el = document.getElementById(id); values[id] = el ? el.value : ''; });
+      state[key] = { locked:true, values };
+    } else {
+      state[key] = { locked:false, values: state[key] ? state[key].values : {} };
+    }
+    applyFieldLockUi(key, locked);
+  });
+  writeLockState(state);
+}
+function applySectionLockUi(section, locked){
+  const btn = document.querySelector('.section-lock[data-section="'+section+'"]');
+  if(btn){
+    btn.textContent = locked ? '🔒 Section locked' : '🔓 Lock section';
+    btn.classList.toggle('is-locked', locked);
+    btn.title = locked ? 'Unlock this whole section' : 'Lock this whole section';
+  }
+  const container = getSectionContainer(section);
+  if(container){
+    container.classList.toggle('section-locked', locked);
+    container.querySelectorAll('.field-lock').forEach(fbtn=>{ fbtn.disabled = locked; });
+  }
+}
+// Re-applies a saved section lock — called on load and whenever the trade
+// blocks are re-rendered (so a locked Trades section stays locked even after
+// the trade count changes).
+function initSectionLock(section){
+  const state = readSectionLockState();
+  const locked = !!state[section];
+  if(locked) setAllFieldLocksIn(getSectionContainer(section), true);
+  applySectionLockUi(section, locked);
 }
 
-/* ===============================
-   SAXON LOGIC
-================================= */
+document.addEventListener('click', (e)=>{
+  const btn = e.target.closest('.section-lock');
+  if(!btn) return;
+  const section = btn.getAttribute('data-section');
+  const state = readSectionLockState();
+  const locked = !!state[section];
+  const container = getSectionContainer(section);
+  if(locked){
+    state[section] = false;
+    writeSectionLockState(state);
+    setAllFieldLocksIn(container, false);
+    applySectionLockUi(section, false);
+  } else {
+    state[section] = true;
+    writeSectionLockState(state);
+    setAllFieldLocksIn(container, true);
+    applySectionLockUi(section, true);
+  }
+});
 
-function getSaxonSide(type) {
-  if (type === "Buyer") return "Seller: Saxon";
-  if (type === "Seller") return "Buyer: Saxon";
-  return "";
+initSectionLock('header');
+
+
+function tradeBlockHtml(n){
+  return '<div class="trade-block" data-trade-num="'+n+'">'+
+    '<p class="trade-title">Trade '+n+'</p>'+
+    '<div class="grid">'+
+    lockableField('Registry', comboHtml('t'+n+'-registry','t'+n+'-registry-list',REGISTRIES,'IREC'),'t'+n+'-registry')+
+    lockableField('Dealership', selectHtml('t'+n+'-dealership',['SAXON MY','SAXON SG'],'SAXON MY'),'t'+n+'-dealership')+
+    
+    // Custom label text is updated programmatically to reflect Buyer/Seller dynamically
+    lockableField('Transfer account name', textHtml('t'+n+'-transfer','Account name'),'t'+n+'-transfer')+
+    
+    lockableField('Vintage start month &amp; year',
+      '<div style="display:flex;gap:6px;">'+
+        selectHtml('t'+n+'-vintage-start-month', MONTHS, 'Jan')+
+        comboHtml('t'+n+'-vintage-start-year','t'+n+'-start-year-list', YEARS, '2025')+
+      '</div>',
+      ['t'+n+'-vintage-start-month','t'+n+'-vintage-start-year'])+
+    lockableField('Vintage end month &amp; year',
+      '<div style="display:flex;gap:6px;">'+
+        selectHtml('t'+n+'-vintage-end-month', MONTHS, 'Dec')+
+        comboHtml('t'+n+'-vintage-end-year','t'+n+'-end-year-list', YEARS, '2025')+
+      '</div>',
+      ['t'+n+'-vintage-end-month','t'+n+'-vintage-end-year'])+
+    lockableField('Tech', comboHtml('t'+n+'-tech','t'+n+'-tech-list',TECHS,'SLR'),'t'+n+'-tech')+
+    lockableField('Country', comboHtml('t'+n+'-country','t'+n+'-country-list',COUNTRIES,'MY'),'t'+n+'-country')+
+    lockableField('Volume (RECs)', textHtml('t'+n+'-volume','e.g. 30,000'),'t'+n+'-volume')+
+    lockableField('Price currency', comboHtml('t'+n+'-currency','t'+n+'-currency-list',CURRENCIES,'USD'),'t'+n+'-currency')+
+    lockableField('Price / REC', textHtml('t'+n+'-price','e.g. 0.27'),'t'+n+'-price')+
+    lockableField('Payment term', textHtml('t'+n+'-payterm','30 days after invoice','30 days after invoice'),'t'+n+'-payterm')+
+    lockableField('Delivery start date', dateHtml('t'+n+'-dstart'),'t'+n+'-dstart')+
+    lockableField('Delivery end date', dateHtml('t'+n+'-dend'),'t'+n+'-dend')+
+    lockableField('COD (if applicable)', textHtml('t'+n+'-m-cod','NA','NA'),'t'+n+'-m-cod')+
+    lockableField('Special remarks', '<textarea id="t'+n+'-remarks" placeholder="NA">NA</textarea>', 't'+n+'-remarks')
+      .replace('<div id=','<div style="grid-column:1 / -1;" id=')+
+    lockableField('Broker (if any)', textHtml('t'+n+'-broker','NA','NA'),'t'+n+'-broker')+
+    '</div>'+
+    '<p class="sub-title">BD source matching</p>'+
+    
+    '<!-- Matching dropdown is now at the top of BD Source Matching section -->'+
+    '<div class="grid" style="margin-bottom: 12px;">'+
+      lockableField('5. Matching', selectHtml('t'+n+'-m-matching',MATCHING,'Open Position'),'t'+n+'-m-matching')+
+    '</div>'+
+
+    '<!-- Wrapper for matching dependent fields -->'+
+    '<div id="t'+n+'-matching-dependent-fields" style="display:none;">'+
+      '<div class="grid">'+
+        lockableField('1. Buyer/Seller name', textHtml('t'+n+'-m-name','Name'),'t'+n+'-m-name')+
+        lockableField('2. No of RECs', textHtml('t'+n+'-m-recs',''),'t'+n+'-m-recs')+
+        '<div id="t'+n+'-m-source-wrap" style="grid-column:1 / -1;">'+
+          '<label style="margin-bottom:6px;">Source</label>'+
+          '<div style="display:flex;gap:20px;flex-wrap:wrap;">'+
+            '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
+              '<input type="checkbox" id="t'+n+'-m-own" style="width:auto;margin:0;"> Own RECs'+
+            '</label>'+
+            '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
+              '<input type="checkbox" id="t'+n+'-m-proceed" style="width:auto;margin:0;"> Proceed Share'+
+            '</label>'+
+          '</div>'+
+        '</div>'+
+        lockableField('3. From which deal', '<div id="t'+n+'-m-deal-field">'+textHtml('t'+n+'-m-deal','Deal Recap ID')+'</div>','t'+n+'-m-deal')+
+        lockableField('4. Delivery date', dateHtml('t'+n+'-m-ddate'),'t'+n+'-m-ddate')+
+      '</div>'+
+    '</div>'+
+  '</div>';
 }
 
-/* ===============================
-   PREVIEW META
-================================= */
+// Rebuilds the "From which deal" field for trade n as a text box (default),
+// or a dropdown of Own RECs / Proceed Share options depending on which
+// tickbox (if any) is checked. Re-applies the field's lock state afterward,
+// since replacing the inner element loses its disabled/locked attribute.
+function updateDealField(n){
+  const own = document.getElementById('t'+n+'-m-own');
+  const proceed = document.getElementById('t'+n+'-m-proceed');
+  const target = document.getElementById('t'+n+'-m-deal-field');
+  if(!own || !proceed || !target) return;
 
-function updatePreviewMeta(data) {
-  document.getElementById("preview-meta").innerHTML =
-    `Deal ID: <b>${data.dealId || '-'}</b> | ${data.counterparty || ''}`;
+  if(own.checked){
+    target.innerHTML = selectHtml('t'+n+'-m-deal', OWN_RECS_OPTIONS, OWN_RECS_OPTIONS[0]);
+  } else if(proceed.checked){
+    target.innerHTML = selectHtml('t'+n+'-m-deal', PROCEED_SHARE_OPTIONS, PROCEED_SHARE_OPTIONS[0]);
+  } else {
+    target.innerHTML = textHtml('t'+n+'-m-deal','Deal Recap ID');
+  }
+
+  const key = 't'+n+'-m-deal';
+  const state = readLockState();
+  const locked = !!(state[key] && state[key].locked);
+  applyFieldLockUi(key, locked);
 }
 
-/* ===============================
-   GENERATE TABLE
-================================= */
+// Handle matching conditional display (Open Position hides fields 1 to 4)
+function handleMatchingChange(n) {
+  const matchingSelect = document.getElementById('t'+n+'-m-matching');
+  const dependentContainer = document.getElementById('t'+n+'-matching-dependent-fields');
+  if (!matchingSelect || !dependentContainer) return;
 
-function generate() {
-
-  const dealData = {
-    dealId: document.getElementById("dealId").value,
-    agreementType: document.getElementById("agreementType").value,
-    counterparty: document.getElementById("counterparty").value,
-    start: document.getElementById("startDate").value,
-    end: document.getElementById("endDate").value,
-    tech: document.getElementById("tech").value,
-    country: document.getElementById("country").value
-  };
-
-  updatePreviewMeta(dealData);
-
-  const saxonSide = getSaxonSide(dealData.agreementType);
-  const delivery = `${dealData.start} - ${dealData.end}`;
-
-  const fullTech = getFullTech(dealData.tech);
-  const fullCountry = getFullCountry(dealData.country);
-
-  const html = `
-    <table>
-      <tr>
-        <td>Counterparty</td>
-        <td>
-          ${dealData.counterparty}
-          <div class="small">${saxonSide}</div>
-        </td>
-      </tr>
-
-      <tr>
-        <td>Delivery</td>
-        <td>${delivery}</td>
-      </tr>
-
-      <tr>
-        <td>Technology</td>
-        <td>${fullTech}</td>
-      </tr>
-
-      <tr>
-        <td>Country</td>
-        <td>${fullCountry}</td>
-      </tr>
-    </table>
-  `;
-
-  document.getElementById("table-preview").innerHTML = html;
-  document.getElementById("output-section").style.display = "block";
-
-  document.getElementById("output-section")
-    .scrollIntoView({ behavior: "smooth" });
+  if (matchingSelect.value === 'Open Position') {
+    // Hide and clear BD matching fields 1-4
+    dependentContainer.style.display = 'none';
+    
+    // Clear standard input elements inside matching dependent area
+    dependentContainer.querySelectorAll('input[type="text"], input[type="date"]').forEach(el => {
+      el.value = '';
+    });
+    // Uncheck checkboxes
+    dependentContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.checked = false;
+    });
+    // Reset specific subfield layouts
+    updateDealField(n);
+  } else {
+    // Reveal fields 1-4 when option is not 'Open Position'
+    dependentContainer.style.display = 'block';
+  }
 }
 
-/* ===============================
-   COPY FUNCTION
-================================= */
+// Watch changes on the Matching drop-down menu
+document.addEventListener('change', (e) => {
+  if (e.target && e.target.id && e.target.id.endsWith('-m-matching')) {
+    const n = e.target.id.match(/^t(\d+)-m-matching$/)[1];
+    handleMatchingChange(n);
+  }
+});
 
-function copyTable() {
-  const range = document.createRange();
-  range.selectNode(document.getElementById("table-preview"));
-  window.getSelection().removeAllRanges();
-  window.getSelection().addRange(range);
-  document.execCommand("copy");
-  alert("Copied!");
+// Own RECs and Proceed Share are mutually exclusive — ticking one clears
+// the other — and either swaps (or, if unticked, un-swaps) the dropdown.
+document.addEventListener('change', (e)=>{
+  const m = e.target && e.target.id && e.target.id.match(/^t(\d+)-m-(own|proceed)$/);
+  if(!m) return;
+  const n = m[1], which = m[2];
+  if(which === 'own' && e.target.checked){
+    const p = document.getElementById('t'+n+'-m-proceed');
+    if(p) p.checked = false;
+  } else if(which === 'proceed' && e.target.checked){
+    const o = document.getElementById('t'+n+'-m-own');
+    if(o) o.checked = false;
+  }
+  updateDealField(n);
+});
+
+// Returns the value to fill into the generated table's "From which deal"
+// row: the mapped short code when Own RECs / Proceed Share is ticked and an
+// option is selected, or the raw typed value otherwise.
+function dealCodeFor(n){
+  const raw = val('t'+n+'-m-deal');
+  if(!raw) return '';
+  const own = document.getElementById('t'+n+'-m-own');
+  const proceed = document.getElementById('t'+n+'-m-proceed');
+  if(own && own.checked) return OWN_RECS_CODE_MAP[raw] !== undefined ? OWN_RECS_CODE_MAP[raw] : raw;
+  if(proceed && proceed.checked) return PROCEED_SHARE_CODE_MAP[raw] !== undefined ? PROCEED_SHARE_CODE_MAP[raw] : raw;
+  return raw;
 }
+
+function renderTrades(){
+  const n = parseInt(document.getElementById('trade-count').value,10);
+  const c = document.getElementById('trades-container');
+  let html = '';
+  for(let i=1;i<=n;i++) html += tradeBlockHtml(i);
+  c.innerHTML = html;
+  initLocksIn(c); // restore any locked values/state for the freshly-rendered trade blocks
+  initSectionLock('trades'); // re-apply a locked Trades section to the freshly-rendered blocks
+  for(let i=1;i<=n;i++) {
+    handleMatchingChange(i); // initialize conditional visibility matching state
+  }
+  updateTransferAccountLabels(); // update dynamic input labels
+}
+document.getElementById('trade-count').addEventListener('change', renderTrades);
+renderTrades();
+
+function fmtDate(v){
+  if(!v) return '';
+  const [y,m,d] = v.split('-');
+  return d+'/'+m+'/'+y;
+}
+function fmtDateShort(v){
+  if(!v) return '';
+  const [y,m,d] = v.split('-');
+  return d+'-'+m+'-'+y.slice(2);
+}
+const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function ordinalSuffix(day){
+  if(day % 100 >= 11 && day % 100 <= 13) return 'th';
+  switch(day % 10){
+    case 1: return 'st';
+    case 2: return 'nd';
+    case 3: return 'rd';
+    default: return 'th';
+  }
+}
+// Produces "1st Jan 2026" style output — the format PowerAutomate's
+// Html_to_text -> formatDateTime/parseDateTime expression expects.
+function fmtDateOrdinal(v){
+  if(!v) return '';
+  const [y,m,d] = v.split('-').map(Number);
+  return d+ordinalSuffix(d)+' '+MONTH_ABBR[m-1]+' '+y;
+}
+function val(id){ const el=document.getElementById(id); return el ? el.value : ''; }
+
+// The Ops version table shows a Deal ID that encodes how many trades are in
+// this deal: the number of trades selected gets inserted as a single digit
+// right after the first 5 characters of the entered Deal ID (before the
+// company surname suffix). E.g. "01000DIY" with 3 trades -> "010003DIY".
+function opsDealId(){
+  const num = val('h-dealid-num');
+  const alpha = val('h-dealid-alpha');
+  if(!num && !alpha) return '';
+  const filled = parseInt(document.getElementById('trade-count').value,10) || '';
+  return num + filled + alpha;
+}
+
+// Builds one 3-column trade block (trades startIdx..startIdx+2), the same fixed
+// template used since day one. 'filled' is the total number of trades the person
+// actually filled in; trades beyond it render as blank columns.
+function buildTradeGroup(startIdx, filled){
+  const rows = [];
+  const addRow = (label, cells, span, parts) => rows.push({label, cells, span: !!span, parts});
+  const size = 3;
+
+  const tradeNos = [], registries=[], dealerships=[], transfers=[], vintages=[], vintageParts=[], techs=[], countries=[], volumes=[], prices=[], priceParts=[], payterms=[], dstarts=[], dends=[], remarks=[], brokers=[];
+  const mNames=[], mRecs=[], mDeals=[], mDdates=[], mMatchings=[], mCods=[];
+  for(let j=0;j<size;j++){
+    const i = startIdx + j;
+    tradeNos.push(i <= filled ? String(i) : '');
+    if(i <= filled){
+      registries.push(val('t'+i+'-registry'));
+      dealerships.push(val('t'+i+'-dealership'));
+      transfers.push(val('t'+i+'-transfer'));
+      vintages.push(val('t'+i+'-vintage-start-month')+' | '+val('t'+i+'-vintage-start-year')+' | '+val('t'+i+'-vintage-end-month')+' | '+val('t'+i+'-vintage-end-year'));
+      vintageParts.push([val('t'+i+'-vintage-start-month'), val('t'+i+'-vintage-start-year'), val('t'+i+'-vintage-end-month'), val('t'+i+'-vintage-end-year')]);
+      techs.push(val('t'+i+'-tech'));
+      countries.push(val('t'+i+'-country'));
+      volumes.push(val('t'+i+'-volume'));
+      prices.push(val('t'+i+'-currency')+' | '+val('t'+i+'-price'));
+      priceParts.push([val('t'+i+'-currency'), val('t'+i+'-price')]);
+      payterms.push(val('t'+i+'-payterm'));
+      dstarts.push(fmtDateOrdinal(val('t'+i+'-dstart')));
+      dends.push(fmtDateOrdinal(val('t'+i+'-dend')));
+      remarks.push(val('t'+i+'-remarks'));
+      brokers.push(val('t'+i+'-broker'));
+      mNames.push(val('t'+i+'-m-name'));
+      mRecs.push(val('t'+i+'-m-recs'));
+      mDeals.push(dealCodeFor(i));
+      mDdates.push(fmtDateShort(val('t'+i+'-m-ddate')));
+      mMatchings.push(val('t'+i+'-m-matching'));
+      mCods.push(val('t'+i+'-m-cod'));
+    } else {
+      registries.push(''); dealerships.push(''); transfers.push('');
+      vintages.push(''); vintageParts.push(['','','','']); techs.push(''); countries.push(''); volumes.push(''); prices.push(''); priceParts.push(['','']);
+      payterms.push(''); dstarts.push(''); dends.push(''); remarks.push(''); brokers.push('');
+      mNames.push(''); mRecs.push(''); mDeals.push(''); mDdates.push(''); mMatchings.push(''); mCods.push('');
+    }
+  }
+  addRow('Trade', tradeNos);
+  addRow('Registry', registries);
+  addRow('Dealership', dealerships);
+  addRow(currentRole() + ' Transfer Account', transfers);
+  addRow('Vintage', vintages, false, vintageParts);
+  addRow('Tech', techs);
+  addRow('Country', countries);
+  addRow('Volume (RECs)', volumes);
+  addRow('Price / RECs', prices, false, priceParts);
+  addRow('Payment Term', payterms);
+  addRow('Delivery Start Date', dstarts);
+  addRow('Delivery End Date', dends);
+  addRow('COD (if applicable)', mCods);
+  addRow('Special Remarks Request', remarks);
+  addRow('Broker (if any)', brokers);
+  addRow('BD Source Matching: 1. Buyer/Seller', mNames);
+  addRow('2. No of RECs', mRecs);
+  addRow('3. From which deal', mDeals);
+  addRow('4. Delivery Date', mDdates);
+  addRow('5. Matching', mMatchings);
+
+  return {n: size, rows};
+}
+
+// Trades 1-3 always form the first 3-column block. Trades 4-6, when present,
+// form a second 3-column block stacked directly beneath it (its own "Trade"
+// row through "5. Matching"), rather than widening a single table to 6
+// columns — matching the Ops-version layout used downstream.
+// The data row structure has been kept exactly as defined in the SOP logic, maintaining full back-compat.
+function buildTable(){
+  const filled = parseInt(document.getElementById('trade-count').value,10);
+
+  const headerRows = [];
+  const addHeaderRow = (label, cells) => headerRows.push({label, cells, span:true});
+  addHeaderRow('Date', [fmtDate(val('h-date'))]);
+  addHeaderRow('Entity', [val('h-entity')]);
+  addHeaderRow('BD in-charge', [val('h-bd')]);
+  addHeaderRow(currentRole(), [val('h-buyer')]);
+  addHeaderRow('Order Type', [val('h-order')]);
+
+  const groups = [buildTradeGroup(1, filled)];
+  if(filled > 3) groups.push(buildTradeGroup(4, filled));
+
+  return {headerRows, groups};
+}
+
+function escapeHtml(s){
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function cellStyle(align, extra, widthPx){
+  const w = widthPx ? 'width:'+widthPx+'px;' : '';
+  return 'border:2px solid #000000;padding:6px 10px;font-family:Arial,Helvetica,sans-serif;font-size:13px;'+w+(align?'text-align:'+align+';':'')+(extra||'');
+}
+
+// hasPipe=true (default) renders a literal "|" character so it survives the
+// HTML-to-plain-text conversion Outlook/O365 performs, keeping split(body,'|')
+// token positions intact. The text is the same color as the background so it
+// stays visually invisible as a solid black bar, same as before.
+// hasPipe=false is used only for the leading divider at the very start of each
+// row: that cell exists purely to preserve the visual left margin/column and
+// must NOT contribute a "|" token, otherwise every index downstream shifts by one.
+function pipeTd(hasPipe){
+  const content = hasPipe === false ? '&nbsp;' : '|';
+  return '<td width="14" style="border:none;padding:0;width:14px;text-align:center;font-family:Arial,Helvetica,sans-serif;font-size:13px;background-color:#000000;color:#000000;line-height:1;">'+content+'</td>';
+}
+
+// Builds "Jan | 2025 | Dec | 2025" as plain flowing inline text (no nested
+// table). A nested table with fixed pixel widths looked right in the preview
+// but email clients (Gmail/Outlook) rewrite pasted HTML during copy, and that
+// rewriting was breaking the fixed widths and causing values to spill past
+// the cell edge. Plain text has nothing to overflow — if it doesn't fit on
+// one line it just wraps naturally inside the cell, which every email client
+// handles consistently.
+function splitCellHtml(parts){
+  const sep = '<span style="color:#000000;font-weight:bold;padding:0 3px;">|</span>';
+  return parts.map(p=>'<span style="white-space:nowrap;">'+escapeHtml(p)+'</span>').join(sep);
+}
+
+// Renders one stacked table (either the trades 1-3 block, with the Deal ID +
+// Details header rows on top, or the trades 4-6 block on its own underneath).
+function renderGroupTable(rows, n, dealIdRow){
+  const labelW = 220, pipeW = 14, dataW = 280;
+  const totalW = pipeW + labelW + pipeW + n*(dataW+pipeW);
+
+  let colgroup = '<colgroup>'+
+    '<col style="width:'+pipeW+'px;">'+
+    '<col style="width:'+labelW+'px;">'+
+    '<col style="width:'+pipeW+'px;">';
+  for(let i=0;i<n;i++) colgroup += '<col style="width:'+dataW+'px;"><col style="width:'+pipeW+'px;">';
+  colgroup += '</colgroup>';
+
+  let html = '<table border="0" cellspacing="0" cellpadding="0" width="'+totalW+'" style="border-collapse:collapse;width:'+totalW+'px;table-layout:fixed;font-family:Arial,Helvetica,sans-serif;font-size:13px;">';
+  html += colgroup;
+  if(dealIdRow){
+    html += '<tr>'+pipeTd(false)+
+      '<td width="'+labelW+'" style="'+cellStyle(null,'font-weight:bold;',labelW)+'">Deal ID</td>'+
+      pipeTd()+
+      '<td width="'+(n*dataW+(n-1)*pipeW)+'" style="'+cellStyle('center','font-weight:bold;',n*dataW+(n-1)*pipeW)+'" colspan="'+(n*2-1)+'">'+escapeHtml(opsDealId())+'</td>'+
+      pipeTd()+
+    '</tr>';
+  }
+  rows.forEach(r=>{
+    html += '<tr>'+pipeTd(false);
+    html += '<td width="'+labelW+'" style="'+cellStyle(null,'font-weight:bold;word-wrap:break-word;',labelW)+'">'+escapeHtml(r.label)+'</td>';
+    html += pipeTd();
+    if(r.span){
+      html += '<td width="'+(n*dataW+(n-1)*pipeW)+'" style="'+cellStyle('center',null,n*dataW+(n-1)*pipeW)+'" colspan="'+(n*2-1)+'">'+escapeHtml(r.cells[0])+'</td>';
+      html += pipeTd();
+    } else {
+      r.cells.forEach((c,idx)=>{
+        if(r.parts){
+          html += '<td width="'+dataW+'" style="'+cellStyle('center',null,dataW)+'">'+splitCellHtml(r.parts[idx])+'</td>';
+        } else {
+          html += '<td width="'+dataW+'" style="'+cellStyle('center',null,dataW)+'">'+escapeHtml(c)+'</td>';
+        }
+        html += pipeTd();
+      });
+    }
+    html += '</tr>';
+  });
+  html += '</table>';
+  return html;
+}
+
+// data = {headerRows, groups}. Trades 1-3 render as one table (with Deal ID +
+// Details on top); trades 4-6, if present, render as a second table stacked
+// directly beneath — same 3-column width, no repeated Deal ID/Details.
+function renderPreview(data){
+  const group1 = data.groups[0];
+  let html = renderGroupTable(data.headerRows.concat(group1.rows), group1.n, true);
+  for(let g=1; g<data.groups.length; g++){
+    const group = data.groups[g];
+    html += '<div style="height:16px;"></div>';
+    html += renderGroupTable(group.rows, group.n, false);
+  }
+  document.getElementById('table-preview').innerHTML = html;
+  return html;
+}
+
+// Renders one block's rows as pipe-delimited plain text. dealIdRow, when
+// true, adds the "Deal ID" title row on top of this block.
+function renderGroupPlainText(rows, n, dealIdRow){
+  const numCols = 1 + n;
+
+  const colWidths = new Array(numCols).fill(0);
+  rows.forEach(r=>{
+    colWidths[0] = Math.max(colWidths[0], String(r.label).length);
+    if(!r.span){
+      r.cells.forEach((cell, idx)=>{
+        colWidths[idx+1] = Math.max(colWidths[idx+1], String(cell).length);
+      });
+    }
+  });
+  if(dealIdRow) colWidths[0] = Math.max(colWidths[0], 'Deal ID'.length);
+
+  function padCell(text, width){
+    text = String(text);
+    const gap = width - text.length;
+    return text + ' '.repeat(gap > 0 ? gap : 0);
+  }
+
+  const dataColsTotalWidth = colWidths.slice(1).reduce((a,b)=>a+b,0) + (n-1)*3; // account for ' | ' between data columns
+
+  const lines = [];
+
+  if(dealIdRow){
+    lines.push('| ' + padCell('Deal ID', colWidths[0]) + ' | ' + padCell(opsDealId(), dataColsTotalWidth) + ' |');
+  }
+
+  rows.forEach(r=>{
+    const label = padCell(r.label, colWidths[0]);
+    if(r.span){
+      const spanned = padCell(r.cells[0], dataColsTotalWidth);
+      lines.push('| ' + label + ' | ' + spanned + ' |');
+    } else {
+      const cells = r.cells.map((cell, idx) => padCell(cell, colWidths[idx+1]));
+      lines.push('| ' + label + ' | ' + cells.join(' | ') + ' |');
+    }
+  });
+
+  return lines.join('\n');
+}
+
+// data = {headerRows, groups}. Trades 4-6, if present, form a second block
+// stacked below the trades 1-3 block, separated by a blank line.
+function buildPlainText(data){
+  const group1 = data.groups[0];
+  const blocks = [renderGroupPlainText(data.headerRows.concat(group1.rows), group1.n, true)];
+  for(let g=1; g<data.groups.length; g++){
+    const group = data.groups[g];
+    blocks.push(renderGroupPlainText(group.rows, group.n, false));
+  }
+  return blocks.join('\n\n');
+}
+
+/* ---- "Without BD source matching" output: a flat point-format list
+   (Label: value, one per line) instead of the bordered pipe-table — closer
+   to a plain email-style trade confirmation. COD is still included, just
+   without any of the BD Source Matching rows. ---- */
+function buildPointFormat(){
+  const filled = parseInt(document.getElementById('trade-count').value,10);
+  const lines = [];
+  const addField = (label, value) => lines.push({type:'field', label, value});
+  const addBlank = () => lines.push({type:'blank'});
+
+  lines.push({type:'title', text:'Details: Transaction Recap'});
+  addBlank();
+  addField('Deal ID', opsDealId());
+  addField('Date', fmtDate(val('h-date')));
+  addField('Entity', val('h-entity'));
+  addField('BD in-charge', val('h-bd'));
+  addField(currentRole(), val('h-buyer'));
+  addField('Order Type', val('h-order'));
+
+  for(let i=1;i<=filled;i++){
+    addBlank();
+    lines.push({type:'tradeTitle', text:'Trade '+i});
+    addField('Registry', val('t'+i+'-registry'));
+    addField('Dealership', val('t'+i+'-dealership'));
+    addField(currentRole() + ' Transfer Account', val('t'+i+'-transfer'));
+    addField('Vintage', val('t'+i+'-vintage-start-month')+' '+val('t'+i+'-vintage-start-year')+' - '+val('t'+i+'-vintage-end-month')+' '+val('t'+i+'-vintage-end-year'));
+    addField('Tech', val('t'+i+'-tech'));
+    addField('Country', val('t'+i+'-country'));
+    addField('Volume (RECs)', val('t'+i+'-volume'));
+    addField('Price / RECs', val('t'+i+'-currency')+' '+val('t'+i+'-price'));
+    addField('Payment Term', val('t'+i+'-payterm'));
+    addField('Delivery Start Date', fmtDateOrdinal(val('t'+i+'-dstart')));
+    addField('Delivery End Date', fmtDateOrdinal(val('t'+i+'-dend')));
+    addField('COD (if applicable)', val('t'+i+'-m-cod'));
+    addField('Special Remarks Request', val('t'+i+'-remarks'));
+  }
+  return lines;
+}
+
+function renderPointFormatHtml(lines){
+  let html = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.6;">';
+  lines.forEach(l=>{
+    if(l.type === 'blank'){
+      html += '<div>&nbsp;</div>';
+    } else if(l.type === 'title'){
+      html += '<div style="font-weight:bold;">'+escapeHtml(l.text)+'</div>';
+    } else if(l.type === 'tradeTitle'){
+      html += '<div style="font-weight:bold;">'+escapeHtml(l.text)+'</div>';
+    } else {
+      html += '<div>'+'<strong>'+escapeHtml(l.label)+':</strong> '+escapeHtml(l.value)+'</div>';
+    }
+  });
+  html += '</div>';
+  return html;
+}
+
+function buildPointFormatText(lines){
+  return lines.map(l=>{
+    if(l.type === 'blank') return '';
+    if(l.type === 'title' || l.type === 'tradeTitle') return l.text;
+    return l.label+': '+l.value;
+  }).join('\n');
+}
+
+let lastHtml = '', lastPlain = '';
+
+/* ---- Ops version validation ----
+   The Ops version table (with BD Source Matching) must not be generated with
+   gaps in it — every Details field (Deal ID through Transfer Account Name)
+   and every active trade's fields (Vintage through Special Remarks) must be
+   filled in. If anything is missing, generation is blocked and the person
+   sees exactly what's left to fill in, with the offending fields outlined. ---- */
+function isEmpty(id){
+  const v = val(id);
+  return !v || !v.trim();
+}
+function detailFieldDefs(requireDealId){
+  const defs = [];
+  defs.push(
+    {id:'h-date', label:'Date'},
+    {id:'h-entity', label:'Entity'},
+    {id:'h-bd', label:'BD in-charge'},
+    {id:'h-buyer', label:currentRole()+' Name'},
+    {id:'h-order', label:'Order type'}
+  );
+  return defs;
+}
+// A field is valid if it has a custom validator that passes, or (by default)
+// simply isn't blank.
+function fieldIsValid(f){
+  const v = val(f.id);
+  if(f.validate) return f.validate(v);
+  return !!(v && v.trim());
+}
+function tradeFieldDefs(i){
+  // Fields to validate for a standard Trade section
+  const baseDefs = [
+    {ids:['t'+i+'-registry'], label:'Registry'},
+    {ids:['t'+i+'-dealership'], label:'Dealership'},
+    {ids:['t'+i+'-transfer'], label:currentRole() + ' Transfer Account'},
+    {ids:['t'+i+'-vintage-start-month','t'+i+'-vintage-start-year'], label:'Vintage start month & year'},
+    {ids:['t'+i+'-vintage-end-month','t'+i+'-vintage-end-year'], label:'Vintage end month & year'},
+    {ids:['t'+i+'-tech'], label:'Tech'},
+    {ids:['t'+i+'-country'], label:'Country'},
+    {ids:['t'+i+'-volume'], label:'Volume (RECs)'},
+    {ids:['t'+i+'-currency'], label:'Price currency'},
+    {ids:['t'+i+'-price'], label:'Price / REC'},
+    {ids:['t'+i+'-payterm'], label:'Payment term'},
+    {ids:['t'+i+'-dstart'], label:'Delivery start date'},
+    {ids:['t'+i+'-dend'], label:'Delivery end date'},
+    {ids:['t'+i+'-m-cod'], label:'COD (if applicable)'},
+    {ids:['t'+i+'-remarks'], label:'Special remarks'}
+  ];
+
+  const matchingValue = val('t'+i+'-m-matching');
+  if (matchingValue === 'Open Position') {
+    // If Open Position is selected, we do not require the hidden dependent matching fields (1-4).
+    return baseDefs;
+  }
+
+  // If anything other than 'Open Position' is selected, matching fields 1-4 are mandatory.
+  return baseDefs.concat([
+    {ids:['t'+i+'-m-name'], label:'1. Buyer/Seller name'},
+    {ids:['t'+i+'-m-recs'], label:'2. No of RECs'},
+    {ids:['t'+i+'-m-deal'], label:'3. From which deal'},
+    {ids:['t'+i+'-m-ddate'], label:'4. Delivery date'}
+  ]);
+}
+function clearMissingHighlights(){
+  document.querySelectorAll('.field-missing').forEach(el=>el.classList.remove('field-missing'));
+}
+function markMissing(key){
+  const wrap = document.getElementById(key+'-wrap');
+  if(wrap) wrap.classList.add('field-missing');
+}
+// Returns a list of {section, label} for every required field that's blank.
+// Also outlines the corresponding fields on the form as a side effect.
+// requireDealId is true for the Ops version; the Customer version doesn't need it.
+function validateVersion(requireDealId){
+  clearMissingHighlights();
+  const missing = [];
+
+  detailFieldDefs(requireDealId).forEach(f=>{
+    if(!fieldIsValid(f)){
+      missing.push({section:'Details', label:f.label});
+      markMissing(f.markKey || f.id);
+    }
+  });
+
+  const filled = parseInt(document.getElementById('trade-count').value,10);
+  for(let i=1;i<=filled;i++){
+    tradeFieldDefs(i).forEach(f=>{
+      if(f.ids.some(id=>isEmpty(id))){
+        missing.push({section:'Trade '+i, label:f.label});
+        markMissing(f.ids.join(','));
+      }
+    });
+  }
+
+  return missing;
+}
+function showValidationWarning(missing, versionLabel){
+  const box = document.getElementById('validation-warning');
+  const items = missing.map(m=>'<li>'+escapeHtml(m.section)+' — '+escapeHtml(m.label)+'</li>').join('');
+  box.innerHTML = '<strong>Table not generated — the '+escapeHtml(versionLabel)+' needs every field below filled in. Please complete the following before generating:</strong><ul>'+items+'</ul>';
+  box.style.display = 'block';
+  box.scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+function hideValidationWarning(){
+  document.getElementById('validation-warning').style.display = 'none';
+}
+// Clear a field's "missing" outline as soon as the person edits it.
+document.addEventListener('input', (e)=>{
+  const wrap = e.target.closest('[id$="-wrap"]');
+  if(wrap) wrap.classList.remove('field-missing');
+});
+document.addEventListener('change', (e)=>{
+  const wrap = e.target.closest('[id$="-wrap"]');
+  if(wrap) wrap.classList.remove('field-missing');
+});
+
+// Validates and builds the preview. Returns true/false for which version was
+// built (Ops/Customer), or null if validation failed (warning already shown).
+function generateOutput(){
+  const includeBD = document.querySelector('input[name="output-version"]:checked').value === 'full';
+
+  const missing = validateVersion(includeBD);
+  if(missing.length){
+    showValidationWarning(missing, includeBD ? 'Ops version' : 'Customer version');
+    document.getElementById('output-section').style.display = 'none';
+    return null;
+  }
+  hideValidationWarning();
+
+  if(includeBD){
+    const tableData = buildTable();
+    lastHtml = renderPreview(tableData);
+    lastPlain = buildPlainText(tableData);
+  } else {
+    const lines = buildPointFormat();
+    lastHtml = renderPointFormatHtml(lines);
+    document.getElementById('table-preview').innerHTML = lastHtml;
+    lastPlain = buildPointFormatText(lines);
+  }
+  document.getElementById('output-section').style.display = 'flex';
+  document.getElementById('copy-status').style.display = 'none';
+  document.getElementById('output-section').scrollIntoView({behavior:'smooth', block:'nearest'});
+  return includeBD;
+}
+
+document.getElementById('generate-btn').addEventListener('click', ()=>{
+  generateOutput();
+});
+
+document.getElementById('copy-btn').addEventListener('click', async ()=>{
+  try{
+    const htmlBlob = new Blob([lastHtml], {type:'text/html'});
+    const textBlob = new Blob([lastPlain], {type:'text/plain'});
+    await navigator.clipboard.write([new ClipboardItem({'text/html': htmlBlob, 'text/plain': textBlob})]);
+  }catch(e){
+    try{ await navigator.clipboard.writeText(lastPlain); }catch(e2){}
+  }
+  const status = document.getElementById('copy-status');
+  status.style.display = 'block';
+  setTimeout(()=>{ status.style.display='none'; }, 2500);
+});
+
+/* ---- Save agreement: assigns the global Deal ID (first save only) and
+   writes the confirmation into the shared SharePoint log table ----
+   The Deal ID stays unassigned/blank while a draft is only being edited; it's
+   claimed from the shared counter the moment "Save agreement" succeeds, and
+   never reassigned again for this agreement, so the same Deal ID always maps
+   to exactly one saved record across every user. */
+document.getElementById('save-agreement-btn').addEventListener('click', async ()=>{
+  if(!currentAccount) return;
+  const btn = document.getElementById('save-agreement-btn');
+  const note = document.getElementById('save-note');
+  btn.disabled = true;
+  note.style.display = 'none';
+  try{
+    const includeBD = generateOutput();
+    if(includeBD === null) return; // validation warning already shown
+
+    if(!currentDealDocId){
+      await assignNewDealId();
+      // Rebuild the preview now that the Deal ID field is actually filled in,
+      // so the saved table/text shows the real number, not a blank.
+      generateOutput();
+    }
+
+    await saveConfirmationToHistory(includeBD, currentDealDocId);
+    saveDraft();
+    await loadHistory(); // refresh logRowsCache so dealAlreadySubmitted() sees this deal
+
+    note.textContent = 'Submitted — Deal ID ' + currentDealDocId + '. Awaiting Level 1 approval.';
+    note.style.display = 'block';
+    lockSubmittedForm(currentDealDocId);
+  }catch(err){
+    console.error('Save agreement failed', err);
+    note.textContent = 'Save failed: ' + err.message;
+    note.style.display = 'block';
+  }finally{
+    btn.disabled = false;
+  }
+});
 
 </script>
-
 </body>
 </html>
