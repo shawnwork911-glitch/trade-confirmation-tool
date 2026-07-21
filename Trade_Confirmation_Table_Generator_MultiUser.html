@@ -527,13 +527,6 @@ const SP_FILE_NAME = "BD Agreement Record.xlsx";
 // resolveWorkbook needs to change.
 const SP_FILE_SHARE_URL = "https://saxonrenewables.sharepoint.com/:x:/s/Operations/IQCIkW5tgJWPQJB1t7KiWT7KAaDp_pqoAmZigGQ9UbvBQME?e=dquVG0";
 const LOG_TABLE_NAME = "TradeDealLog";        // must match the Excel Table name you create
-// Separate sheet/table that mirrors every row of a deal the moment it
-// finishes Level 3 approval (i.e. the "Pending Level 3" -> "Approved"
-// transition). Create an Excel Table named exactly this on its own sheet,
-// with the same 43 columns/order as TradeDealLog (see below) — addTableRow
-// pads/truncates to whatever column count that table actually has, so it
-// still works even if you set it up with fewer columns.
-const APPROVED_TABLE_NAME = "Approved";
 // Column layout of the restructured TradeDealLog "main list" table.
 // One physical row per TRADE (a multi-trade agreement produces several rows
 // sharing the same Agreement ID). Create the Excel Table with these 43
@@ -1207,6 +1200,42 @@ let approvedListId = null;
 // columns once (displayName -> internal name) and builds the write from
 // that, so it survives the list being renamed/restructured going forward.
 let approvedListColumnMapCache = null;
+// The "Deal ID" line inside the saved point-format HTML is baked in at
+// Save-agreement time — before Level 1 approval, that's necessarily the
+// placeholder text ("Pending Level 1 approval"), since no real Deal ID
+// exists yet. Once Level 1 assigns the real ID, this patches that one line
+// in place so the stored HTML (what "View" / Copy show from then on,
+// through every later approval level and after) reflects the real Deal ID
+// permanently — instead of staying frozen on the placeholder forever, while
+// only the header around it (computed live from the row) shows correctly.
+function patchDealIdInGeneratedHtml(html, dealId){
+  if(!html) return html;
+  return html.replace(/(<strong>Deal ID:<\/strong>\s*)[^<]*/, '$1' + escapeHtml(dealId));
+}
+// Same Excel-serial-vs-ISO-string ambiguity as formatStoredDate() above (a
+// "YYYY-MM-DD" string saved into the TradeDealLog Excel table can come back
+// from Graph as either that same string or Excel's own numeric date serial,
+// depending on how Excel chose to store it) — but this one always outputs
+// DD-MM-YYYY (dashes, 4-digit year), which is what the Approved list's
+// "Delivery Date" column expects.
+function formatDeliveryDateDMY(v){
+  if(v === '' || v === null || v === undefined) return '';
+  const str = String(v).trim();
+  if(/^-?\d+(\.\d+)?$/.test(str)){
+    const ms = Math.round((Number(str) - 25569) * 86400 * 1000); // Excel serial date epoch -> Unix epoch
+    const d = new Date(ms);
+    if(isNaN(d.getTime())) return str;
+    const dd = String(d.getUTCDate()).padStart(2,'0');
+    const mm = String(d.getUTCMonth()+1).padStart(2,'0');
+    const yyyy = d.getUTCFullYear();
+    return dd+'-'+mm+'-'+yyyy;
+  }
+  if(/^\d{4}-\d{2}-\d{2}/.test(str)){
+    const [y,m,d] = str.split('-');
+    return d+'-'+m+'-'+y;
+  }
+  return str;
+}
 async function getApprovedListColumnMap(){
   if(approvedListColumnMapCache) return approvedListColumnMapCache;
   const data = await graphFetch("/sites/" + siteId + "/lists/" + approvedListId + "/columns?$select=name,displayName,hidden,readOnly");
@@ -1266,7 +1295,7 @@ async function addApprovedDealToList(values){
         'Buyer/Seller': values[MC.buyerSeller],
         'No of RECs': values[MC.noOfRecs],
         'Which deal': values[MC.whichDeal],
-        'Delivery Date': values[MC.deliveryDateM],
+        'Delivery Date': formatDeliveryDateDMY(values[MC.deliveryDateM]),
         'Status': values[MC.status],
         'Submitted By': values[MC.submittedBy],
         'Submitted Date': values[MC.submittedDate]
@@ -1714,7 +1743,10 @@ async function approveDeal(dealId, file){
   let approvedListError = null;
   for(const r of matching){
     const values = r.values[0].slice();
-    if(assignedDealId) values[MC.dealId] = assignedDealId;
+    if(assignedDealId){
+      values[MC.dealId] = assignedDealId;
+      if(values[MC.generatedHtml]) values[MC.generatedHtml] = patchDealIdInGeneratedHtml(values[MC.generatedHtml], assignedDealId);
+    }
     values[MC.status] = nextStatus;
     values[byCol] = currentAccount.username;
     values[dateCol] = nowIso;
