@@ -517,7 +517,7 @@ const TENANT_ID = "ab7c8c1e-dc1d-431f-ba8b-e4de2b047f8b";
 const CLIENT_ID = "5b17f2d1-ca2a-4521-9d03-01cda2e86c16";
 const SP_HOSTNAME = "saxonrenewables.sharepoint.com";
 const SP_SITE_PATH = "/sites/Operations";
-const APPROVED_LIST_NAME = "BD Agreement Record Approved";
+const APPROVED_LIST_ID = "79178031-8d24-4c7b-9fd6-be94647c73be";
 const SP_FILE_NAME = "BD Agreement Record.xlsx";
 const SP_FILE_SHARE_URL = "https://saxonrenewables.sharepoint.com/:x:/s/Operations/IQCIkW5tgJWPQJB1t7KiWT7KAaDp_pqoAmZigGQ9UbvBQME?e=dquVG0";
 const LOG_TABLE_NAME = "TradeDealLog";
@@ -1000,23 +1000,8 @@ async function getTableRows(tableName){
   const data = await graphFetch(workbookTablePath(tableName) + '/rows');
   return data.value || [];
 }
-async function getSharePointListId(listName) {
-    const data = await graphFetch(
-        "/sites/" + siteId + "/lists?$filter=displayName eq '" + encodeURIComponent(listName) + "'"
-    );
-
-    if (!data || !data.value || !data.value.length)
-        throw new Error("SharePoint List not found: " + listName);
-
-    return data.value[0].id;
-}
-let approvedListId = null;
 
 async function addApprovedDealToList(values){
-    if(!approvedListId){
-        approvedListId = await getSharePointListId(APPROVED_LIST_NAME);
-    }
-
     // Base text payload
     const fields = {
         Title: values[MC.dealId] || 'No Deal ID',
@@ -1065,7 +1050,7 @@ async function addApprovedDealToList(values){
     }
 
     return await graphFetch(
-        "/sites/" + siteId + "/lists/" + approvedListId + "/items",
+        "/sites/" + siteId + "/lists/" + APPROVED_LIST_ID + "/items",
         {
             method: "POST",
             body: JSON.stringify({ fields })
