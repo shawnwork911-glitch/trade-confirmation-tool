@@ -1055,7 +1055,11 @@ async function assignNewDealId(){
   const rows = await getTableRows(LOG_TABLE_NAME);
   let maxNum = 0;
   rows.forEach(r=>{
-    const n = parseInt(String(r.values[0][MC.dealId] || '').trim(), 10);
+    // The saved Deal ID is the full "01300" + trades + alpha string (see
+    // opsDealId), so the underlying sequence number is always exactly its
+    // first 5 characters — parsing the whole string would swallow the
+    // trade-count digit(s) that follow it.
+    const n = parseInt(String(r.values[0][MC.dealId] || '').trim().slice(0,5), 10);
     if(!isNaN(n) && n > maxNum) maxNum = n;
   });
   // The superadmin-set starting number is a floor: it only matters while
@@ -1063,15 +1067,18 @@ async function assignNewDealId(){
   // backwards or renumbers anything already saved.
   let candidate = Math.max(maxNum + 1, dealIdStartOverride || 1);
   const recheck = await getTableRows(LOG_TABLE_NAME);
-  const taken = new Set(recheck.map(r => String(r.values[0][MC.dealId] || '').trim()));
+  const takenNums = new Set(recheck.map(r => String(r.values[0][MC.dealId] || '').trim().slice(0,5)));
   let padded = String(candidate).padStart(5,'0');
-  while(taken.has(padded)){
+  while(takenNums.has(padded)){
     candidate += 1;
     padded = String(candidate).padStart(5,'0');
   }
   document.getElementById('h-dealid-num').value = padded;
-  currentDealDocId = padded;
-  return padded;
+  // The full ID (matching exactly what the preview shows) is what actually
+  // gets saved/matched everywhere from here on — not just the bare number.
+  const fullId = opsDealId();
+  currentDealDocId = fullId;
+  return fullId;
 }
 
 /* ---- Per-user draft (autosaves the in-progress form into the Drafts table) ---- */
@@ -1418,7 +1425,7 @@ function renderHistoryTable(el, groups, opts){
     html += '<tr style="border-top:1px solid var(--border);">' +
       (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[MC.submittedBy]||'')+'</td>' : '') +
       '<td style="padding:6px;">'+escapeHtml(v[MC.dealId]||'')+'</td>' +
-      '<td style="padding:6px;">'+escapeHtml(v[MC.agreementDate]||'')+'</td>' +
+      '<td style="padding:6px;">'+escapeHtml(formatStoredDate(v[MC.agreementDate]))+'</td>' +
       '<td style="padding:6px;">'+escapeHtml(v[MC.company]||'')+'</td>' +
       '<td style="padding:6px;">'+g.rows.length+'</td>' +
       '<td style="padding:6px;">'+statusBadge(status)+
@@ -1990,6 +1997,29 @@ function fmtDate(v){
   const [y,m,d] = v.split('-');
   return d+'/'+m+'/'+y;
 }
+// Values read back from the SharePoint log table for a date-like column:
+// Excel silently converts a "YYYY-MM-DD" string into its own serial date
+// number the moment it's written, so what comes back from Graph is a plain
+// number (e.g. 46217), not the original string. This converts either form
+// into DD/MM/YYYY for display in the history/queue tables.
+function formatStoredDate(v){
+  if(v === '' || v === null || v === undefined) return '';
+  const str = String(v).trim();
+  if(/^-?\d+(\.\d+)?$/.test(str)){
+    const ms = Math.round((Number(str) - 25569) * 86400 * 1000); // Excel serial date epoch -> Unix epoch
+    const d = new Date(ms);
+    if(isNaN(d.getTime())) return str;
+    const dd = String(d.getUTCDate()).padStart(2,'0');
+    const mm = String(d.getUTCMonth()+1).padStart(2,'0');
+    const yyyy = d.getUTCFullYear();
+    return dd+'/'+mm+'/'+yyyy;
+  }
+  if(/^\d{4}-\d{2}-\d{2}/.test(str)){
+    const [y,m,d] = str.split('-');
+    return d+'/'+m+'/'+y;
+  }
+  return str;
+}
 function fmtDateShort(v){
   if(!v) return '';
   const [y,m,d] = v.split('-');
@@ -2358,7 +2388,11 @@ function detailFieldDefs(requireDealId){
     {id:'h-entity', label:'Entity'},
     {id:'h-bd', label:'BD in-charge'},
     {id:'h-buyer', label:currentRole()+' Name'},
-    {id:'h-order', label:'Order type'}
+    {id:'h-order', label:'Order type'},
+    // Required so the saved Deal ID (sequence number + trade count + these
+    // letters) is never all-digits — an all-numeric value gets silently
+    // reinterpreted as a number by Excel, dropping the leading zero.
+    {id:'h-dealid-alpha', label:'Deal ID letters'}
   );
   return defs;
 }
