@@ -529,7 +529,7 @@ const SP_FILE_SHARE_URL = "https://saxonrenewables.sharepoint.com/:x:/s/Operatio
 const LOG_TABLE_NAME = "TradeDealLog";        // must match the Excel Table name you create
 // Column layout of the restructured TradeDealLog "main list" table.
 // One physical row per TRADE (a multi-trade agreement produces several rows
-// sharing the same Agreement ID). Create the Excel Table with these 43
+// sharing the same Agreement ID). Create the Excel Table with these 44
 // columns in exactly this order:
 // Sales PIC, Entity, Agreement Date, Agreement ID, Supply/Demand, Company,
 // Broker, Country, Registry, Tech, Match/Open Position, Volume (RECs),
@@ -540,11 +540,11 @@ const LOG_TABLE_NAME = "TradeDealLog";        // must match the Excel Table name
 // Approved By (Level 1), Approved Date (Level 1), Approved By (Level 2),
 // Approved Date (Level 2), Approved By (Level 3), Approved Date (Level 3),
 // Rejected By, Rejected Date, Rejection Comment, Agreement File Name,
-// Agreement File URL
-// NOTE: if you're adding this to an existing workbook, add the last two
-// columns ("Agreement File Name", "Agreement File URL") at the end of the
-// live TradeDealLog Excel Table — don't insert them in the middle, or every
-// existing column index below will point at the wrong data.
+// Agreement File URL, Description
+// NOTE: if you're adding this to an existing workbook, add any new column
+// ("Description" included) at the END of the live TradeDealLog Excel
+// Table — don't insert them in the middle, or every existing column index
+// below will point at the wrong data.
 const MC = {
   salesPic:0, entity:1, agreementDate:2, dealId:3, supplyDemand:4, company:5,
   broker:6, country:7, registry:8, tech:9, matching:10, volume:11,
@@ -554,9 +554,9 @@ const MC = {
   submittedBy:28, submittedDate:29, generatedHtml:30, status:31,
   approvedBy1:32, approvedDate1:33, approvedBy2:34, approvedDate2:35,
   approvedBy3:36, approvedDate3:37, rejectedBy:38, rejectedDate:39,
-  rejectReason:40, agreementFileName:41, agreementFileUrl:42
+  rejectReason:40, agreementFileName:41, agreementFileUrl:42, description:43
 };
-const COL_COUNT = 43;
+const COL_COUNT = 44;
 const DRAFT_TABLE_NAME = "TradeDealDrafts";   // must match the Excel Table name you create
 // Small generic key/value settings table. Currently holds one row:
 // key="dealIdStart", value=the lowest 5-digit number the next new Deal ID
@@ -902,7 +902,7 @@ async function sendMailGraph(toEmails, subject, htmlBody){
 }
 // status = the deal's status *after* this submit/approve just happened —
 // looks up which role is now responsible and emails everyone holding it.
-async function notifyNextApprover(status, dealId){
+async function notifyNextApprover(status, dealId, description){
   const role = APPROVER_ROLE_FOR_STATUS[status];
   if(!role) return; // e.g. Approved — no next approver to notify
   const toEmails = emailsForRole(role);
@@ -914,7 +914,9 @@ async function notifyNextApprover(status, dealId){
   const link = dealDeepLink(dealId);
   const displayId = friendlyDealId(dealId);
   const label = isPendingDealId(dealId) ? 'An agreement' : 'Deal ID <strong>' + escapeHtml(displayId) + '</strong>';
+  const descBlock = (description && description.trim()) ? '<p><strong>Description:</strong> ' + escapeHtml(description) + '</p>' : '';
   const html = '<p>' + label + ' is waiting on your ' + escapeHtml(levelLabel) + ' approval.</p>' +
+    descBlock +
     '<p><a href="' + link + '">Open it in the Trade Confirmation app</a></p>';
   try{
     await sendMailGraph(toEmails, 'Approval needed — ' + (isPendingDealId(dealId) ? levelLabel : displayId + ' (' + levelLabel + ')'), html);
@@ -1295,7 +1297,7 @@ async function addApprovedDealToList(values){
         'Buyer/Seller': values[MC.buyerSeller],
         'No of RECs': values[MC.noOfRecs],
         'Which deal': values[MC.whichDeal],
-        'Delivery Date': formatDeliveryDateDMY(values[MC.deliveryDateM]),
+        'Delivery Date': values[MC.deliveryDateM],
         'Status': values[MC.status],
         'Submitted By': values[MC.submittedBy],
         'Submitted Date': values[MC.submittedDate]
@@ -1608,6 +1610,24 @@ function lockSubmittedForm(dealId){
     (isPendingDealId(dealId) ? 'A Deal ID will be assigned once Level 1 approves, and you\'ll get an email then. ' : '') +
     'To submit a new agreement, use "New confirmation" above — it will get its own Deal ID.';
   banner.style.display = 'block';
+
+  // "Generate table" is gone once locked (nothing left to regenerate), so
+  // this is the only remaining way to get the Preview card — and its Copy
+  // button — back: pull the saved Generated HTML straight from the row.
+  // Runs every time a locked form loads (including a plain page reload),
+  // so it also picks up the corrected Deal ID once Level 1 approval has
+  // patched it into the stored HTML (see patchDealIdInGeneratedHtml).
+  let row = logRowsCache.find(r => String(r.values[0][MC.dealId] || '').trim() === dealId && r.values[0][MC.generatedHtml]);
+  if(!row) row = myRowsBySubmissionRef().find(r => r.values[0][MC.generatedHtml]);
+  if(row){
+    lastHtml = row.values[0][MC.generatedHtml];
+    lastPlain = htmlToPlainFallback(lastHtml);
+    document.getElementById('table-preview').innerHTML = lastHtml;
+    setPreviewDealIdLabel(isPendingDealId(dealId) ? '' : displayId);
+    setPreviewAgreementLink(row.values[0][MC.agreementFileUrl]);
+    document.getElementById('copy-btn').style.display = 'inline-block';
+    document.getElementById('output-section').style.display = 'flex';
+  }
 }
 document.addEventListener('input', ()=>{
   if(!currentAccount || suppressAutosave || !canBuildAgreement()) return;
@@ -1696,6 +1716,7 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
     row[MC.rejectedBy] = '';
     row[MC.rejectedDate] = '';
     row[MC.rejectReason] = '';
+    row[MC.description] = val('h-description');
     await addTableRow(LOG_TABLE_NAME, row);
   }
   await loadHistory();
@@ -1773,7 +1794,7 @@ async function approveDeal(dealId, file){
     }
   }
   const idForNotifications = assignedDealId || dealId;
-  await notifyNextApprover(nextStatus, idForNotifications);
+  await notifyNextApprover(nextStatus, idForNotifications, matching[0].values[0][MC.description]);
   if(assignedDealId){
     // The creator gets an email the moment their Deal ID exists — but,
     // per policy, no separate email when the deal later reaches final
@@ -1914,6 +1935,12 @@ function renderHistoryTable(el, groups, opts){
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
         '<div style="background:#fdecea;border:1px solid #e2a49a;color:#8a2d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
         '<strong>Rejected'+(v[MC.rejectedBy]?(' by '+escapeHtml(v[MC.rejectedBy])):'')+':</strong> '+escapeHtml(v[MC.rejectReason]) +
+        '</div></td></tr>';
+    }
+    if(v[MC.description]){
+      html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
+        '<div style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:12px;color:var(--text-secondary);">' +
+        '<strong style="color:var(--text);">Description:</strong> '+escapeHtml(v[MC.description]) +
         '</div></td></tr>';
     }
   });
@@ -2155,7 +2182,9 @@ document.getElementById('header-fields').innerHTML =
   headerField('BD in-charge', selectHtml('h-bd',BD_NAMES,BD_NAMES[0]),'h-bd') +
   headerField('Buyer or Seller', selectHtml('h-role',['Buyer','Seller'],'Buyer'),'h-role') +
   headerField('Buyer Name', textHtml('h-buyer','Company name'),'h-buyer') +
-  headerField('Order type', selectHtml('h-order',ORDER_TYPES,'Stock-In (T)'),'h-order');
+  headerField('Order type', selectHtml('h-order',ORDER_TYPES,'Stock-In (T)'),'h-order') +
+  '<div id="h-description-wrap" style="grid-column:1 / -1;"><label for="h-description">Description (for Level 1 approver)</label>' +
+  '<textarea id="h-description" placeholder="Briefly describe this agreement, for whoever approves it — not shown to the customer"></textarea></div>';
 
 /* Keeps the "Buyer/Seller" field's on-screen label, "Transfer Account" label, and the generated table's
    row labels in sync with the Buyer-or-Seller role selector. */
@@ -2951,6 +2980,7 @@ function detailFieldDefs(requireDealId){
     {id:'h-bd', label:'BD in-charge'},
     {id:'h-buyer', label:currentRole()+' Name'},
     {id:'h-order', label:'Order type'},
+    {id:'h-description', label:'Description (for Level 1 approver)'},
     // Required so the saved Deal ID (sequence number + trade count + these
     // letters) is never all-digits — an all-numeric value gets silently
     // reinterpreted as a number by Excel, dropping the leading zero.
@@ -3137,7 +3167,7 @@ document.getElementById('save-agreement-btn').addEventListener('click', async ()
     currentSubmittedDate = submittedDateIso;
     saveDraft();
     await loadHistory(); // refresh logRowsCache so dealAlreadySubmitted() sees this deal
-    await notifyNextApprover(STATUS_PENDING_1, currentDealDocId);
+    await notifyNextApprover(STATUS_PENDING_1, currentDealDocId, val('h-description'));
 
     note.textContent = 'Submitted — awaiting Level 1 approval. A Deal ID will be assigned once that approval happens, and you\'ll get an email then.';
     note.style.display = 'block';
