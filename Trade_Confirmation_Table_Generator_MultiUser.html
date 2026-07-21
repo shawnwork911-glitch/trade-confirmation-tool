@@ -404,7 +404,7 @@
     <div class="output-header">
       <p class="card-title" style="margin:0;">Preview<span id="preview-dealid-label" style="font-weight:normal;color:var(--text-secondary);"></span></p>
       <span id="preview-agreement-link" style="font-size:13px;"></span>
-      <button id="copy-btn" class="secondary">Copy table</button>
+      <button id="copy-btn" class="secondary" disabled title="Save the agreement first so the copied table shows the real Deal ID">Copy table</button>
     </div>
     <div id="table-preview"></div>
     <p id="copy-status">Copied — paste directly into your email.</p>
@@ -2538,7 +2538,10 @@ function buildPointFormat(){
 
   lines.push({type:'title', text:'Details: Transaction Recap'});
   addBlank();
-  addField('Deal ID', opsDealId());
+  // The 5-digit sequence number isn't claimed until Save agreement succeeds,
+  // so opsDealId() before that point is just "trade count + alpha suffix" —
+  // showing that here would look like a real (and wrong) Deal ID.
+  addField('Deal ID', currentDealDocId ? opsDealId() : 'Assigned once saved');
   addField('Date', fmtDate(val('h-date')));
   addField('Entity', val('h-entity'));
   addField('BD in-charge', val('h-bd'));
@@ -2744,6 +2747,7 @@ function generateOutput(){
   // label once a real one exists.
   setPreviewDealIdLabel(currentDealDocId ? opsDealId() : '');
   setPreviewAgreementLink('');
+  document.getElementById('copy-btn').disabled = !currentDealDocId;
   document.getElementById('output-section').style.display = 'flex';
   document.getElementById('copy-status').style.display = 'none';
   document.getElementById('output-section').scrollIntoView({behavior:'smooth', block:'nearest'});
