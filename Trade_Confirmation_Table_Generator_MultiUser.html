@@ -698,6 +698,7 @@ async function onSignedIn(){
   setDraftStatus('Connecting to SharePoint…');
   try{
     await resolveWorkbook();
+    await createWorkbookSession();
     await loadUserRoles();
     await loadDealIdSettings();
     applyRoleUi();
@@ -1068,19 +1069,72 @@ async function getAccessToken(scopes){
 }
 async function graphFetch(path, options){
   options = options || {};
-  const token = await getAccessToken(options.scopes);
-  const res = await fetch('https://graph.microsoft.com/v1.0' + path, {
-    method: options.method || 'GET',
-    body: options.body,
-    headers: Object.assign({ 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, options.headers || {})
-  });
-  if(!res.ok){
+  const isWorkbookCall = path.indexOf('/workbook/') !== -1;
+  const maxAttempts = 3;
+  for(let attempt = 0; attempt < maxAttempts; attempt++){
+    const token = await getAccessToken(options.scopes);
+    const headers = Object.assign({ 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, options.headers || {});
+    if(isWorkbookCall && workbookSessionId) headers['workbook-session-id'] = workbookSessionId;
+    const res = await fetch('https://graph.microsoft.com/v1.0' + path, {
+      method: options.method || 'GET',
+      body: options.body,
+      headers
+    });
+    if(res.ok){
+      if(res.status === 204 || res.status === 202) return null;
+      const text = await res.text();
+      return text ? JSON.parse(text) : null;
+    }
     const text = await res.text().catch(()=> '');
+    const isLastAttempt = attempt === maxAttempts - 1;
+    // Excel sessions expire after ~5 min idle (or a longer hard cap) — if a
+    // workbook call reports the session is gone, get a fresh one and retry
+    // rather than surfacing an error the person can't do anything about.
+    const sessionExpired = isWorkbookCall && /InvalidSessionError|SessionNotFound/i.test(text);
+    if(sessionExpired && !isLastAttempt){
+      await createWorkbookSession();
+      continue;
+    }
+    // 504/503/429 are transient server-side conditions (Graph/Excel backend
+    // slow or briefly overloaded) — worth a couple of short-backoff retries
+    // before giving up and showing the person an error.
+    const transient = res.status === 504 || res.status === 503 || res.status === 429;
+    if(transient && !isLastAttempt){
+      await new Promise(r => setTimeout(r, 700 * (attempt + 1)));
+      continue;
+    }
     throw new Error('Graph ' + res.status + ': ' + text.slice(0, 300));
   }
-  if(res.status === 204 || res.status === 202) return null;
-  const text = await res.text();
-  return text ? JSON.parse(text) : null;
+}
+// Excel workbook calls (getTableRows/addTableRow/updateTableRow/etc.) are
+// much faster and far less prone to timing out when they reuse one
+// persistent session instead of Graph opening/closing the workbook file on
+// every single call. Created once after sign-in; graphFetch attaches it
+// automatically to any /workbook/ path, and recreates it transparently if
+// it ever expires mid-session (see the sessionExpired branch above).
+let workbookSessionId = null;
+async function createWorkbookSession(){
+  if(!fileItemId || !driveId) return null;
+  try{
+    const token = await getAccessToken(GRAPH_SCOPES);
+    const res = await fetch('https://graph.microsoft.com/v1.0/drives/' + driveId + '/items/' + fileItemId + '/workbook/createSession', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ persistChanges: true })
+    });
+    if(!res.ok){
+      console.warn('Could not create a workbook session (Graph ' + res.status + ') — falling back to session-less calls, which are slower and more timeout-prone.');
+      workbookSessionId = null;
+      return null;
+    }
+    const data = await res.json();
+    workbookSessionId = data.id;
+    return workbookSessionId;
+  }catch(err){
+    console.warn('Could not create a workbook session — falling back to session-less calls, which are slower and more timeout-prone.', err);
+    workbookSessionId = null;
+    return null;
+  }
 }
 function encodeShareUrl(url){
   // Graph's /shares/{shareId} format: base64-encode the URL, then make it
@@ -1144,11 +1198,69 @@ async function getSharePointListId(listName) {
     return data.value[0].id;
 }
 let approvedListId = null;
+// Graph requires each SharePoint list column's INTERNAL name (e.g.
+// "field_2" or "Agreement_x0020_Date"), not the friendly label shown in the
+// list UI ("Agreement Date") — and the internal name isn't guessable from
+// the label once a column has been renamed after creation, which is exactly
+// what happened here. Instead of hardcoding guesses that silently break the
+// whole write the moment one is wrong, this looks up the list's actual
+// columns once (displayName -> internal name) and builds the write from
+// that, so it survives the list being renamed/restructured going forward.
+let approvedListColumnMapCache = null;
+async function getApprovedListColumnMap(){
+  if(approvedListColumnMapCache) return approvedListColumnMapCache;
+  const data = await graphFetch("/sites/" + siteId + "/lists/" + approvedListId + "/columns?$select=name,displayName");
+  const map = {};
+  (data.value || []).forEach(col => { map[col.displayName] = col.name; });
+  approvedListColumnMapCache = map;
+  return map;
+}
 
 async function addApprovedDealToList(values){
 
     if(!approvedListId){
         approvedListId = await getSharePointListId(APPROVED_LIST_NAME);
+    }
+    const columnMap = await getApprovedListColumnMap();
+
+    // Keyed by the column's DISPLAY name, i.e. what you actually see as the
+    // header in the "Approved" list. Add a line here any time a new column
+    // is added to that list and should be populated on approval — no need
+    // to know or guess its internal name.
+    const desiredByDisplayName = {
+        'Title': values[MC.salesPic],
+        'Entity': values[MC.entity],
+        'Agreement Date': values[MC.agreementDate],
+        'Agreement ID (Assigned to BD)': values[MC.dealId],
+        'Supply/Demand': values[MC.supplyDemand],
+        'Company': values[MC.company],
+        'Broker': values[MC.broker],
+        'Country': values[MC.country],
+        'Registry': values[MC.registry],
+        'Tech': values[MC.tech],
+        'Volume (RECs)': values[MC.volume],
+        'Unit Price': values[MC.unitPrice],
+        'Currency': values[MC.currency],
+        'Status': values[MC.status],
+        'Submitted By': values[MC.submittedBy],
+        'Submitted Date': values[MC.submittedDate]
+        // Agreement File: no matching column on this list — intentionally
+        // left out rather than sent-and-skipped. Add a line here (with the
+        // exact display name) if a column for it is ever created.
+    };
+
+    const fields = {};
+    const skipped = [];
+    Object.keys(desiredByDisplayName).forEach(displayName => {
+        const internalName = columnMap[displayName];
+        if(internalName){
+            fields[internalName] = desiredByDisplayName[displayName];
+        } else {
+            skipped.push(displayName);
+        }
+    });
+    if(skipped.length){
+        console.warn('"' + APPROVED_LIST_NAME + '" list has no column matching these labels — skipped: ' + skipped.join(', '));
     }
 
     await graphFetch(
@@ -1157,47 +1269,7 @@ async function addApprovedDealToList(values){
         "/items",
         {
             method:"POST",
-            body:JSON.stringify({
-
-                fields:{
-
-                    Title: values[MC.dealId],
-
-                    DealID: values[MC.dealId],
-
-                    SalesPIC: values[MC.salesPic],
-
-                    Entity: values[MC.entity],
-
-                    AgreementDate: values[MC.agreementDate],
-
-                    Company: values[MC.company],
-
-                    Broker: values[MC.broker],
-
-                    Country: values[MC.country],
-
-                    Registry: values[MC.registry],
-
-                    Technology: values[MC.tech],
-
-                    Volume: values[MC.volume],
-
-                    UnitPrice: values[MC.unitPrice],
-
-                    Currency: values[MC.currency],
-
-                    Status: values[MC.status],
-
-                    SubmittedBy: values[MC.submittedBy],
-
-                    SubmittedDate: values[MC.submittedDate],
-
-                    AgreementFile: values[MC.agreementFileUrl]
-
-                }
-
-            })
+            body:JSON.stringify({ fields })
         }
     );
 
