@@ -1036,13 +1036,13 @@ async function addTableRow(tableName, values){
   });
 }
 async function updateTableRow(tableName, rowIndex, values){
-  return graphFetch(workbookTablePath(tableName) + '/rows/' + rowIndex, {
+  return graphFetch(workbookTablePath(tableName) + '/rows/itemAt(index=' + rowIndex + ')', {
     method: 'PATCH',
     body: JSON.stringify({ values: [values] })
   });
 }
 async function deleteTableRow(tableName, rowIndex){
-  return graphFetch(workbookTablePath(tableName) + '/rows/' + rowIndex, { method: 'DELETE' });
+  return graphFetch(workbookTablePath(tableName) + '/rows/itemAt(index=' + rowIndex + ')', { method: 'DELETE' });
 }
 
 /* ---- Global 5-digit Deal ID ----
@@ -2481,7 +2481,12 @@ function generateOutput(){
     document.getElementById('table-preview').innerHTML = lastHtml;
     lastPlain = buildPointFormatText(lines);
   }
-  setPreviewDealIdLabel(opsDealId());
+  // The "Deal ID" field itself stays blank until Save agreement actually
+  // claims one from the shared counter, so opsDealId() before that point is
+  // really just "trade count + alpha suffix" — showing that here in the
+  // card label would look like a real (and wrong) Deal ID. Only show the
+  // label once a real one exists.
+  setPreviewDealIdLabel(currentDealDocId ? opsDealId() : '');
   document.getElementById('output-section').style.display = 'flex';
   document.getElementById('copy-status').style.display = 'none';
   document.getElementById('output-section').scrollIntoView({behavior:'smooth', block:'nearest'});
