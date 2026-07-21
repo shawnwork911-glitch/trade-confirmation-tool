@@ -1613,6 +1613,7 @@ async function approveDeal(dealId, file){
   if(file){
     agreementInfo = await uploadAgreementFile(assignedDealId || dealId, file);
   }
+  let approvedListError = null;
   for(const r of matching){
     const values = r.values[0].slice();
     if(assignedDealId) values[MC.dealId] = assignedDealId;
@@ -1625,14 +1626,19 @@ async function approveDeal(dealId, file){
     }
     await updateTableRow(LOG_TABLE_NAME, r.index, values);
     // Final sign-off (Pending Level 3 -> Approved): also copy this row into
-    // the standalone "Approved" table/sheet. Best-effort — if that table
-    // hasn't been created yet in the workbook, log it but don't fail the
-    // approval itself, since the row is already safely updated above.
+    // the standalone "Approved" SharePoint list. Best-effort — if the write
+    // fails (e.g. the list is missing a column the app expects), the row
+    // above has already been safely updated, so we don't want to fail the
+    // whole approval. But the person taking the approval action should
+    // actually SEE that it failed, instead of it only showing up in the
+    // browser console — so the error is captured here and surfaced via
+    // alert() once the loop and the rest of the approval flow finish below.
     if(nextStatus === STATUS_APPROVED){
       try{
         await addApprovedDealToList(values);
       }catch(err){
-        console.error('Could not copy row into the "Approved" table — has it been created in the workbook?', err);
+        console.error('Could not copy row into the "Approved" list — check that its column internal names match what this app sends (see the fields{} object in addApprovedDealToList).', err);
+        approvedListError = err;
       }
     }
   }
@@ -1645,6 +1651,17 @@ async function approveDeal(dealId, file){
     await notifyDealIdAssigned(assignedDealId, matching[0].values[0][MC.submittedBy]);
   }
   await loadHistory();
+  if(approvedListError){
+    // Deliberately a plain alert() rather than routing through the
+    // approve/reject modal's inline error box: this can fire from either
+    // the modal path (Level 2) or the plain confirm() path (Level 1/3), and
+    // by this point the approval itself has already succeeded and been
+    // saved — this is a secondary, non-blocking notice, not a failure of
+    // the action the person just took.
+    alert('This deal was approved successfully, but copying it into the "Approved" SharePoint list failed:\n\n' +
+      approvedListError.message +
+      '\n\nThe approval itself is saved — this only affects the separate "Approved" list. Check that the list\'s column internal names match what the app sends (see addApprovedDealToList in the code), then ask an admin to fix the mismatch.');
+  }
 }
 /* Rejects a deal at whatever stage it's currently pending at, recording who
    rejected it, when, and the comment the submitter will see. Rejection
