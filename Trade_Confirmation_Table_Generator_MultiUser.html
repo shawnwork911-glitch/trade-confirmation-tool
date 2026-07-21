@@ -1079,17 +1079,38 @@ async function getTableRows(tableName){
   const data = await graphFetch(workbookTablePath(tableName) + '/rows');
   return data.value || []; // each row: { index, values: [[col1, col2, ...]] }
 }
+// Caches how many columns the live Excel Table actually has right now, so
+// row writes can be shaped to match — this is what keeps saves working even
+// when the code's column list (MC/COL_COUNT) has grown ahead of what's
+// actually been added to the workbook yet, instead of Graph rejecting the
+// whole write with a dimension-mismatch error.
+let tableColumnCountCache = {};
+async function getTableColumnCount(tableName){
+  if(tableColumnCountCache[tableName]) return tableColumnCountCache[tableName];
+  const data = await graphFetch(workbookTablePath(tableName) + '/columns?$select=name');
+  const count = (data.value || []).length;
+  tableColumnCountCache[tableName] = count;
+  return count;
+}
+function fitRowToColumnCount(values, count){
+  if(values.length === count) return values;
+  if(values.length > count) return values.slice(0, count);
+  return values.concat(new Array(count - values.length).fill(''));
+}
 async function addTableRow(tableName, values){
+  const count = await getTableColumnCount(tableName);
   return graphFetch(workbookTablePath(tableName) + '/rows/add', {
     method: 'POST',
-    body: JSON.stringify({ values: [values] })
+    body: JSON.stringify({ values: [fitRowToColumnCount(values, count)] })
   });
 }
 async function updateTableRow(tableName, rowIndex, values){
+  const count = await getTableColumnCount(tableName);
   return graphFetch(workbookTablePath(tableName) + '/rows/itemAt(index=' + rowIndex + ')', {
     method: 'PATCH',
-    body: JSON.stringify({ values: [values] })
+    body: JSON.stringify({ values: [fitRowToColumnCount(values, count)] })
   });
+
 }
 async function deleteTableRow(tableName, rowIndex){
   return graphFetch(workbookTablePath(tableName) + '/rows/itemAt(index=' + rowIndex + ')', { method: 'DELETE' });
@@ -1393,6 +1414,10 @@ async function approveDeal(dealId, file){
   if(currentStatus === STATUS_PENDING_1){ nextStatus = STATUS_PENDING_2; byCol = MC.approvedBy1; dateCol = MC.approvedDate1; }
   else if(currentStatus === STATUS_PENDING_2){
     if(!file) throw new Error('Please attach the signed agreement before approving at Level 2.');
+    const liveColumnCount = await getTableColumnCount(LOG_TABLE_NAME);
+    if(liveColumnCount < COL_COUNT){
+      throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing the "Agreement File Name" and "Agreement File URL" columns needed to save the attachment. Ask an admin to add those two columns at the end of the table, then try again.');
+    }
     nextStatus = STATUS_PENDING_3; byCol = MC.approvedBy2; dateCol = MC.approvedDate2;
   }
   else if(currentStatus === STATUS_PENDING_3){ nextStatus = STATUS_APPROVED; byCol = MC.approvedBy3; dateCol = MC.approvedDate3; }
