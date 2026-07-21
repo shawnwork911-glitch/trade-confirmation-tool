@@ -404,7 +404,7 @@
     <div class="output-header">
       <p class="card-title" style="margin:0;">Preview<span id="preview-dealid-label" style="font-weight:normal;color:var(--text-secondary);"></span></p>
       <span id="preview-agreement-link" style="font-size:13px;"></span>
-      <button id="copy-btn" class="secondary" disabled title="Save the agreement first so the copied table shows the real Deal ID">Copy table</button>
+      <button id="copy-btn" class="secondary" style="display:none;" title="Save the agreement first so the copied table shows the real Deal ID">Copy table</button>
     </div>
     <div id="table-preview"></div>
     <p id="copy-status">Copied — paste directly into your email.</p>
@@ -2747,7 +2747,7 @@ function generateOutput(){
   // label once a real one exists.
   setPreviewDealIdLabel(currentDealDocId ? opsDealId() : '');
   setPreviewAgreementLink('');
-  document.getElementById('copy-btn').disabled = !currentDealDocId;
+  document.getElementById('copy-btn').style.display = currentDealDocId ? 'inline-block' : 'none';
   document.getElementById('output-section').style.display = 'flex';
   document.getElementById('copy-status').style.display = 'none';
   document.getElementById('output-section').scrollIntoView({behavior:'smooth', block:'nearest'});
