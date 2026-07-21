@@ -408,7 +408,6 @@
     </div>
     <div id="table-preview"></div>
     <p id="copy-status">Copied — paste directly into your email.</p>
-    <p style="font-size:12px;color:var(--text-secondary);margin:0;">Tip: make sure your email is in rich text / HTML mode (not "plain text") before pasting, or the borders and black dividers won't show.</p>
   </div>
 
   <div class="card" id="my-history-card">
@@ -467,6 +466,21 @@
 
   <footer>Built from the Trade Confirmation email SOP · draft autosaves per account, approval and history saved to the shared SharePoint workbook</footer>
 
+</div>
+
+<div id="view-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
+  <div style="width:100%;max-width:900px;max-height:85vh;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px 24px;display:flex;flex-direction:column;gap:10px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+      <p class="card-title" style="margin:0;">Deal ID <span id="view-modal-dealid"></span></p>
+      <div style="display:flex;align-items:center;gap:14px;">
+        <span id="view-modal-agreement-link" style="font-size:13px;"></span>
+        <button type="button" class="secondary" id="view-modal-copy-btn">Copy table</button>
+        <button type="button" class="secondary" id="view-modal-close">Close</button>
+      </div>
+    </div>
+    <p id="view-modal-copy-status" style="display:none;font-size:12px;color:var(--text-secondary);margin:0;">Copied — paste directly into your email.</p>
+    <div id="view-modal-table" style="overflow:auto;"></div>
+  </div>
 </div>
 
 <div id="approve-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
@@ -926,13 +940,7 @@ function tryOpenDealFromUrl(){
   const group = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
   const withHtml = group.find(r => r.values[0][MC.generatedHtml]);
   if(!withHtml) return; // history may not have loaded this deal yet — try again next refresh
-  lastHtml = withHtml.values[0][MC.generatedHtml];
-  document.getElementById('table-preview').innerHTML = lastHtml;
-  setPreviewDealIdLabel(dealId);
-  setPreviewAgreementLink(withHtml.values[0][MC.agreementFileUrl]);
-  document.getElementById('output-section').style.display = 'flex';
-  document.getElementById('copy-status').style.display = 'none';
-  document.getElementById('output-section').scrollIntoView({behavior:'smooth', block:'nearest'});
+  openViewModal(dealId, withHtml.values[0][MC.generatedHtml], withHtml.values[0][MC.agreementFileUrl]);
   urlDealOpened = true;
 }
 function renderUserMgmtList(){
@@ -1572,6 +1580,51 @@ function renderHistoryTable(el, groups, opts){
   html += '</table>';
   el.innerHTML = html;
 }
+// Extracted from the copy-btn handler so both the top Preview card and the
+// View modal (opened from history/queue lists) can copy the same way.
+async function copyToClipboard(html, plain){
+  try{
+    const htmlBlob = new Blob([html], {type:'text/html'});
+    const textBlob = new Blob([plain], {type:'text/plain'});
+    await navigator.clipboard.write([new ClipboardItem({'text/html': htmlBlob, 'text/plain': textBlob})]);
+  }catch(e){
+    try{ await navigator.clipboard.writeText(plain); }catch(e2){}
+  }
+}
+// Best-effort plain-text fallback for deals opened from history, which only
+// have the saved HTML (no separately-stored plain-text version) — used so
+// the modal's Copy button still has something sensible for the text/plain
+// clipboard entry.
+function htmlToPlainFallback(html){
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  return tmp.textContent || tmp.innerText || '';
+}
+function openViewModal(dealId, html, agreementUrl){
+  document.getElementById('view-modal-dealid').textContent = dealId || '';
+  document.getElementById('view-modal-table').innerHTML = html;
+  document.getElementById('view-modal-agreement-link').innerHTML = agreementUrl
+    ? '<a href="'+escapeHtml(agreementUrl)+'" target="_blank" rel="noopener">📄 View agreement</a>' : '';
+  document.getElementById('view-modal-copy-status').style.display = 'none';
+  document.getElementById('view-modal-overlay').style.display = 'flex';
+}
+function closeViewModal(){
+  document.getElementById('view-modal-overlay').style.display = 'none';
+}
+document.getElementById('view-modal-close').addEventListener('click', closeViewModal);
+document.getElementById('view-modal-overlay').addEventListener('click', (e)=>{
+  if(e.target.id === 'view-modal-overlay') closeViewModal();
+});
+document.addEventListener('keydown', (e)=>{
+  if(e.key === 'Escape' && document.getElementById('view-modal-overlay').style.display === 'flex') closeViewModal();
+});
+document.getElementById('view-modal-copy-btn').addEventListener('click', async ()=>{
+  const html = document.getElementById('view-modal-table').innerHTML;
+  await copyToClipboard(html, htmlToPlainFallback(html));
+  const status = document.getElementById('view-modal-copy-status');
+  status.style.display = 'block';
+  setTimeout(()=>{ status.style.display='none'; }, 2500);
+});
 let approveModalDealId = null;
 function openApproveModal(dealId){
   approveModalDealId = dealId;
@@ -1653,13 +1706,7 @@ document.addEventListener('click', (e)=>{
     const group = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
     const withHtml = group.find(r => r.values[0][MC.generatedHtml]);
     if(!withHtml) return;
-    lastHtml = withHtml.values[0][MC.generatedHtml];
-    document.getElementById('table-preview').innerHTML = lastHtml;
-    setPreviewDealIdLabel(dealId);
-    setPreviewAgreementLink(withHtml.values[0][MC.agreementFileUrl]);
-    document.getElementById('output-section').style.display = 'flex';
-    document.getElementById('copy-status').style.display = 'none';
-    document.getElementById('output-section').scrollIntoView({behavior:'smooth', block:'nearest'});
+    openViewModal(dealId, withHtml.values[0][MC.generatedHtml], withHtml.values[0][MC.agreementFileUrl]);
     return;
   }
   const approveBtn = e.target.closest('.history-approve-btn');
