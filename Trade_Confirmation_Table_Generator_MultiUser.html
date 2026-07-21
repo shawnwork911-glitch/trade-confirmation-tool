@@ -867,7 +867,36 @@ async function notifyNextApprover(status, dealId){
   }
 }
 
-// Opens a Deal ID straight into the Preview card when the app is loaded via
+// Emails the person who submitted the deal once it reaches a final outcome
+// (fully Approved, or Rejected at whatever level it was at). Separate from
+// notifyNextApprover, which only ever emails the *next* approver in the chain.
+async function notifySubmitter(status, dealId, submitterEmail, reason){
+  const email = (submitterEmail || '').trim();
+  if(!email) {
+    console.warn('No submitter email on file — skipping outcome notification for Deal ID ' + dealId);
+    return;
+  }
+  const link = dealDeepLink(dealId);
+  let html, subject;
+  if(status === STATUS_APPROVED){
+    subject = 'Approved — Deal ID ' + dealId;
+    html = '<p>Deal ID <strong>' + escapeHtml(dealId) + '</strong> has been fully approved.</p>' +
+      '<p><a href="' + link + '">View it in the Trade Confirmation app</a></p>';
+  } else if(status === STATUS_REJECTED){
+    subject = 'Rejected — Deal ID ' + dealId;
+    html = '<p>Deal ID <strong>' + escapeHtml(dealId) + '</strong> has been rejected.</p>' +
+      (reason ? '<p><strong>Reason:</strong> ' + escapeHtml(reason) + '</p>' : '') +
+      '<p><a href="' + link + '">View it in the Trade Confirmation app</a></p>';
+  } else {
+    return; // not a final outcome — nothing to notify the submitter about
+  }
+  try{
+    await sendMailGraph([email], subject, html);
+  }catch(err){
+    console.error('Outcome notification email failed', err);
+  }
+}
+
 // a notification email's "?deal=XXXXX" link, once logRowsCache has data.
 let urlDealOpened = false;
 function tryOpenDealFromUrl(){
@@ -1324,6 +1353,9 @@ async function approveDeal(dealId){
     await updateTableRow(LOG_TABLE_NAME, r.index, values);
   }
   await notifyNextApprover(nextStatus, dealId);
+  if(nextStatus === STATUS_APPROVED){
+    await notifySubmitter(STATUS_APPROVED, dealId, matching[0].values[0][MC.submittedBy]);
+  }
   await loadHistory();
 }
 /* Rejects a deal at whatever stage it's currently pending at, recording who
@@ -1348,6 +1380,7 @@ async function rejectDeal(dealId, reason){
     values[MC.rejectReason] = trimmedReason;
     await updateTableRow(LOG_TABLE_NAME, r.index, values);
   }
+  await notifySubmitter(STATUS_REJECTED, dealId, matching[0].values[0][MC.submittedBy], trimmedReason);
   await loadHistory();
 }
 function groupByDealId(rows){
