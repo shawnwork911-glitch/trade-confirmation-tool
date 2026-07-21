@@ -1209,9 +1209,20 @@ let approvedListId = null;
 let approvedListColumnMapCache = null;
 async function getApprovedListColumnMap(){
   if(approvedListColumnMapCache) return approvedListColumnMapCache;
-  const data = await graphFetch("/sites/" + siteId + "/lists/" + approvedListId + "/columns?$select=name,displayName");
+  const data = await graphFetch("/sites/" + siteId + "/lists/" + approvedListId + "/columns?$select=name,displayName,hidden,readOnly");
   const map = {};
-  (data.value || []).forEach(col => { map[col.displayName] = col.name; });
+  (data.value || []).forEach(col => {
+    // SharePoint lists carry extra hidden/computed columns that piggyback
+    // on the same displayName as a real column — most notably "LinkTitle"
+    // and "LinkTitleNoMenu", which both report displayName "Title" but are
+    // read-only rendering helpers, not the actual Title field. Without this
+    // filter, whichever one Graph happens to return last silently overwrites
+    // the real column in this map, and the write then fails with something
+    // like `Field 'LinkTitleNoMenu' is read-only`. Skipping anything
+    // hidden or read-only ensures only the genuine, writable column wins.
+    if(col.hidden || col.readOnly) return;
+    map[col.displayName] = col.name;
+  });
   approvedListColumnMapCache = map;
   return map;
 }
