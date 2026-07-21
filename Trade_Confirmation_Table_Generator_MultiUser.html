@@ -1001,70 +1001,69 @@ async function getTableRows(tableName){
   return data.value || [];
 }
 
-async function addApprovedDealToList(values){
-    // 1. Build raw fields object
+aasync function addApprovedDealToList(values) {
+    // 1. Map raw values
     const rawFields = {
         Title: values[MC.dealId] || 'No Deal ID',
-        DealID: values[MC.dealId] || '',
-        SalesPIC: values[MC.salesPic] || '',
-        Entity: values[MC.entity] || '',
-        Company: values[MC.company] || '',
-        Broker: values[MC.broker] || '',
-        Country: values[MC.country] || '',
-        Registry: values[MC.registry] || '',
-        Technology: values[MC.tech] || '',
-        Currency: values[MC.currency] || '',
-        Status: values[MC.status] || '',
-        SubmittedBy: values[MC.submittedBy] || '',
-        SubmittedDate: values[MC.submittedDate] || ''
+        DealID: values[MC.dealId],
+        SalesPIC: values[MC.salesPic],
+        Entity: values[MC.entity],
+        Company: values[MC.company],
+        Broker: values[MC.broker],
+        Country: values[MC.country],
+        Registry: values[MC.registry],
+        Technology: values[MC.tech],
+        Currency: values[MC.currency],
+        Status: values[MC.status],
+        SubmittedBy: values[MC.submittedBy],
+        SubmittedDate: values[MC.submittedDate]
     };
 
-    // 2. Safe Date Parsing (ISO 8601 YYYY-MM-DD)
+    // 2. Format Dates strictly as ISO 8601 (YYYY-MM-DD)
     if (values[MC.agreementDate]) {
-        let rawDate = formatStoredDate(values[MC.agreementDate]);
-        if (rawDate.includes('/')) {
-            const [d, m, y] = rawDate.split('/');
-            if (d && m && y) {
-                rawFields.AgreementDate = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
-            }
-        } else if (/^\d{4}-\d{2}-\d{2}/.test(rawDate)) {
+        const rawDate = formatStoredDate(values[MC.agreementDate]);
+        if (/^\d{4}-\d{2}-\d{2}/.test(rawDate)) {
             rawFields.AgreementDate = rawDate.slice(0, 10);
+        } else if (rawDate.includes('/')) {
+            const [d, m, y] = rawDate.split('/');
+            if (d && m && y) rawFields.AgreementDate = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
         }
     }
 
-    // 3. Safe Number Parsing (Only attach if valid number)
+    // 3. Parse Numbers cleanly
     if (values[MC.volume] !== undefined && values[MC.volume] !== '') {
-        const cleanVol = parseFloat(String(values[MC.volume]).replace(/,/g, ''));
-        if (!isNaN(cleanVol)) rawFields.Volume = cleanVol;
+        const num = parseFloat(String(values[MC.volume]).replace(/,/g, ''));
+        if (!isNaN(num)) rawFields.Volume = num;
     }
     if (values[MC.unitPrice] !== undefined && values[MC.unitPrice] !== '') {
-        const cleanPrice = parseFloat(String(values[MC.unitPrice]).replace(/,/g, ''));
-        if (!isNaN(cleanPrice)) rawFields.UnitPrice = cleanPrice;
+        const num = parseFloat(String(values[MC.unitPrice]).replace(/,/g, ''));
+        if (!isNaN(num)) rawFields.UnitPrice = num;
     }
 
-    // 4. Safe Hyperlink Handling
-    const fileUrl = values[MC.agreementFileUrl];
-    if (fileUrl) {
+    // 4. Handle Hyperlink Object safely
+    if (values[MC.agreementFileUrl]) {
         rawFields.AgreementFile = {
-            Url: fileUrl,
-            Description: values[MC.agreementFileName] || "View Agreement"
+            Url: values[MC.agreementFileUrl],
+            Description: values[MC.agreementFileName] || "View File"
         };
     }
 
-    // 5. Clean Payload: Remove any keys with empty string / undefined / null 
-    // to prevent column type mismatch errors in Graph API
-    const fields = {};
-    Object.keys(rawFields).forEach(key => {
-        if (rawFields[key] !== '' && rawFields[key] !== null && rawFields[key] !== undefined) {
-            fields[key] = rawFields[key];
+    // 5. CRITICAL FIX: Delete all empty strings, nulls, and undefined keys
+    const cleanFields = {};
+    for (const key in rawFields) {
+        if (rawFields[key] !== "" && rawFields[key] !== null && rawFields[key] !== undefined) {
+            cleanFields[key] = rawFields[key];
         }
-    });
+    }
+
+    // Console log the payload to inspect the payload prior to sending
+    console.log("Sending payload to Graph:", JSON.stringify({ fields: cleanFields }));
 
     return await graphFetch(
-        "/sites/" + siteId + "/lists/" + APPROVED_LIST_ID + "/items",
+        `/sites/${siteId}/lists/${APPROVED_LIST_ID}/items`,
         {
             method: "POST",
-            body: JSON.stringify({ fields })
+            body: JSON.stringify({ fields: cleanFields })
         }
     );
 }
