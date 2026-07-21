@@ -662,6 +662,24 @@ async function loadUserRoles(){
   }
   currentUserRole = getUserRole(currentAccount.username);
   isAdmin = currentUserRole !== 'user';
+  await recordSignInIfNew();
+}
+// Ensures every person who's ever signed in shows up in the superadmin's
+// User management list right away — not just people who've had a role
+// explicitly assigned. Writes a plain 'user' row on first sign-in only;
+// harmless no-op for hardcoded superadmin or anyone who already has a row
+// (of any role) from a prior sign-in or an explicit assignment.
+async function recordSignInIfNew(){
+  const email = (currentAccount.username || '').toLowerCase();
+  if(SUPERADMIN_EMAILS.map(e=>e.toLowerCase()).includes(email)) return;
+  const existing = userRolesCache.find(r => (r.values[0][RC.email]||'').toLowerCase() === email);
+  if(existing) return;
+  try{
+    await addTableRow(USER_ROLES_TABLE_NAME, [currentAccount.username, 'user', '(sign-in)', new Date().toISOString()]);
+    userRolesCache = await getTableRows(USER_ROLES_TABLE_NAME);
+  }catch(err){
+    console.error('Could not record sign-in in User management', err);
+  }
 }
 
 /* ---- Deal ID starting number (superadmin only) ----
@@ -955,12 +973,30 @@ async function graphFetch(path, options){
 async function resolveWorkbook(){
   const site = await graphFetch('/sites/' + SP_HOSTNAME + ':' + SP_SITE_PATH);
   siteId = site.id;
+  // Direct path lookup first — much more reliable than SharePoint's search()
+  // API, which is filtered by the signed-in user's own permissions and can
+  // return nothing for a file that genuinely exists, if that user simply
+  // hasn't been granted access to it yet (or the search index hasn't
+  // caught up). A 403 here is a strong, clear signal that it's specifically
+  // a permissions problem, not a missing file.
+  try{
+    const match = await graphFetch('/sites/' + siteId + '/drive/root:/' + encodeURIComponent(SP_FILE_NAME));
+    fileItemId = match.id;
+    return;
+  }catch(pathErr){
+    if(/Graph 403/.test(pathErr.message)){
+      throw new Error('You don\'t have permission to open "' + SP_FILE_NAME + '" on SharePoint. Ask an admin to grant you at least Read access to that file (or the Operations site), then sign in again.');
+    }
+    // Fall through to search, in case the file lives in a subfolder rather
+    // than directly at the library root.
+  }
   const search = await graphFetch('/sites/' + siteId + "/drive/root/search(q='" + encodeURIComponent(SP_FILE_NAME) + "')");
   const match = (search.value || []).find(f => f.name === SP_FILE_NAME);
-  if(!match) throw new Error('Could not find "' + SP_FILE_NAME + '" in the Operations site.');
+  if(!match) throw new Error('Could not find "' + SP_FILE_NAME + '" in the Operations site. If you can see this file yourself in SharePoint, you may still be missing permission on it — ask an admin to check your access, then sign in again.');
   fileItemId = match.id;
 }
 function workbookTablePath(tableName){
+  if(!fileItemId) throw new Error('Not connected to the SharePoint workbook yet — try refreshing the page.');
   return '/sites/' + siteId + '/drive/items/' + fileItemId + '/workbook/tables/' + encodeURIComponent(tableName);
 }
 async function getTableRows(tableName){
