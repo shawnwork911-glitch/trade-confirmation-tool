@@ -491,6 +491,13 @@ const CLIENT_ID = "5b17f2d1-ca2a-4521-9d03-01cda2e86c16";           // Applicati
 const SP_HOSTNAME = "saxonrenewables.sharepoint.com";
 const SP_SITE_PATH = "/sites/Operations";
 const SP_FILE_NAME = "BD Agreement Record.xlsx";
+// Resolving straight from this sharing link (instead of guessing the site's
+// default drive + a root-level path) sidesteps two whole classes of failure:
+// the file living in a non-default document library, and it living inside
+// a subfolder rather than at the drive root. If the file ever moves, just
+// grab its "Copy link" URL again and paste it in here — nothing else in
+// resolveWorkbook needs to change.
+const SP_FILE_SHARE_URL = "https://saxonrenewables.sharepoint.com/:x:/s/Operations/IQCIkW5tgJWPQJB1t7KiWT7KAaDp_pqoAmZigGQ9UbvBQME?e=dquVG0";
 const LOG_TABLE_NAME = "TradeDealLog";        // must match the Excel Table name you create
 // Column layout of the restructured TradeDealLog "main list" table.
 // One physical row per TRADE (a multi-trade agreement produces several rows
@@ -573,6 +580,7 @@ const msalInstance = new msal.PublicClientApplication({
 let currentAccount = null;
 let siteId = null;
 let fileItemId = null;
+let driveId = null;
 let currentDealDocId = null;
 let draftRowIndex = null;      // this user's row index in the Drafts table, or null if none saved yet
 let logRowsCache = [];         // last-fetched rows from the log table, for the "View" buttons
@@ -970,34 +978,52 @@ async function graphFetch(path, options){
   const text = await res.text();
   return text ? JSON.parse(text) : null;
 }
+function encodeShareUrl(url){
+  // Graph's /shares/{shareId} format: base64-encode the URL, then make it
+  // URL-safe and strip padding, prefixed with "u!".
+  const b64 = btoa(url).replace(/=+$/,'').replace(/\//g,'_').replace(/\+/g,'-');
+  return 'u!' + b64;
+}
 async function resolveWorkbook(){
+  // Primary: resolve directly from the sharing link — works no matter which
+  // document library or subfolder the file actually lives in, and doesn't
+  // depend on SharePoint's permission-filtered search index at all.
+  try{
+    const item = await graphFetch('/shares/' + encodeShareUrl(SP_FILE_SHARE_URL) + '/driveItem?$select=id,parentReference,name');
+    fileItemId = item.id;
+    driveId = item.parentReference.driveId;
+    siteId = item.parentReference.siteId || null;
+    return;
+  }catch(shareErr){
+    if(/Graph 403/.test(shareErr.message)){
+      throw new Error('You don\'t have permission to open "' + SP_FILE_NAME + '" on SharePoint. Ask an admin to grant you at least Read access to that file, then sign in again.');
+    }
+    console.warn('Share-link lookup failed, falling back to site search', shareErr);
+  }
+  // Fallback: guess it's at the default drive's root, by name, on the
+  // Operations site — only used if the share link itself stops resolving
+  // (e.g. link was regenerated).
   const site = await graphFetch('/sites/' + SP_HOSTNAME + ':' + SP_SITE_PATH);
   siteId = site.id;
-  // Direct path lookup first — much more reliable than SharePoint's search()
-  // API, which is filtered by the signed-in user's own permissions and can
-  // return nothing for a file that genuinely exists, if that user simply
-  // hasn't been granted access to it yet (or the search index hasn't
-  // caught up). A 403 here is a strong, clear signal that it's specifically
-  // a permissions problem, not a missing file.
   try{
     const match = await graphFetch('/sites/' + siteId + '/drive/root:/' + encodeURIComponent(SP_FILE_NAME));
     fileItemId = match.id;
+    driveId = match.parentReference.driveId;
     return;
   }catch(pathErr){
     if(/Graph 403/.test(pathErr.message)){
       throw new Error('You don\'t have permission to open "' + SP_FILE_NAME + '" on SharePoint. Ask an admin to grant you at least Read access to that file (or the Operations site), then sign in again.');
     }
-    // Fall through to search, in case the file lives in a subfolder rather
-    // than directly at the library root.
   }
   const search = await graphFetch('/sites/' + siteId + "/drive/root/search(q='" + encodeURIComponent(SP_FILE_NAME) + "')");
   const match = (search.value || []).find(f => f.name === SP_FILE_NAME);
   if(!match) throw new Error('Could not find "' + SP_FILE_NAME + '" in the Operations site. If you can see this file yourself in SharePoint, you may still be missing permission on it — ask an admin to check your access, then sign in again.');
   fileItemId = match.id;
+  driveId = match.parentReference.driveId;
 }
 function workbookTablePath(tableName){
-  if(!fileItemId) throw new Error('Not connected to the SharePoint workbook yet — try refreshing the page.');
-  return '/sites/' + siteId + '/drive/items/' + fileItemId + '/workbook/tables/' + encodeURIComponent(tableName);
+  if(!fileItemId || !driveId) throw new Error('Not connected to the SharePoint workbook yet — try refreshing the page.');
+  return '/drives/' + driveId + '/items/' + fileItemId + '/workbook/tables/' + encodeURIComponent(tableName);
 }
 async function getTableRows(tableName){
   const data = await graphFetch(workbookTablePath(tableName) + '/rows');
