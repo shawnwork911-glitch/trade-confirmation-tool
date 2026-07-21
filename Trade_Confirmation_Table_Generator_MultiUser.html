@@ -474,11 +474,9 @@
       <p class="card-title" style="margin:0;">Deal ID <span id="view-modal-dealid"></span></p>
       <div style="display:flex;align-items:center;gap:14px;">
         <span id="view-modal-agreement-link" style="font-size:13px;"></span>
-        <button type="button" class="secondary" id="view-modal-copy-btn">Copy table</button>
         <button type="button" class="secondary" id="view-modal-close">Close</button>
       </div>
     </div>
-    <p id="view-modal-copy-status" style="display:none;font-size:12px;color:var(--text-secondary);margin:0;">Copied — paste directly into your email.</p>
     <div id="view-modal-table" style="overflow:auto;"></div>
   </div>
 </div>
@@ -519,6 +517,7 @@ const TENANT_ID = "ab7c8c1e-dc1d-431f-ba8b-e4de2b047f8b";           // Directory
 const CLIENT_ID = "5b17f2d1-ca2a-4521-9d03-01cda2e86c16";           // Application (client) ID from the same page
 const SP_HOSTNAME = "saxonrenewables.sharepoint.com";
 const SP_SITE_PATH = "/sites/Operations";
+const APPROVED_LIST_NAME = "Approved Deals";
 const SP_FILE_NAME = "BD Agreement Record.xlsx";
 // Resolving straight from this sharing link (instead of guessing the site's
 // default drive + a root-level path) sidesteps two whole classes of failure:
@@ -609,6 +608,19 @@ const STATUS_PENDING_3 = "Pending Level 3";
 const STATUS_APPROVED = "Approved";
 const STATUS_REJECTED = "Rejected";
 
+/* ---- Deal ID is now only assigned once Level 1 approval happens ----
+   Before that, a submitted agreement is tracked internally with a temporary
+   placeholder ("PND_<alpha>_<random>") instead of a real Deal ID — nothing
+   about the row is a real Deal ID yet, so it must never be shown to anyone
+   as if it were one. isPendingDealId()/friendlyDealId() are used everywhere
+   a Deal ID would otherwise be displayed. */
+function isPendingDealId(id){
+  return /^PND_/.test(String(id || ''));
+}
+function friendlyDealId(id){
+  return isPendingDealId(id) ? 'Pending Level 1 approval' : (id || '');
+}
+
 const msalInstance = new msal.PublicClientApplication({
   auth: {
     clientId: CLIENT_ID,
@@ -623,6 +635,13 @@ let siteId = null;
 let fileItemId = null;
 let driveId = null;
 let currentDealDocId = null;
+// The submittedDate written to this user's own rows at Save agreement time.
+// Deal ID placeholder -> real swap happens (by a different user, the Level 1
+// approver, in their own session) after this loads, so once that happens
+// this stable (submittedBy + submittedDate) pair is what lets *this* user's
+// session recognize its own submission again after a reload — currentDealDocId
+// alone can no longer be trusted for that once the swap has happened.
+let currentSubmittedDate = null;
 let draftRowIndex = null;      // this user's row index in the Drafts table, or null if none saved yet
 let logRowsCache = [];         // last-fetched rows from the log table, for the "View" buttons
 let userRolesCache = [];       // last-fetched rows from the TradeUserRoles table
@@ -732,7 +751,7 @@ async function recordSignInIfNew(){
 }
 
 /* ---- Deal ID starting number (superadmin only) ----
-   A floor under the normal "highest existing + 1" logic in assignNewDealId.
+   A floor under the normal "highest existing + 1" logic in assignFormalDealId.
    Lets a superadmin set where numbering should begin — e.g. to line this
    system up with an existing external sequence, or to pick a clean range for
    testing — without renumbering anything already issued. */
@@ -899,42 +918,62 @@ async function notifyNextApprover(status, dealId){
   }
   const levelLabel = ROLE_LABELS[role] || role;
   const link = dealDeepLink(dealId);
-  const html = '<p>Deal ID <strong>' + escapeHtml(dealId) + '</strong> is waiting on your ' + escapeHtml(levelLabel) + ' approval.</p>' +
+  const displayId = friendlyDealId(dealId);
+  const label = isPendingDealId(dealId) ? 'An agreement' : 'Deal ID <strong>' + escapeHtml(displayId) + '</strong>';
+  const html = '<p>' + label + ' is waiting on your ' + escapeHtml(levelLabel) + ' approval.</p>' +
     '<p><a href="' + link + '">Open it in the Trade Confirmation app</a></p>';
   try{
-    await sendMailGraph(toEmails, 'Approval needed — Deal ID ' + dealId + ' (' + levelLabel + ')', html);
+    await sendMailGraph(toEmails, 'Approval needed — ' + (isPendingDealId(dealId) ? levelLabel : displayId + ' (' + levelLabel + ')'), html);
   }catch(err){
     console.error('Approval notification email failed', err);
   }
 }
 
-// Emails the person who submitted the deal once it reaches a final outcome
-// (fully Approved, or Rejected at whatever level it was at). Separate from
-// notifyNextApprover, which only ever emails the *next* approver in the chain.
+// Emails the person who submitted the deal if it's Rejected at whatever
+// level it was at. Separate from notifyNextApprover, which only ever emails
+// the *next* approver in the chain. Note: per policy there is deliberately
+// no "fully Approved" email here — the submitter is already notified once,
+// when their Deal ID is first created at Level 1 (see notifyDealIdAssigned
+// below); nothing further is sent when the deal later reaches the last
+// approval level.
 async function notifySubmitter(status, dealId, submitterEmail, reason){
   const email = (submitterEmail || '').trim();
   if(!email) {
     console.warn('No submitter email on file — skipping outcome notification for Deal ID ' + dealId);
     return;
   }
+  if(status !== STATUS_REJECTED) return; // only Rejected has a submitter email
   const link = dealDeepLink(dealId);
-  let html, subject;
-  if(status === STATUS_APPROVED){
-    subject = 'Approved — Deal ID ' + dealId;
-    html = '<p>Deal ID <strong>' + escapeHtml(dealId) + '</strong> has been fully approved.</p>' +
-      '<p><a href="' + link + '">View it in the Trade Confirmation app</a></p>';
-  } else if(status === STATUS_REJECTED){
-    subject = 'Rejected — Deal ID ' + dealId;
-    html = '<p>Deal ID <strong>' + escapeHtml(dealId) + '</strong> has been rejected.</p>' +
-      (reason ? '<p><strong>Reason:</strong> ' + escapeHtml(reason) + '</p>' : '') +
-      '<p><a href="' + link + '">View it in the Trade Confirmation app</a></p>';
-  } else {
-    return; // not a final outcome — nothing to notify the submitter about
-  }
+  const displayId = friendlyDealId(dealId);
+  const label = isPendingDealId(dealId) ? 'Your agreement (' + escapeHtml(displayId) + ')' : 'Deal ID <strong>' + escapeHtml(displayId) + '</strong>';
+  const subject = 'Rejected — ' + (isPendingDealId(dealId) ? 'agreement' : 'Deal ID ' + displayId);
+  const html = '<p>' + label + ' has been rejected.</p>' +
+    (reason ? '<p><strong>Reason:</strong> ' + escapeHtml(reason) + '</p>' : '') +
+    '<p><a href="' + link + '">View it in the Trade Confirmation app</a></p>';
   try{
     await sendMailGraph([email], subject, html);
   }catch(err){
     console.error('Outcome notification email failed', err);
+  }
+}
+
+// Emails the agreement's creator the moment their Deal ID is actually
+// created — i.e. right after Level 1 approval assigns the real ID in place
+// of the submit-time placeholder. This is the only "your Deal ID is ready"
+// notification; no further email is sent for Level 2/3 approvals.
+async function notifyDealIdAssigned(dealId, submitterEmail){
+  const email = (submitterEmail || '').trim();
+  if(!email){
+    console.warn('No submitter email on file — skipping Deal ID notification for Deal ID ' + dealId);
+    return;
+  }
+  const link = dealDeepLink(dealId);
+  const html = '<p>Your agreement has been approved at Level 1 and its Deal ID is now <strong>' + escapeHtml(dealId) + '</strong>.</p>' +
+    '<p><a href="' + link + '">View it in the Trade Confirmation app</a></p>';
+  try{
+    await sendMailGraph([email], 'Deal ID created — ' + dealId, html);
+  }catch(err){
+    console.error('Deal ID notification email failed', err);
   }
 }
 
@@ -1094,6 +1133,75 @@ async function getTableRows(tableName){
   const data = await graphFetch(workbookTablePath(tableName) + '/rows');
   return data.value || []; // each row: { index, values: [[col1, col2, ...]] }
 }
+async function getSharePointListId(listName) {
+    const data = await graphFetch(
+        "/sites/" + siteId + "/lists?$filter=displayName eq '" + listName + "'"
+    );
+
+    if (!data.value.length)
+        throw new Error("SharePoint List not found: " + listName);
+
+    return data.value[0].id;
+}
+let approvedListId = null;
+
+async function addApprovedDealToList(values){
+
+    if(!approvedListId){
+        approvedListId = await getSharePointListId(APPROVED_LIST_NAME);
+    }
+
+    await graphFetch(
+        "/sites/" + siteId +
+        "/lists/" + approvedListId +
+        "/items",
+        {
+            method:"POST",
+            body:JSON.stringify({
+
+                fields:{
+
+                    Title: values[MC.dealId],
+
+                    DealID: values[MC.dealId],
+
+                    SalesPIC: values[MC.salesPic],
+
+                    Entity: values[MC.entity],
+
+                    AgreementDate: values[MC.agreementDate],
+
+                    Company: values[MC.company],
+
+                    Broker: values[MC.broker],
+
+                    Country: values[MC.country],
+
+                    Registry: values[MC.registry],
+
+                    Technology: values[MC.tech],
+
+                    Volume: values[MC.volume],
+
+                    UnitPrice: values[MC.unitPrice],
+
+                    Currency: values[MC.currency],
+
+                    Status: values[MC.status],
+
+                    SubmittedBy: values[MC.submittedBy],
+
+                    SubmittedDate: values[MC.submittedDate],
+
+                    AgreementFile: values[MC.agreementFileUrl]
+
+                }
+
+            })
+        }
+    );
+
+}
 // Caches how many columns the live Excel Table actually has right now, so
 // row writes can be shaped to match — this is what keeps saves working even
 // when the code's column list (MC/COL_COUNT) has grown ahead of what's
@@ -1159,40 +1267,67 @@ async function uploadAgreementFile(dealId, file){
   return { name: item.name, webUrl: item.webUrl };
 }
 
-/* ---- Global 5-digit Deal ID ----
-   Best-effort uniqueness: highest existing Deal ID in the log table, +1, then
-   re-checked against a fresh read right before committing. Excel/Graph has no
-   atomic transactions, so this can't offer the same hard guarantee the earlier
-   old single-cell counter version did — but collisions are very unlikely under normal,
-   occasional saving (a true zero-risk guarantee needs a real backend). */
-async function assignNewDealId(){
-  const rows = await getTableRows(LOG_TABLE_NAME);
-  let maxNum = 0;
-  rows.forEach(r=>{
-    // The saved Deal ID is the full "01300" + trades + alpha string (see
-    // opsDealId), so the underlying sequence number is always exactly its
-    // first 5 characters — parsing the whole string would swallow the
-    // trade-count digit(s) that follow it.
-    const n = parseInt(String(r.values[0][MC.dealId] || '').trim().slice(0,5), 10);
-    if(!isNaN(n) && n > maxNum) maxNum = n;
-  });
+/* ---- Deal ID assignment ----
+   A Deal ID is a promise about a real, reviewed agreement — so it's no
+   longer handed out the moment someone clicks "Save agreement". Instead:
+     1. Save agreement gives the submission a temporary placeholder
+        ("PND_<alpha>_<random>") purely so this app can track/lock the row —
+        it is never shown to anyone as a Deal ID.
+     2. Only once a Level 1 approver actually approves does assignFormalDealId()
+        run (in the *approver's* session) and claim the real 5-digit number,
+        overwriting the placeholder in every row of the agreement. The
+        submitter is emailed once this happens (see notifyDealIdAssigned). */
+function assignPendingDealId(){
+  const alpha = val('h-dealid-alpha').replace(/[^a-zA-Z]/g,'').slice(0,3).toUpperCase();
+  const rand = (window.crypto && crypto.randomUUID)
+    ? crypto.randomUUID().replace(/-/g,'').slice(0,10).toUpperCase()
+    : (Date.now().toString(36) + Math.random().toString(36).slice(2,8)).toUpperCase();
+  const placeholder = 'PND_' + alpha + '_' + rand;
+  currentDealDocId = placeholder;
+  return placeholder;
+}
+// Best-effort uniqueness: highest existing (real, non-placeholder) Deal ID in
+// the log table, +1, then re-checked against a fresh read right before
+// committing. Excel/Graph has no atomic transactions, so this can't offer a
+// hard guarantee — collisions are very unlikely under normal, occasional
+// approving (a true zero-risk guarantee needs a real backend).
+// tradeCount = number of trade-rows sharing this placeholder (one physical
+// row per trade), which becomes the digit inserted into the ID, exactly like
+// opsDealId() used to read live off the trade-count dropdown — except this
+// runs in the approver's session, so it's derived from the stored rows
+// instead. The alpha letters were captured into the placeholder itself back
+// when the submitter saved, so a manual override of that field still
+// survives all the way through to the real Deal ID.
+async function assignFormalDealId(placeholderId, tradeCount){
+  const alphaMatch = /^PND_([A-Z]{0,3})_/.exec(placeholderId || '');
+  const alpha = alphaMatch ? alphaMatch[1] : '';
+  const scan = async () => {
+    const rows = await getTableRows(LOG_TABLE_NAME);
+    let maxNum = 0;
+    const takenNums = new Set();
+    rows.forEach(r=>{
+      const raw = String(r.values[0][MC.dealId] || '').trim();
+      if(isPendingDealId(raw)) return; // not a real number yet — ignore
+      const n = parseInt(raw.slice(0,5), 10);
+      if(!isNaN(n)){
+        if(n > maxNum) maxNum = n;
+        takenNums.add(raw.slice(0,5));
+      }
+    });
+    return { maxNum, takenNums };
+  };
+  const first = await scan();
   // The superadmin-set starting number is a floor: it only matters while
   // nothing has been issued yet at or above it, and never moves a number
   // backwards or renumbers anything already saved.
-  let candidate = Math.max(maxNum + 1, dealIdStartOverride || 1);
-  const recheck = await getTableRows(LOG_TABLE_NAME);
-  const takenNums = new Set(recheck.map(r => String(r.values[0][MC.dealId] || '').trim().slice(0,5)));
+  let candidate = Math.max(first.maxNum + 1, dealIdStartOverride || 1);
+  const { takenNums } = await scan();
   let padded = String(candidate).padStart(5,'0');
   while(takenNums.has(padded)){
     candidate += 1;
     padded = String(candidate).padStart(5,'0');
   }
-  document.getElementById('h-dealid-num').value = padded;
-  // The full ID (matching exactly what the preview shows) is what actually
-  // gets saved/matched everywhere from here on — not just the bare number.
-  const fullId = opsDealId();
-  currentDealDocId = fullId;
-  return fullId;
+  return padded + (parseInt(tradeCount,10) || '') + alpha;
 }
 
 /* ---- Per-user draft (autosaves the in-progress form into the Drafts table) ---- */
@@ -1207,7 +1342,7 @@ function gatherFormData(){
       allValues[el.id] = el.value;
     }
   });
-  return { tradeCount, allValues, checkedIds, dealId: val('h-dealid-num') };
+  return { tradeCount, allValues, checkedIds, dealId: currentDealDocId || val('h-dealid-num'), submittedDate: currentSubmittedDate };
 }
 function setDraftStatus(text){
   const el = document.getElementById('draft-status');
@@ -1255,6 +1390,7 @@ function applyDraftData(data){
   updateBuyerSellerFieldLabel();
   updateTransferAccountLabels();
   currentDealDocId = data.dealId || val('h-dealid-num') || null;
+  currentSubmittedDate = data.submittedDate || null;
   suppressAutosave = false;
 }
 async function loadDraftAndHistory(){
@@ -1272,9 +1408,9 @@ async function loadDraftAndHistory(){
     draftRowIndex = mine ? mine.index : null;
     if(mine){
       try{ applyDraftData(JSON.parse(mine.values[0][1])); setDraftStatus('Draft loaded'); }
-      catch(e){ setDraftStatus('Draft could not be read'); }
+      catch(e){ console.error('Draft could not be read', e); setDraftStatus('Draft could not be read — ' + e.message); }
     }else{
-      setDraftStatus('New draft — Deal ID is assigned once you save the agreement.');
+      setDraftStatus('New draft — Deal ID is assigned once Level 1 approves your saved agreement.');
     }
   }catch(err){
     console.error('Draft load failed', err);
@@ -1295,15 +1431,37 @@ async function loadDraftAndHistory(){
    accordingly. The per-user draft row still autosaves the in-progress form
    right up until that first successful save — its only purpose is to
    protect unsaved work, never to enable post-submission edits. */
+// A Level 1 approval (run in the *approver's* session, not the submitter's)
+// swaps a row's placeholder Deal ID for the real one — so the submitter's
+// own currentDealDocId can go stale the moment that happens. Falling back to
+// matching on (submittedBy + submittedDate), a pair that never changes,
+// lets this user's session still recognize its own submission after that
+// swap, e.g. on reload.
+function myRowsBySubmissionRef(){
+  if(!currentAccount || !currentSubmittedDate) return [];
+  const myEmail = (currentAccount.username || '').toLowerCase();
+  return logRowsCache.filter(r =>
+    String(r.values[0][MC.submittedBy] || '').toLowerCase() === myEmail &&
+    String(r.values[0][MC.submittedDate] || '') === currentSubmittedDate
+  );
+}
 function dealAlreadySubmitted(dealId){
-  if(!dealId) return false;
-  return logRowsCache.some(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  if(dealId && logRowsCache.some(r => String(r.values[0][MC.dealId] || '').trim() === dealId)) return true;
+  return myRowsBySubmissionRef().length > 0;
 }
 function submittedDealStatus(dealId){
-  const row = logRowsCache.find(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  let row = logRowsCache.find(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  if(!row) row = myRowsBySubmissionRef()[0];
   return row ? (row.values[0][MC.status] || STATUS_PENDING_1) : null;
 }
 function checkSubmittedLock(){
+  // Resync currentDealDocId if Level 1 has since assigned the real Deal ID
+  // in someone else's session.
+  const mine = myRowsBySubmissionRef()[0];
+  if(mine){
+    const realId = String(mine.values[0][MC.dealId] || '').trim();
+    if(realId && realId !== currentDealDocId) currentDealDocId = realId;
+  }
   if(dealAlreadySubmitted(currentDealDocId)){
     lockSubmittedForm(currentDealDocId);
   }
@@ -1316,8 +1474,11 @@ function lockSubmittedForm(dealId){
   document.getElementById('generate-btn').style.display = 'none';
   document.getElementById('save-agreement-btn').style.display = 'none';
   const banner = document.getElementById('submitted-lock-banner');
-  banner.innerHTML = '<strong>Deal ID ' + escapeHtml(dealId) + ' has been submitted (status: ' + escapeHtml(status || STATUS_PENDING_1) +
-    ') and can no longer be edited — this Deal ID is locked permanently, even if it\'s rejected.</strong> ' +
+  const displayId = friendlyDealId(dealId);
+  banner.innerHTML = '<strong>' + (isPendingDealId(dealId) ? 'This agreement' : 'Deal ID ' + escapeHtml(displayId)) +
+    ' has been submitted (status: ' + escapeHtml(status || STATUS_PENDING_1) +
+    ') and can no longer be edited — it is locked permanently, even if it\'s rejected.</strong> ' +
+    (isPendingDealId(dealId) ? 'A Deal ID will be assigned once Level 1 approves, and you\'ll get an email then. ' : '') +
     'To submit a new agreement, use "New confirmation" above — it will get its own Deal ID.';
   banner.style.display = 'block';
 }
@@ -1336,7 +1497,7 @@ document.addEventListener('change', ()=>{
 
 document.getElementById('new-confirmation-btn').addEventListener('click', async ()=>{
   if(!currentAccount) return;
-  if(!confirm('Start a new confirmation? Locked fields are kept; unlocked fields clear. A new Deal ID will be assigned once you save this new agreement. Your saved history is not affected.')) return;
+  if(!confirm('Start a new confirmation? Locked fields are kept; unlocked fields clear. This new agreement will get its own Deal ID once Level 1 approves it. Your saved history is not affected.')) return;
   try{
     if(draftRowIndex !== null) await deleteTableRow(DRAFT_TABLE_NAME, draftRowIndex);
   }catch(err){ console.error('Could not clear draft row', err); }
@@ -1354,14 +1515,14 @@ document.getElementById('new-confirmation-btn').addEventListener('click', async 
    Approve/Reject actions. Every signed-in user can technically read every
    row (that's inherent to a shared Excel file) — "My saved confirmations" is
    a client-side filter, not a security boundary. */
-async function saveConfirmationToHistory(includeBD, dealId){
+async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
   if(!currentAccount || !dealId) return;
   const rows = await getTableRows(LOG_TABLE_NAME);
   const existingRows = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
   if(existingRows.length){
-    throw new Error('Deal ID ' + dealId + ' has already been submitted and cannot be resaved. Start a New confirmation instead.');
+    throw new Error((isPendingDealId(dealId) ? 'This agreement' : 'Deal ID ' + dealId) + ' has already been submitted and cannot be resaved. Start a New confirmation instead.');
   }
-  const nowIso = new Date().toISOString();
+  const nowIso = submittedDateIso || new Date().toISOString();
   const tradeCount = parseInt(document.getElementById('trade-count').value, 10) || 1;
   for(let n = 1; n <= tradeCount; n++){
     const matching = val('t'+n+'-m-matching');
@@ -1437,14 +1598,24 @@ async function approveDeal(dealId, file){
   }
   else if(currentStatus === STATUS_PENDING_3){ nextStatus = STATUS_APPROVED; byCol = MC.approvedBy3; dateCol = MC.approvedDate3; }
   else return;
+  // The real Deal ID is only claimed the moment Level 1 approval happens —
+  // this is the one point where the row's dealId column changes from the
+  // submit-time placeholder to a permanent real ID.
+  let assignedDealId = null;
+  if(currentStatus === STATUS_PENDING_1){
+    assignedDealId = await assignFormalDealId(dealId, matching.length);
+  }
   // Only Level 2 approval carries a file; upload it once, then stamp the
   // link onto every row of the deal so it shows up wherever the deal does.
+  // Uses the real Deal ID (if one was just assigned this call) so the
+  // uploaded file is named after it rather than the placeholder.
   let agreementInfo = null;
   if(file){
-    agreementInfo = await uploadAgreementFile(dealId, file);
+    agreementInfo = await uploadAgreementFile(assignedDealId || dealId, file);
   }
   for(const r of matching){
     const values = r.values[0].slice();
+    if(assignedDealId) values[MC.dealId] = assignedDealId;
     values[MC.status] = nextStatus;
     values[byCol] = currentAccount.username;
     values[dateCol] = nowIso;
@@ -1459,15 +1630,19 @@ async function approveDeal(dealId, file){
     // approval itself, since the row is already safely updated above.
     if(nextStatus === STATUS_APPROVED){
       try{
-        await addTableRow(APPROVED_TABLE_NAME, values);
+        await addApprovedDealToList(values);
       }catch(err){
         console.error('Could not copy row into the "Approved" table — has it been created in the workbook?', err);
       }
     }
   }
-  await notifyNextApprover(nextStatus, dealId);
-  if(nextStatus === STATUS_APPROVED){
-    await notifySubmitter(STATUS_APPROVED, dealId, matching[0].values[0][MC.submittedBy]);
+  const idForNotifications = assignedDealId || dealId;
+  await notifyNextApprover(nextStatus, idForNotifications);
+  if(assignedDealId){
+    // The creator gets an email the moment their Deal ID exists — but,
+    // per policy, no separate email when the deal later reaches final
+    // (Level 3) approval; notifySubmitter() only ever covers Rejected.
+    await notifyDealIdAssigned(assignedDealId, matching[0].values[0][MC.submittedBy]);
   }
   await loadHistory();
 }
@@ -1574,7 +1749,7 @@ function renderHistoryTable(el, groups, opts){
       : '';
     html += '<tr style="border-top:1px solid var(--border);">' +
       (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[MC.submittedBy]||'')+'</td>' : '') +
-      '<td style="padding:6px;">'+escapeHtml(v[MC.dealId]||'')+'</td>' +
+      '<td style="padding:6px;">'+escapeHtml(friendlyDealId(v[MC.dealId]))+'</td>' +
       '<td style="padding:6px;">'+escapeHtml(formatStoredDate(v[MC.agreementDate]))+'</td>' +
       '<td style="padding:6px;">'+escapeHtml(v[MC.company]||'')+'</td>' +
       '<td style="padding:6px;">'+g.rows.length+'</td>' +
@@ -1619,11 +1794,10 @@ function htmlToPlainFallback(html){
   return tmp.textContent || tmp.innerText || '';
 }
 function openViewModal(dealId, html, agreementUrl){
-  document.getElementById('view-modal-dealid').textContent = dealId || '';
+  document.getElementById('view-modal-dealid').textContent = friendlyDealId(dealId);
   document.getElementById('view-modal-table').innerHTML = html;
   document.getElementById('view-modal-agreement-link').innerHTML = agreementUrl
     ? '<a href="'+escapeHtml(agreementUrl)+'" target="_blank" rel="noopener">📄 View agreement</a>' : '';
-  document.getElementById('view-modal-copy-status').style.display = 'none';
   document.getElementById('view-modal-overlay').style.display = 'flex';
 }
 function closeViewModal(){
@@ -1636,17 +1810,10 @@ document.getElementById('view-modal-overlay').addEventListener('click', (e)=>{
 document.addEventListener('keydown', (e)=>{
   if(e.key === 'Escape' && document.getElementById('view-modal-overlay').style.display === 'flex') closeViewModal();
 });
-document.getElementById('view-modal-copy-btn').addEventListener('click', async ()=>{
-  const html = document.getElementById('view-modal-table').innerHTML;
-  await copyToClipboard(html, htmlToPlainFallback(html));
-  const status = document.getElementById('view-modal-copy-status');
-  status.style.display = 'block';
-  setTimeout(()=>{ status.style.display='none'; }, 2500);
-});
 let approveModalDealId = null;
 function openApproveModal(dealId){
   approveModalDealId = dealId;
-  document.getElementById('approve-modal-dealid').textContent = dealId;
+  document.getElementById('approve-modal-dealid').textContent = friendlyDealId(dealId);
   document.getElementById('approve-modal-file').value = '';
   document.getElementById('approve-modal-error').style.display = 'none';
   document.getElementById('approve-modal-overlay').style.display = 'flex';
@@ -1686,7 +1853,7 @@ document.getElementById('approve-modal-submit').addEventListener('click', async 
 let rejectModalDealId = null;
 function openRejectModal(dealId){
   rejectModalDealId = dealId;
-  document.getElementById('reject-modal-dealid').textContent = dealId;
+  document.getElementById('reject-modal-dealid').textContent = friendlyDealId(dealId);
   document.getElementById('reject-comment').value = '';
   document.getElementById('reject-modal-error').style.display = 'none';
   document.getElementById('reject-modal-overlay').style.display = 'flex';
@@ -1734,7 +1901,8 @@ document.addEventListener('click', (e)=>{
       openApproveModal(dealId);
       return;
     }
-    if(confirm('Approve Deal ID ' + dealId + ' at your level? This will advance it to the next stage (or mark it fully Approved if this is the final level).')){
+    const confirmLabel = isPendingDealId(dealId) ? 'this agreement' : 'Deal ID ' + friendlyDealId(dealId);
+    if(confirm('Approve ' + confirmLabel + ' at your level? This will advance it to the next stage (or mark it fully Approved if this is the final level).')){
       approveBtn.disabled = true;
       approveDeal(dealId).catch(err=>{ console.error('Approve failed', err); alert('Approve failed: ' + err.message); });
     }
@@ -2284,6 +2452,10 @@ function val(id){ const el=document.getElementById(id); return el ? el.value : '
 // right after the first 5 characters of the entered Deal ID (before the
 // company surname suffix). E.g. "01000DIY" with 3 trades -> "010003DIY".
 function opsDealId(){
+  // No real Deal ID exists until Level 1 approves — while currentDealDocId
+  // is still the temporary placeholder, show that instead of assembling a
+  // number that hasn't actually been assigned yet.
+  if(isPendingDealId(currentDealDocId)) return friendlyDealId(currentDealDocId);
   const num = val('h-dealid-num');
   const alpha = val('h-dealid-alpha');
   if(!num && !alpha) return '';
@@ -2789,12 +2961,13 @@ document.getElementById('copy-btn').addEventListener('click', async ()=>{
   setTimeout(()=>{ status.style.display='none'; }, 2500);
 });
 
-/* ---- Save agreement: assigns the global Deal ID (first save only) and
-   writes the confirmation into the shared SharePoint log table ----
-   The Deal ID stays unassigned/blank while a draft is only being edited; it's
-   claimed from the shared counter the moment "Save agreement" succeeds, and
-   never reassigned again for this agreement, so the same Deal ID always maps
-   to exactly one saved record across every user. */
+/* ---- Save agreement: writes the confirmation into the shared SharePoint
+   log table under a temporary placeholder ----
+   No real Deal ID is assigned at this point — that only happens once a
+   Level 1 approver approves it (see assignFormalDealId / approveDeal). This
+   just claims a placeholder so the row can be tracked/locked, and never
+   reassigns it again for this agreement — it's the underlying row key from
+   here until Level 1 approves, at which point it's swapped for the real ID. */
 document.getElementById('save-agreement-btn').addEventListener('click', async ()=>{
   if(!currentAccount) return;
   const btn = document.getElementById('save-agreement-btn');
@@ -2806,18 +2979,20 @@ document.getElementById('save-agreement-btn').addEventListener('click', async ()
     if(includeBD === null) return; // validation warning already shown
 
     if(!currentDealDocId){
-      await assignNewDealId();
-      // Rebuild the preview now that the Deal ID field is actually filled in,
-      // so the saved table/text shows the real number, not a blank.
+      assignPendingDealId();
+      // Rebuild the preview now that currentDealDocId is set, so the "Deal
+      // ID" line reads "Pending Level 1 approval" instead of blank.
       generateOutput();
     }
 
-    await saveConfirmationToHistory(includeBD, currentDealDocId);
+    const submittedDateIso = new Date().toISOString();
+    await saveConfirmationToHistory(includeBD, currentDealDocId, submittedDateIso);
+    currentSubmittedDate = submittedDateIso;
     saveDraft();
     await loadHistory(); // refresh logRowsCache so dealAlreadySubmitted() sees this deal
     await notifyNextApprover(STATUS_PENDING_1, currentDealDocId);
 
-    note.textContent = 'Submitted — Deal ID ' + currentDealDocId + '. Awaiting Level 1 approval.';
+    note.textContent = 'Submitted — awaiting Level 1 approval. A Deal ID will be assigned once that approval happens, and you\'ll get an email then.';
     note.style.display = 'block';
     lockSubmittedForm(currentDealDocId);
   }catch(err){
