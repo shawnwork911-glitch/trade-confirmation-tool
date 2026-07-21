@@ -1585,8 +1585,8 @@ function selectHtml(id, options, def){
 function textHtml(id, placeholder, val){
   return '<input type="text" id="'+id+'" placeholder="'+(placeholder||'')+'" value="'+(val||'')+'"/>';
 }
-function dateHtml(id){
-  return '<input type="date" id="'+id+'"/>';
+function dateHtml(id, lang){
+  return '<input type="date" id="'+id+'"'+(lang ? ' lang="'+lang+'"' : '')+'/>';
 }
 function comboHtml(id, listId, options, def){
   const dl = '<datalist id="'+listId+'">' + options.map(v=>'<option value="'+v+'">').join('') + '</datalist>';
@@ -1852,8 +1852,8 @@ function tradeBlockHtml(n){
     lockableField('Price currency', comboHtml('t'+n+'-currency','t'+n+'-currency-list',CURRENCIES,'USD'),'t'+n+'-currency')+
     lockableField('Price / REC', textHtml('t'+n+'-price','e.g. 0.27'),'t'+n+'-price')+
     lockableField('Payment term', textHtml('t'+n+'-payterm','30 days after invoice','30 days after invoice'),'t'+n+'-payterm')+
-    lockableField('Delivery start date', dateHtml('t'+n+'-dstart'),'t'+n+'-dstart')+
-    lockableField('Delivery end date', dateHtml('t'+n+'-dend'),'t'+n+'-dend')+
+    lockableField('Delivery start date', dateHtml('t'+n+'-dstart','en-GB'),'t'+n+'-dstart')+
+    lockableField('Delivery end date', dateHtml('t'+n+'-dend','en-GB'),'t'+n+'-dend')+
     lockableField('COD (if applicable)', textHtml('t'+n+'-m-cod','NA','NA'),'t'+n+'-m-cod')+
     lockableField('Special remarks', '<textarea id="t'+n+'-remarks" placeholder="NA">NA</textarea>', 't'+n+'-remarks')
       .replace('<div id=','<div style="grid-column:1 / -1;" id=')+
