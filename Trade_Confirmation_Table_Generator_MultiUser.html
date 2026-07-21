@@ -525,7 +525,12 @@ const DRAFT_TABLE_NAME = "TradeDealDrafts";   // must match the Excel Table name
 const SETTINGS_TABLE_NAME = "TradeSettings";  // must match the Excel Table name you create
 const SC = { key:0, value:1 };
 const DEAL_ID_START_KEY = "dealIdStart";
-const GRAPH_SCOPES = ["Sites.ReadWrite.All", "User.Read", "Mail.Send"];
+const GRAPH_SCOPES = ["Sites.ReadWrite.All", "User.Read"];
+// Requested separately from GRAPH_SCOPES, only at the moment an email is
+// actually sent — so until Mail.Send is admin-consented in Azure (or if
+// that consent is ever revoked), it only affects notification emails and
+// can never block ordinary saves/drafts/approvals, which never request it.
+const MAIL_SCOPES = ["Mail.Send"];
 
 /* ---- Roles & 3-level approval ----
    Approval is now handled entirely inside this app (no external
@@ -752,9 +757,13 @@ async function assignRole(email, role){
     throw new Error('That address is already a hardcoded superadmin and can\'t be reassigned here.');
   }
   const existing = userRolesCache.find(r => (r.values[0][RC.email]||'').toLowerCase() === email);
-  if(role === 'user'){
-    if(existing) await deleteTableRow(USER_ROLES_TABLE_NAME, existing.index);
-  }else if(existing){
+  // 'User' is the implicit default for anyone with no row at all, but we
+  // still write/keep a row for it here — otherwise clicking "Assign role"
+  // with User selected for someone brand-new looks like it silently did
+  // nothing (nothing appears in the list, no error either). Writing the row
+  // makes the action visible and auditable (who set them back to User, and
+  // when), same as any other role.
+  if(existing){
     const values = existing.values[0].slice();
     values[RC.role] = role;
     values[RC.assignedBy] = currentAccount.username;
@@ -800,6 +809,7 @@ async function sendMailGraph(toEmails, subject, htmlBody){
   if(!toEmails.length) return;
   await graphFetch('/me/sendMail', {
     method: 'POST',
+    scopes: MAIL_SCOPES,
     body: JSON.stringify({
       message: {
         subject,
@@ -916,18 +926,19 @@ if(dealIdStartSaveBtn){
 }
 
 /* ---- Microsoft Graph plumbing ---- */
-async function getAccessToken(){
+async function getAccessToken(scopes){
+  scopes = scopes || GRAPH_SCOPES;
   try{
-    const result = await msalInstance.acquireTokenSilent({ scopes: GRAPH_SCOPES, account: currentAccount });
+    const result = await msalInstance.acquireTokenSilent({ scopes, account: currentAccount });
     return result.accessToken;
   }catch(e){
-    const result = await msalInstance.acquireTokenPopup({ scopes: GRAPH_SCOPES });
+    const result = await msalInstance.acquireTokenPopup({ scopes });
     return result.accessToken;
   }
 }
 async function graphFetch(path, options){
   options = options || {};
-  const token = await getAccessToken();
+  const token = await getAccessToken(options.scopes);
   const res = await fetch('https://graph.microsoft.com/v1.0' + path, {
     method: options.method || 'GET',
     body: options.body,
