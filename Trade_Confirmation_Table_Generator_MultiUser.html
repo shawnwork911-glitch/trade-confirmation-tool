@@ -511,47 +511,18 @@
 
 <script>
 /* =======================================================================
-   MICROSOFT SIGN-IN + SHAREPOINT EXCEL SETUP — fill these in before use.
+   MICROSOFT SIGN-IN + SHAREPOINT EXCEL SETUP
    ======================================================================= */
-const TENANT_ID = "ab7c8c1e-dc1d-431f-ba8b-e4de2b047f8b";           // Directory (tenant) ID from the Azure app registration overview page
-const CLIENT_ID = "5b17f2d1-ca2a-4521-9d03-01cda2e86c16";           // Application (client) ID from the same page
+const TENANT_ID = "ab7c8c1e-dc1d-431f-ba8b-e4de2b047f8b";
+const CLIENT_ID = "5b17f2d1-ca2a-4521-9d03-01cda2e86c16";
 const SP_HOSTNAME = "saxonrenewables.sharepoint.com";
 const SP_SITE_PATH = "/sites/Operations";
 const APPROVED_LIST_NAME = "BD Agreement Record Approved";
 const SP_FILE_NAME = "BD Agreement Record.xlsx";
-// Resolving straight from this sharing link (instead of guessing the site's
-// default drive + a root-level path) sidesteps two whole classes of failure:
-// the file living in a non-default document library, and it living inside
-// a subfolder rather than at the drive root. If the file ever moves, just
-// grab its "Copy link" URL again and paste it in here — nothing else in
-// resolveWorkbook needs to change.
 const SP_FILE_SHARE_URL = "https://saxonrenewables.sharepoint.com/:x:/s/Operations/IQCIkW5tgJWPQJB1t7KiWT7KAaDp_pqoAmZigGQ9UbvBQME?e=dquVG0";
-const LOG_TABLE_NAME = "TradeDealLog";        // must match the Excel Table name you create
-// Separate sheet/table that mirrors every row of a deal the moment it
-// finishes Level 3 approval (i.e. the "Pending Level 3" -> "Approved"
-// transition). Create an Excel Table named exactly this on its own sheet,
-// with the same 43 columns/order as TradeDealLog (see below) — addTableRow
-// pads/truncates to whatever column count that table actually has, so it
-// still works even if you set it up with fewer columns.
+const LOG_TABLE_NAME = "TradeDealLog";
 const APPROVED_TABLE_NAME = "Approved";
-// Column layout of the restructured TradeDealLog "main list" table.
-// One physical row per TRADE (a multi-trade agreement produces several rows
-// sharing the same Agreement ID). Create the Excel Table with these 43
-// columns in exactly this order:
-// Sales PIC, Entity, Agreement Date, Agreement ID, Supply/Demand, Company,
-// Broker, Country, Registry, Tech, Match/Open Position, Volume (RECs),
-// Delivery (Start date), Delivery (End date), V (From MM), V (From YY),
-// V (To MM), V (To YY), Currency, Unit Price, Special Requirement, COD,
-// TIGRS / IREC NAME, Payment Term, Buyer/Seller, No of RECs, Which deal,
-// Delivery Date, Submitted By, Submitted Date, Generated HTML, Status,
-// Approved By (Level 1), Approved Date (Level 1), Approved By (Level 2),
-// Approved Date (Level 2), Approved By (Level 3), Approved Date (Level 3),
-// Rejected By, Rejected Date, Rejection Comment, Agreement File Name,
-// Agreement File URL
-// NOTE: if you're adding this to an existing workbook, add the last two
-// columns ("Agreement File Name", "Agreement File URL") at the end of the
-// live TradeDealLog Excel Table — don't insert them in the middle, or every
-// existing column index below will point at the wrong data.
+
 const MC = {
   salesPic:0, entity:1, agreementDate:2, dealId:3, supplyDemand:4, company:5,
   broker:6, country:7, registry:8, tech:9, matching:10, volume:11,
@@ -564,43 +535,20 @@ const MC = {
   rejectReason:40, agreementFileName:41, agreementFileUrl:42
 };
 const COL_COUNT = 43;
-const DRAFT_TABLE_NAME = "TradeDealDrafts";   // must match the Excel Table name you create
-// Small generic key/value settings table. Currently holds one row:
-// key="dealIdStart", value=the lowest 5-digit number the next new Deal ID
-// is allowed to start from (superadmin-editable — see "Deal ID numbering").
-// Create the Excel Table with just these 2 columns: Key, Value.
-const SETTINGS_TABLE_NAME = "TradeSettings";  // must match the Excel Table name you create
+const DRAFT_TABLE_NAME = "TradeDealDrafts";
+const SETTINGS_TABLE_NAME = "TradeSettings";
 const SC = { key:0, value:1 };
 const DEAL_ID_START_KEY = "dealIdStart";
 const GRAPH_SCOPES = ["Sites.ReadWrite.All", "User.Read"];
-// Requested separately from GRAPH_SCOPES, only at the moment an email is
-// actually sent — so until Mail.Send is admin-consented in Azure (or if
-// that consent is ever revoked), it only affects notification emails and
-// can never block ordinary saves/drafts/approvals, which never request it.
 const MAIL_SCOPES = ["Mail.Send"];
 
-/* ---- Roles & 3-level approval ----
-   Approval is now handled entirely inside this app (no external
-   PowerAutomate approval flow) — if a PowerAutomate "start and wait for
-   approval" flow is still attached to this workbook/table, turn it off so it
-   doesn't also try to write to the Status/Approved columns.
-
-   Roles: 'superadmin', 'admin1', 'admin2', 'admin3', 'user'.
-   A deal moves Pending Level 1 -> Pending Level 2 -> Pending Level 3 ->
-   Approved as each admin level signs off in order. Any admin level (or the
-   superadmin) can Reject at any pending stage, which requires a comment the
-   submitter can see. Superadmin can act at any level, in addition to
-   managing who holds each role. */
 const ROLES = ["superadmin","admin1","admin2","admin3","user"];
 const ROLE_LABELS = {
   superadmin:"Super Admin", admin1:"Admin — Level 1", admin2:"Admin — Level 2",
   admin3:"Admin — Level 3", user:"User"
 };
-// Hardcoded, UI-inaccessible superadmin(s) — a safety net so the role
-// assignment table can never be edited into a state with zero superadmins.
 const SUPERADMIN_EMAILS = ["shauyuan.tan@saxonrenewables.com"];
-const USER_ROLES_TABLE_NAME = "TradeUserRoles"; // must match the Excel Table name you create
-// Column layout for the TradeUserRoles table: Email, Role, Assigned By, Assigned Date
+const USER_ROLES_TABLE_NAME = "TradeUserRoles";
 const RC = { email:0, role:1, assignedBy:2, assignedDate:3 };
 const STATUS_PENDING_1 = "Pending Level 1";
 const STATUS_PENDING_2 = "Pending Level 2";
@@ -608,12 +556,6 @@ const STATUS_PENDING_3 = "Pending Level 3";
 const STATUS_APPROVED = "Approved";
 const STATUS_REJECTED = "Rejected";
 
-/* ---- Deal ID is now only assigned once Level 1 approval happens ----
-   Before that, a submitted agreement is tracked internally with a temporary
-   placeholder ("PND_<alpha>_<random>") instead of a real Deal ID — nothing
-   about the row is a real Deal ID yet, so it must never be shown to anyone
-   as if it were one. isPendingDealId()/friendlyDealId() are used everywhere
-   a Deal ID would otherwise be displayed. */
 function isPendingDealId(id){
   return /^PND_/.test(String(id || ''));
 }
@@ -635,22 +577,16 @@ let siteId = null;
 let fileItemId = null;
 let driveId = null;
 let currentDealDocId = null;
-// The submittedDate written to this user's own rows at Save agreement time.
-// Deal ID placeholder -> real swap happens (by a different user, the Level 1
-// approver, in their own session) after this loads, so once that happens
-// this stable (submittedBy + submittedDate) pair is what lets *this* user's
-// session recognize its own submission again after a reload — currentDealDocId
-// alone can no longer be trusted for that once the swap has happened.
 let currentSubmittedDate = null;
-let draftRowIndex = null;      // this user's row index in the Drafts table, or null if none saved yet
-let logRowsCache = [];         // last-fetched rows from the log table, for the "View" buttons
-let userRolesCache = [];       // last-fetched rows from the TradeUserRoles table
+let draftRowIndex = null;
+let logRowsCache = [];
+let userRolesCache = [];
 let currentUserRole = 'user';
-let isAdmin = false;           // true for admin1/admin2/admin3/superadmin — any elevated role
+let isAdmin = false;
 let settingsCache = [];
-let dealIdStartOverride = 0;   // 0 = no override, use the normal max+1 behavior
+let dealIdStartOverride = 0;
 let draftSaveTimer = null;
-let suppressAutosave = false;  // true while programmatically filling the form from a loaded draft
+let suppressAutosave = false;
 
 const loginOverlay = document.getElementById('login-overlay');
 const appContent = document.getElementById('app-content');
@@ -708,12 +644,6 @@ async function onSignedIn(){
   }
 }
 
-/* ---- Role resolution ----
-   Superadmin is a hardcoded allowlist (can't be edited away via the UI).
-   Every other role comes from the TradeUserRoles table, which the superadmin
-   manages from the "User management" panel. Anyone not listed is 'user'.
-   This is UI-only, same caveat as before: anyone with SharePoint access to
-   the file can already see/edit every row directly. */
 function getUserRole(email){
   email = (email||'').toLowerCase();
   if(SUPERADMIN_EMAILS.map(e=>e.toLowerCase()).includes(email)) return 'superadmin';
@@ -732,11 +662,6 @@ async function loadUserRoles(){
   isAdmin = currentUserRole !== 'user';
   await recordSignInIfNew();
 }
-// Ensures every person who's ever signed in shows up in the superadmin's
-// User management list right away — not just people who've had a role
-// explicitly assigned. Writes a plain 'user' row on first sign-in only;
-// harmless no-op for hardcoded superadmin or anyone who already has a row
-// (of any role) from a prior sign-in or an explicit assignment.
 async function recordSignInIfNew(){
   const email = (currentAccount.username || '').toLowerCase();
   if(SUPERADMIN_EMAILS.map(e=>e.toLowerCase()).includes(email)) return;
@@ -750,11 +675,6 @@ async function recordSignInIfNew(){
   }
 }
 
-/* ---- Deal ID starting number (superadmin only) ----
-   A floor under the normal "highest existing + 1" logic in assignFormalDealId.
-   Lets a superadmin set where numbering should begin — e.g. to line this
-   system up with an existing external sequence, or to pick a clean range for
-   testing — without renumbering anything already issued. */
 async function loadDealIdSettings(){
   try{
     settingsCache = await getTableRows(SETTINGS_TABLE_NAME);
@@ -785,21 +705,12 @@ function renderDealIdSettings(){
     ? 'Current starting number: ' + String(dealIdStartOverride).padStart(5,'0') + ' — only applies once no higher Deal ID has been issued yet.'
     : 'No starting number set — the next Deal ID will just be the highest issued so far, + 1.';
 }
-// Plain Users create/submit agreements as their normal job. Superadmin also
-// gets the creation form — purely so they can build a test agreement and run
-// it through the full flow — in addition to their normal review access
-// (Approval queue, All confirmations, "View" on any deal). Admin1/2/3 stay
-// review-only.
 function canBuildAgreement(){
   return currentUserRole === 'user' || currentUserRole === 'superadmin';
 }
 function applyRoleUi(){
   document.getElementById('user-role-label').textContent = ' · ' + ROLE_LABELS[currentUserRole];
   const isUserRole = canBuildAgreement();
-  // Plain Users and Superadmin create/submit agreements. Admin1/2/3 are here
-  // purely to review: they see the generated-table preview (when they click
-  // "View" from a queue/list), the Approval queue, and the full "All
-  // confirmations" list — never the creation form.
   document.getElementById('agreement-form-section').style.display = isUserRole ? 'flex' : 'none';
   document.getElementById('my-history-card').style.display = isUserRole ? 'block' : 'none';
   document.getElementById('draft-status').style.display = isUserRole ? 'inline' : 'none';
@@ -817,8 +728,6 @@ function applyRoleUi(){
     renderDealIdSettings();
   }
 }
-/* Which pending status (if any) the current user's role is allowed to act
-   on. Superadmin can act on any pending stage. */
 function actionableStatusesForRole(role){
   if(role === 'superadmin') return [STATUS_PENDING_1, STATUS_PENDING_2, STATUS_PENDING_3];
   if(role === 'admin1') return [STATUS_PENDING_1];
@@ -830,12 +739,6 @@ function canActOnStatus(status){
   return actionableStatusesForRole(currentUserRole).includes(status);
 }
 
-/* ---- User management (superadmin only) ----
-   Writes to the TradeUserRoles table: one row per email that's been given a
-   non-default role. Assigning a role to an email that already has a row
-   updates it in place; assigning 'user' to someone with an existing row
-   removes the row entirely (since 'user' is already the default for anyone
-   not listed). */
 async function assignRole(email, role){
   email = (email||'').trim().toLowerCase();
   if(!email) throw new Error('Enter an email address.');
@@ -843,12 +746,6 @@ async function assignRole(email, role){
     throw new Error('That address is already a hardcoded superadmin and can\'t be reassigned here.');
   }
   const existing = userRolesCache.find(r => (r.values[0][RC.email]||'').toLowerCase() === email);
-  // 'User' is the implicit default for anyone with no row at all, but we
-  // still write/keep a row for it here — otherwise clicking "Assign role"
-  // with User selected for someone brand-new looks like it silently did
-  // nothing (nothing appears in the list, no error either). Writing the row
-  // makes the action visible and auditable (who set them back to User, and
-  // when), same as any other role.
   if(existing){
     const values = existing.values[0].slice();
     values[RC.role] = role;
@@ -862,14 +759,6 @@ async function assignRole(email, role){
   renderUserMgmtList();
 }
 
-/* ---- Email notifications on submit / approve ----
-   Sent via Graph "sendMail" as whoever just took the action (the submitter
-   on first submit, the approving admin on each level-advance) — no separate
-   mail server needed. Requires the Mail.Send delegated permission to be
-   granted (admin consent) on the Azure app registration; if it isn't yet,
-   sending just throws and is caught/logged, so it never blocks the actual
-   submit/approve action itself. Only the *next* approver is notified — a
-   deal reaching Approved has no further approver, so nothing is sent then. */
 const APPROVER_ROLE_FOR_STATUS = {};
 APPROVER_ROLE_FOR_STATUS[STATUS_PENDING_1] = 'admin1';
 APPROVER_ROLE_FOR_STATUS[STATUS_PENDING_2] = 'admin2';
@@ -906,11 +795,9 @@ async function sendMailGraph(toEmails, subject, htmlBody){
     })
   });
 }
-// status = the deal's status *after* this submit/approve just happened —
-// looks up which role is now responsible and emails everyone holding it.
 async function notifyNextApprover(status, dealId){
   const role = APPROVER_ROLE_FOR_STATUS[status];
-  if(!role) return; // e.g. Approved — no next approver to notify
+  if(!role) return;
   const toEmails = emailsForRole(role);
   if(!toEmails.length){
     console.warn('No ' + role + ' assigned — skipping approval notification for Deal ID ' + dealId);
@@ -929,20 +816,13 @@ async function notifyNextApprover(status, dealId){
   }
 }
 
-// Emails the person who submitted the deal if it's Rejected at whatever
-// level it was at. Separate from notifyNextApprover, which only ever emails
-// the *next* approver in the chain. Note: per policy there is deliberately
-// no "fully Approved" email here — the submitter is already notified once,
-// when their Deal ID is first created at Level 1 (see notifyDealIdAssigned
-// below); nothing further is sent when the deal later reaches the last
-// approval level.
 async function notifySubmitter(status, dealId, submitterEmail, reason){
   const email = (submitterEmail || '').trim();
   if(!email) {
     console.warn('No submitter email on file — skipping outcome notification for Deal ID ' + dealId);
     return;
   }
-  if(status !== STATUS_REJECTED) return; // only Rejected has a submitter email
+  if(status !== STATUS_REJECTED) return;
   const link = dealDeepLink(dealId);
   const displayId = friendlyDealId(dealId);
   const label = isPendingDealId(dealId) ? 'Your agreement (' + escapeHtml(displayId) + ')' : 'Deal ID <strong>' + escapeHtml(displayId) + '</strong>';
@@ -957,10 +837,6 @@ async function notifySubmitter(status, dealId, submitterEmail, reason){
   }
 }
 
-// Emails the agreement's creator the moment their Deal ID is actually
-// created — i.e. right after Level 1 approval assigns the real ID in place
-// of the submit-time placeholder. This is the only "your Deal ID is ready"
-// notification; no further email is sent for Level 2/3 approvals.
 async function notifyDealIdAssigned(dealId, submitterEmail){
   const email = (submitterEmail || '').trim();
   if(!email){
@@ -977,7 +853,6 @@ async function notifyDealIdAssigned(dealId, submitterEmail){
   }
 }
 
-// a notification email's "?deal=XXXXX" link, once logRowsCache has data.
 let urlDealOpened = false;
 function tryOpenDealFromUrl(){
   if(urlDealOpened) return;
@@ -985,7 +860,7 @@ function tryOpenDealFromUrl(){
   if(!dealId) { urlDealOpened = true; return; }
   const group = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
   const withHtml = group.find(r => r.values[0][MC.generatedHtml]);
-  if(!withHtml) return; // history may not have loaded this deal yet — try again next refresh
+  if(!withHtml) return;
   openViewModal(dealId, withHtml.values[0][MC.generatedHtml], withHtml.values[0][MC.agreementFileUrl]);
   urlDealOpened = true;
 }
@@ -1083,15 +958,10 @@ async function graphFetch(path, options){
   return text ? JSON.parse(text) : null;
 }
 function encodeShareUrl(url){
-  // Graph's /shares/{shareId} format: base64-encode the URL, then make it
-  // URL-safe and strip padding, prefixed with "u!".
   const b64 = btoa(url).replace(/=+$/,'').replace(/\//g,'_').replace(/\+/g,'-');
   return 'u!' + b64;
 }
 async function resolveWorkbook(){
-  // Primary: resolve directly from the sharing link — works no matter which
-  // document library or subfolder the file actually lives in, and doesn't
-  // depend on SharePoint's permission-filtered search index at all.
   try{
     const item = await graphFetch('/shares/' + encodeShareUrl(SP_FILE_SHARE_URL) + '/driveItem?$select=id,parentReference,name');
     fileItemId = item.id;
@@ -1104,9 +974,6 @@ async function resolveWorkbook(){
     }
     console.warn('Share-link lookup failed, falling back to site search', shareErr);
   }
-  // Fallback: guess it's at the default drive's root, by name, on the
-  // Operations site — only used if the share link itself stops resolving
-  // (e.g. link was regenerated).
   const site = await graphFetch('/sites/' + SP_HOSTNAME + ':' + SP_SITE_PATH);
   siteId = site.id;
   try{
@@ -1131,14 +998,14 @@ function workbookTablePath(tableName){
 }
 async function getTableRows(tableName){
   const data = await graphFetch(workbookTablePath(tableName) + '/rows');
-  return data.value || []; // each row: { index, values: [[col1, col2, ...]] }
+  return data.value || [];
 }
 async function getSharePointListId(listName) {
     const data = await graphFetch(
-        "/sites/" + siteId + "/lists?$filter=displayName eq '" + listName + "'"
+        "/sites/" + siteId + "/lists?$filter=displayName eq '" + encodeURIComponent(listName) + "'"
     );
 
-    if (!data.value.length)
+    if (!data || !data.value || !data.value.length)
         throw new Error("SharePoint List not found: " + listName);
 
     return data.value[0].id;
@@ -1146,67 +1013,66 @@ async function getSharePointListId(listName) {
 let approvedListId = null;
 
 async function addApprovedDealToList(values){
-
     if(!approvedListId){
         approvedListId = await getSharePointListId(APPROVED_LIST_NAME);
     }
 
-    await graphFetch(
-        "/sites/" + siteId +
-        "/lists/" + approvedListId +
-        "/items",
+    // Base text payload
+    const fields = {
+        Title: values[MC.dealId] || 'No Deal ID',
+        DealID: values[MC.dealId] || '',
+        SalesPIC: values[MC.salesPic] || '',
+        Entity: values[MC.entity] || '',
+        Company: values[MC.company] || '',
+        Broker: values[MC.broker] || '',
+        Country: values[MC.country] || '',
+        Registry: values[MC.registry] || '',
+        Technology: values[MC.tech] || '',
+        Currency: values[MC.currency] || '',
+        Status: values[MC.status] || '',
+        SubmittedBy: values[MC.submittedBy] || '',
+        SubmittedDate: values[MC.submittedDate] || ''
+    };
+
+    // Parse Date safely
+    if (values[MC.agreementDate]) {
+        let rawDate = formatStoredDate(values[MC.agreementDate]);
+        if (rawDate.includes('/')) {
+            const [d, m, y] = rawDate.split('/');
+            fields.AgreementDate = `${y}-${m}-${d}`;
+        } else if (/^\d{4}-\d{2}-\d{2}/.test(rawDate)) {
+            fields.AgreementDate = rawDate;
+        }
+    }
+
+    // Parse Numbers safely (strip commas)
+    if (values[MC.volume]) {
+        const cleanVol = parseFloat(String(values[MC.volume]).replace(/,/g, ''));
+        if (!isNaN(cleanVol)) fields.Volume = cleanVol;
+    }
+    if (values[MC.unitPrice]) {
+        const cleanPrice = parseFloat(String(values[MC.unitPrice]).replace(/,/g, ''));
+        if (!isNaN(cleanPrice)) fields.UnitPrice = cleanPrice;
+    }
+
+    // Parse Hyperlink safely
+    const fileUrl = values[MC.agreementFileUrl];
+    if (fileUrl) {
+        fields.AgreementFile = {
+            Url: fileUrl,
+            Description: values[MC.agreementFileName] || "View Agreement"
+        };
+    }
+
+    return await graphFetch(
+        "/sites/" + siteId + "/lists/" + approvedListId + "/items",
         {
-            method:"POST",
-            body:JSON.stringify({
-
-                fields:{
-
-                    Title: values[MC.dealId],
-
-                    DealID: values[MC.dealId],
-
-                    SalesPIC: values[MC.salesPic],
-
-                    Entity: values[MC.entity],
-
-                    AgreementDate: values[MC.agreementDate],
-
-                    Company: values[MC.company],
-
-                    Broker: values[MC.broker],
-
-                    Country: values[MC.country],
-
-                    Registry: values[MC.registry],
-
-                    Technology: values[MC.tech],
-
-                    Volume: values[MC.volume],
-
-                    UnitPrice: values[MC.unitPrice],
-
-                    Currency: values[MC.currency],
-
-                    Status: values[MC.status],
-
-                    SubmittedBy: values[MC.submittedBy],
-
-                    SubmittedDate: values[MC.submittedDate],
-
-                    AgreementFile: values[MC.agreementFileUrl]
-
-                }
-
-            })
+            method: "POST",
+            body: JSON.stringify({ fields })
         }
     );
-
 }
-// Caches how many columns the live Excel Table actually has right now, so
-// row writes can be shaped to match — this is what keeps saves working even
-// when the code's column list (MC/COL_COUNT) has grown ahead of what's
-// actually been added to the workbook yet, instead of Graph rejecting the
-// whole write with a dimension-mismatch error.
+
 let tableColumnCountCache = {};
 async function getTableColumnCount(tableName){
   if(tableColumnCountCache[tableName]) return tableColumnCountCache[tableName];
@@ -1233,18 +1099,11 @@ async function updateTableRow(tableName, rowIndex, values){
     method: 'PATCH',
     body: JSON.stringify({ values: [fitRowToColumnCount(values, count)] })
   });
-
 }
 async function deleteTableRow(tableName, rowIndex){
   return graphFetch(workbookTablePath(tableName) + '/rows/itemAt(index=' + rowIndex + ')', { method: 'DELETE' });
 }
 
-/* ---- Level 2 approval: agreement file upload ----
-   Uploaded into an "Agreement Files" folder in the same SharePoint drive
-   that hosts the workbook, so it inherits the same site permissions —
-   anyone who can already open the workbook can open the agreement.
-   Uses the simple (non-resumable) upload endpoint, which Graph limits to
-   4 MB; that's enough for a scanned/signed agreement PDF in normal use. */
 const AGREEMENT_UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
 async function uploadAgreementFile(dealId, file){
   if(!driveId) throw new Error('Not connected to the SharePoint workbook yet — try refreshing the page.');
@@ -1267,16 +1126,6 @@ async function uploadAgreementFile(dealId, file){
   return { name: item.name, webUrl: item.webUrl };
 }
 
-/* ---- Deal ID assignment ----
-   A Deal ID is a promise about a real, reviewed agreement — so it's no
-   longer handed out the moment someone clicks "Save agreement". Instead:
-     1. Save agreement gives the submission a temporary placeholder
-        ("PND_<alpha>_<random>") purely so this app can track/lock the row —
-        it is never shown to anyone as a Deal ID.
-     2. Only once a Level 1 approver actually approves does assignFormalDealId()
-        run (in the *approver's* session) and claim the real 5-digit number,
-        overwriting the placeholder in every row of the agreement. The
-        submitter is emailed once this happens (see notifyDealIdAssigned). */
 function assignPendingDealId(){
   const alpha = val('h-dealid-alpha').replace(/[^a-zA-Z]/g,'').slice(0,3).toUpperCase();
   const rand = (window.crypto && crypto.randomUUID)
@@ -1286,18 +1135,7 @@ function assignPendingDealId(){
   currentDealDocId = placeholder;
   return placeholder;
 }
-// Best-effort uniqueness: highest existing (real, non-placeholder) Deal ID in
-// the log table, +1, then re-checked against a fresh read right before
-// committing. Excel/Graph has no atomic transactions, so this can't offer a
-// hard guarantee — collisions are very unlikely under normal, occasional
-// approving (a true zero-risk guarantee needs a real backend).
-// tradeCount = number of trade-rows sharing this placeholder (one physical
-// row per trade), which becomes the digit inserted into the ID, exactly like
-// opsDealId() used to read live off the trade-count dropdown — except this
-// runs in the approver's session, so it's derived from the stored rows
-// instead. The alpha letters were captured into the placeholder itself back
-// when the submitter saved, so a manual override of that field still
-// survives all the way through to the real Deal ID.
+
 async function assignFormalDealId(placeholderId, tradeCount){
   const alphaMatch = /^PND_([A-Z]{0,3})_/.exec(placeholderId || '');
   const alpha = alphaMatch ? alphaMatch[1] : '';
@@ -1307,7 +1145,7 @@ async function assignFormalDealId(placeholderId, tradeCount){
     const takenNums = new Set();
     rows.forEach(r=>{
       const raw = String(r.values[0][MC.dealId] || '').trim();
-      if(isPendingDealId(raw)) return; // not a real number yet — ignore
+      if(isPendingDealId(raw)) return;
       const n = parseInt(raw.slice(0,5), 10);
       if(!isNaN(n)){
         if(n > maxNum) maxNum = n;
@@ -1317,9 +1155,6 @@ async function assignFormalDealId(placeholderId, tradeCount){
     return { maxNum, takenNums };
   };
   const first = await scan();
-  // The superadmin-set starting number is a floor: it only matters while
-  // nothing has been issued yet at or above it, and never moves a number
-  // backwards or renumbers anything already saved.
   let candidate = Math.max(first.maxNum + 1, dealIdStartOverride || 1);
   const { takenNums } = await scan();
   let padded = String(candidate).padStart(5,'0');
@@ -1330,12 +1165,11 @@ async function assignFormalDealId(placeholderId, tradeCount){
   return padded + (parseInt(tradeCount,10) || '') + alpha;
 }
 
-/* ---- Per-user draft (autosaves the in-progress form into the Drafts table) ---- */
 function gatherFormData(){
   const tradeCount = document.getElementById('trade-count').value;
   const allValues = {};
   const checkedIds = [];
-  document.querySelectorAll('input[id], select[id], textarea[id]').forEach(el=>{
+  document.querySelectorAll('input[id]:not([type="file"]), select[id], textarea[id]').forEach(el=>{
     if(el.type === 'radio' || el.type === 'checkbox'){
       if(el.checked) checkedIds.push(el.id);
     } else {
@@ -1374,7 +1208,7 @@ function applyDraftData(data){
   renderTrades();
   Object.keys(data.allValues || {}).forEach(id=>{
     const el = document.getElementById(id);
-    if(el) el.value = data.allValues[id];
+    if(el && el.type !== 'file') el.value = data.allValues[id];
   });
   (data.checkedIds || []).forEach(id=>{
     const el = document.getElementById(id);
@@ -1395,8 +1229,6 @@ function applyDraftData(data){
 }
 async function loadDraftAndHistory(){
   if(!canBuildAgreement()){
-    // Review-only roles never create agreements, so there's no per-user
-    // draft to load for them — just pull the shared history/queue data.
     await loadHistory();
     return;
   }
@@ -1420,23 +1252,6 @@ async function loadDraftAndHistory(){
   checkSubmittedLock();
 }
 
-/* ---- Locking a submitted deal ----
-   A Deal ID is only ever assigned the moment "Save agreement" first
-   succeeds, and once that write has happened, the agreement is done: it can
-   never be edited or resaved under that same ID, and a rejected deal is not
-   reopened for editing either — trying again means starting a New
-   confirmation, which gets a brand-new Deal ID. This function detects "the
-   currently loaded form's Deal ID already has rows in TradeDealLog" (either
-   right after a successful save, or on reload/reconnect) and locks the form
-   accordingly. The per-user draft row still autosaves the in-progress form
-   right up until that first successful save — its only purpose is to
-   protect unsaved work, never to enable post-submission edits. */
-// A Level 1 approval (run in the *approver's* session, not the submitter's)
-// swaps a row's placeholder Deal ID for the real one — so the submitter's
-// own currentDealDocId can go stale the moment that happens. Falling back to
-// matching on (submittedBy + submittedDate), a pair that never changes,
-// lets this user's session still recognize its own submission after that
-// swap, e.g. on reload.
 function myRowsBySubmissionRef(){
   if(!currentAccount || !currentSubmittedDate) return [];
   const myEmail = (currentAccount.username || '').toLowerCase();
@@ -1455,8 +1270,6 @@ function submittedDealStatus(dealId){
   return row ? (row.values[0][MC.status] || STATUS_PENDING_1) : null;
 }
 function checkSubmittedLock(){
-  // Resync currentDealDocId if Level 1 has since assigned the real Deal ID
-  // in someone else's session.
   const mine = myRowsBySubmissionRef()[0];
   if(mine){
     const realId = String(mine.values[0][MC.dealId] || '').trim();
@@ -1504,17 +1317,6 @@ document.getElementById('new-confirmation-btn').addEventListener('click', async 
   location.reload();
 });
 
-/* ---- Saved agreements (the shared, restructured TradeDealLog table) ----
-   One physical row per TRADE within an agreement (a 3-trade submission under
-   one Deal ID produces 3 rows). A Deal ID is only ever saved ONCE — if rows
-   already exist for it, saving is refused (the UI already prevents this via
-   lockSubmittedForm(), this is a server-side-equivalent guard in case of a
-   double-click or stale page). A brand-new submission always starts at
-   "Pending Level 1" with every approval/rejection field blank. Nothing is
-   ever written to this table's Status/approval columns except by the
-   Approve/Reject actions. Every signed-in user can technically read every
-   row (that's inherent to a shared Excel file) — "My saved confirmations" is
-   a client-side filter, not a security boundary. */
 async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
   if(!currentAccount || !dealId) return;
   const rows = await getTableRows(LOG_TABLE_NAME);
@@ -1573,11 +1375,7 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
   }
   await loadHistory();
 }
-/* Advances a deal one step through the approval chain, writing the
-   approver + timestamp for whichever level the current status corresponds
-   to. Every role — including superadmin — only ever advances one level per
-   click; superadmin's only difference is which levels canActOnStatus() lets
-   them act on (any pending level, vs. admin1/2/3's own single level). */
+
 async function approveDeal(dealId, file){
   if(!dealId) return;
   const rows = await getTableRows(LOG_TABLE_NAME);
@@ -1592,27 +1390,23 @@ async function approveDeal(dealId, file){
     if(!file) throw new Error('Please attach the signed agreement before approving at Level 2.');
     const liveColumnCount = await getTableColumnCount(LOG_TABLE_NAME);
     if(liveColumnCount < COL_COUNT){
-      throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing the "Agreement File Name" and "Agreement File URL" columns needed to save the attachment. Ask an admin to add those two columns at the end of the table, then try again.');
+      throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing columns. Ask an admin to check the table structure.');
     }
     nextStatus = STATUS_PENDING_3; byCol = MC.approvedBy2; dateCol = MC.approvedDate2;
   }
   else if(currentStatus === STATUS_PENDING_3){ nextStatus = STATUS_APPROVED; byCol = MC.approvedBy3; dateCol = MC.approvedDate3; }
   else return;
-  // The real Deal ID is only claimed the moment Level 1 approval happens —
-  // this is the one point where the row's dealId column changes from the
-  // submit-time placeholder to a permanent real ID.
+
   let assignedDealId = null;
   if(currentStatus === STATUS_PENDING_1){
     assignedDealId = await assignFormalDealId(dealId, matching.length);
   }
-  // Only Level 2 approval carries a file; upload it once, then stamp the
-  // link onto every row of the deal so it shows up wherever the deal does.
-  // Uses the real Deal ID (if one was just assigned this call) so the
-  // uploaded file is named after it rather than the placeholder.
+
   let agreementInfo = null;
   if(file){
     agreementInfo = await uploadAgreementFile(assignedDealId || dealId, file);
   }
+
   for(const r of matching){
     const values = r.values[0].slice();
     if(assignedDealId) values[MC.dealId] = assignedDealId;
@@ -1624,32 +1418,24 @@ async function approveDeal(dealId, file){
       values[MC.agreementFileUrl] = agreementInfo.webUrl;
     }
     await updateTableRow(LOG_TABLE_NAME, r.index, values);
-    // Final sign-off (Pending Level 3 -> Approved): also copy this row into
-    // the standalone "Approved" table/sheet. Best-effort — if that table
-    // hasn't been created yet in the workbook, log it but don't fail the
-    // approval itself, since the row is already safely updated above.
+
     if(nextStatus === STATUS_APPROVED){
       try{
         await addApprovedDealToList(values);
       }catch(err){
-        console.error('Could not copy row into the "Approved" table — has it been created in the workbook?', err);
+        console.error('Could not copy row into SharePoint List', err);
+        alert('Approved in Excel, but failed to write to SharePoint List: ' + err.message);
       }
     }
   }
   const idForNotifications = assignedDealId || dealId;
   await notifyNextApprover(nextStatus, idForNotifications);
   if(assignedDealId){
-    // The creator gets an email the moment their Deal ID exists — but,
-    // per policy, no separate email when the deal later reaches final
-    // (Level 3) approval; notifySubmitter() only ever covers Rejected.
     await notifyDealIdAssigned(assignedDealId, matching[0].values[0][MC.submittedBy]);
   }
   await loadHistory();
 }
-/* Rejects a deal at whatever stage it's currently pending at, recording who
-   rejected it, when, and the comment the submitter will see. Rejection
-   doesn't erase earlier level sign-offs — they stay visible in the approval
-   trail — but the deal must restart from Level 1 if resubmitted. */
+
 async function rejectDeal(dealId, reason){
   if(!dealId) return;
   const trimmedReason = (reason||'').trim();
@@ -1714,7 +1500,6 @@ function statusBadge(status){
   const color = s === STATUS_APPROVED ? '#1f7a4d' : (s === STATUS_REJECTED ? '#8a2d1f' : '#8a6d1f');
   return '<span style="font-weight:600;color:'+color+';">'+escapeHtml(s)+'</span>';
 }
-// Short "L1 ✓ name · L2 ✓ name" trail of whoever has signed off so far.
 function approvalTrailText(v){
   const parts = [];
   if(v[MC.approvedBy1]) parts.push('L1 ✓ '+v[MC.approvedBy1]);
@@ -1773,8 +1558,6 @@ function renderHistoryTable(el, groups, opts){
   html += '</table>';
   el.innerHTML = html;
 }
-// Extracted from the copy-btn handler so both the top Preview card and the
-// View modal (opened from history/queue lists) can copy the same way.
 async function copyToClipboard(html, plain){
   try{
     const htmlBlob = new Blob([html], {type:'text/html'});
@@ -1784,10 +1567,6 @@ async function copyToClipboard(html, plain){
     try{ await navigator.clipboard.writeText(plain); }catch(e2){}
   }
 }
-// Best-effort plain-text fallback for deals opened from history, which only
-// have the saved HTML (no separately-stored plain-text version) — used so
-// the modal's Copy button still has something sensible for the text/plain
-// clipboard entry.
 function htmlToPlainFallback(html){
   const tmp = document.createElement('div');
   tmp.innerHTML = html;
@@ -1914,13 +1693,9 @@ document.addEventListener('click', (e)=>{
   }
 });
 
-
 const COUNTRIES = ["MY","BN","CN","JP","SA","TH","IN","PH","SG","VN","INDO","AUS","TW"];
 const TECHS = ["SLR","ANY","GEO","BIO","HYD","BGS","SHY","LHY","CC","WND","S/WND"];
 
-// Hardcoded code -> full name lookups for the Customer version output (per
-// the reference sheet). Keys are matched case-insensitively; anything not
-// found here just falls back to showing the original code as typed.
 const COUNTRY_FULLNAMES = {
   'MY':'Malaysia', 'BN':'Brunei', 'CN':'China', 'JP':'Japan', 'SA':'South Asia',
   'TH':'Thailand', 'IN':'India', 'PH':'Philipine', 'SG':'Singapore', 'VN':'Vietnam',
@@ -1948,10 +1723,6 @@ const BD_NAMES = ["Addam","Aston U","Colwen Chan","Edmund Lam","Jordan Tan","Rei
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const YEARS = ["2025","2026","2027","2028","2029","2030"];
 
-/* ---- "From which deal" tickbox + dropdown (BD source matching) ----
-   Ticking "Own RECs" or "Proceed Share" swaps the "From which deal" text
-   box for a dropdown of the relevant options, and the generated table fills
-   in a short code for that selection rather than the option's display text. */
 const OWN_RECS_OPTIONS = ["TIGR/I-REC MY SLR","TIGR MY SLR","TIGR SG SLR","I-REC MY SLR","I-REC SG SLR"];
 const PROCEED_SHARE_OPTIONS = ["Tadau","IS Energy","Aenergy","PLTM"];
 const OWN_RECS_CODE_MAP = {
@@ -1968,9 +1739,6 @@ const PROCEED_SHARE_CODE_MAP = {
   "PLTM":"PLTM"
 };
 
-/* Generic lockable field wrapper — works for a single input/select, or a
-   compound field made of several inputs sharing one lock button (e.g. a
-   month + year pair). `ids` can be a single id string or an array of ids. */
 function lockableField(label, inputHtml, ids){
   const idArr = Array.isArray(ids) ? ids : [ids];
   const key = idArr.join(',');
@@ -1978,7 +1746,6 @@ function lockableField(label, inputHtml, ids){
     '<button type="button" class="field-lock" data-field="'+key+'" title="Lock this field">🔓</button></div>'+
     inputHtml+'</div>';
 }
-// Back-compat aliases — same thing, different names used historically.
 function headerField(label, inputHtml, id){ return lockableField(label, inputHtml, id); }
 function field(label, inputHtml, id){ return lockableField(label, inputHtml, id); }
 function selectHtml(id, options, def){
@@ -2010,8 +1777,6 @@ document.getElementById('header-fields').innerHTML =
   headerField('Buyer Name', textHtml('h-buyer','Company name'),'h-buyer') +
   headerField('Order type', selectHtml('h-order',ORDER_TYPES,'Stock-In (T)'),'h-order');
 
-/* Keeps the "Buyer/Seller" field's on-screen label, "Transfer Account" label, and the generated table's
-   row labels in sync with the Buyer-or-Seller role selector. */
 function currentRole(){
   return val('h-role') === 'Seller' ? 'Seller' : 'Buyer';
 }
@@ -2035,8 +1800,6 @@ document.addEventListener('change', (e)=>{
 });
 updateBuyerSellerFieldLabel();
 
-// Deal ID is split into a compulsory 5-digit box and an optional max-3-letter
-// box; strip anything that doesn't belong as the person types.
 document.addEventListener('input', (e)=>{
   if(e.target && e.target.id === 'h-dealid-num'){
     const cleaned = e.target.value.replace(/[^0-9]/g,'').slice(0,5);
@@ -2045,17 +1808,10 @@ document.addEventListener('input', (e)=>{
   if(e.target && e.target.id === 'h-dealid-alpha'){
     const cleaned = e.target.value.replace(/[^a-zA-Z]/g,'').slice(0,3).toUpperCase();
     if(cleaned !== e.target.value) e.target.value = cleaned;
-    // Once the person types their own letters here, stop auto-filling from
-    // the Buyer/Seller name. Clearing it back out resumes auto-fill.
     dealIdAlphaManuallyEdited = cleaned !== '';
   }
 });
 
-// Deal ID letters auto-fill from the first 3 letters of the Buyer/Seller
-// Name's first word (skipping common legal-entity suffixes like Sdn/Bhd/Ltd
-// if they happen to lead), like a surname abbreviation — e.g. "Saxon
-// Renewables Energy Sdn Bhd" -> "SAX". The person can still overwrite the
-// letters themselves; once they do, auto-fill stops touching that field.
 let dealIdAlphaManuallyEdited = false;
 const DEAL_ID_SUFFIX_WORDS = new Set(['sdn','bhd','berhad','ltd','limited','pte','pty','llc','inc','incorporated','corp','corporation','co','plc']);
 function initialsFromCompanyName(name){
@@ -2070,8 +1826,6 @@ document.addEventListener('input', (e)=>{
   }
 });
 
-/* ---- Per-field lock/persist (generic — covers header fields AND every
-   trade's fields, including compound fields sharing one lock button) ---- */
 const LOCK_STORAGE_KEY = 'tradeConfirmFieldLocks';
 
 function readLockState(){
@@ -2098,8 +1852,6 @@ function applyFieldLockUi(key, locked){
     btn.title = locked ? 'Unlock this field' : 'Lock this field';
   }
 }
-// Restores saved values/lock state for every lockable field found inside `container`.
-// Safe to call repeatedly (e.g. every time trade blocks are re-rendered).
 function initLocksIn(container){
   if(!container) return;
   const state = readLockState();
@@ -2117,8 +1869,6 @@ function initLocksIn(container){
   });
 }
 
-// One delegated click handler covers header fields, all trade fields, and
-// any trade blocks added later when the trade count changes.
 document.addEventListener('click', (e)=>{
   const btn = e.target.closest('.field-lock');
   if(!btn) return;
@@ -2127,12 +1877,10 @@ document.addEventListener('click', (e)=>{
   const state = readLockState();
   const currentlyLocked = !!(state[key] && state[key].locked);
   if(currentlyLocked){
-    // Unlock, keep the last saved values in storage
     state[key] = { locked:false, values: state[key].values };
     writeLockState(state);
     applyFieldLockUi(key, false);
   } else {
-    // Lock: save current values for every id in this field
     const values = {};
     ids.forEach(id=>{ const el = document.getElementById(id); values[id] = el ? el.value : ''; });
     state[key] = { locked:true, values };
@@ -2144,10 +1892,6 @@ document.addEventListener('click', (e)=>{
 initLocksIn(document.getElementById('header-fields'));
 updateBuyerSellerFieldLabel();
 
-/* ---- Section-level lock/persist (Details / Trades) ----
-   Locking a section locks every field inside it in one go, and disables the
-   individual field 🔓 buttons so fields can't be cherry-picked back open —
-   the section has to be unlocked as a whole first. */
 const SECTION_LOCK_KEY = 'tradeConfirmSectionLocks';
 
 function readSectionLockState(){
@@ -2162,8 +1906,6 @@ function writeSectionLockState(state){
 function getSectionContainer(section){
   return section === 'header' ? document.getElementById('header-fields') : document.getElementById('trades-container');
 }
-// Locks or unlocks every field found inside a section container, reusing the
-// same lock-state storage the individual field locks use.
 function setAllFieldLocksIn(container, locked){
   if(!container) return;
   const state = readLockState();
@@ -2194,9 +1936,6 @@ function applySectionLockUi(section, locked){
     container.querySelectorAll('.field-lock').forEach(fbtn=>{ fbtn.disabled = locked; });
   }
 }
-// Re-applies a saved section lock — called on load and whenever the trade
-// blocks are re-rendered (so a locked Trades section stays locked even after
-// the trade count changes).
 function initSectionLock(section){
   const state = readSectionLockState();
   const locked = !!state[section];
@@ -2226,15 +1965,12 @@ document.addEventListener('click', (e)=>{
 
 initSectionLock('header');
 
-
 function tradeBlockHtml(n){
   return '<div class="trade-block" data-trade-num="'+n+'">'+
     '<p class="trade-title">Trade '+n+'</p>'+
     '<div class="grid">'+
     lockableField('Registry', comboHtml('t'+n+'-registry','t'+n+'-registry-list',REGISTRIES,'IREC'),'t'+n+'-registry')+
     lockableField('Dealership', selectHtml('t'+n+'-dealership',['SAXON MY','SAXON SG'],'SAXON MY'),'t'+n+'-dealership')+
-    
-    // Custom label text is updated programmatically to reflect Buyer/Seller dynamically
     lockableField('Transfer account name', textHtml('t'+n+'-transfer','Account name'),'t'+n+'-transfer')+
     
     lockableField('Vintage start month &amp; year',
@@ -2264,12 +2000,10 @@ function tradeBlockHtml(n){
     '</div>'+
     '<p class="sub-title">BD source matching</p>'+
     
-    '<!-- Matching dropdown is now at the top of BD Source Matching section -->'+
     '<div class="grid" style="margin-bottom: 12px;">'+
       lockableField('5. Matching', selectHtml('t'+n+'-m-matching',MATCHING,'Open Position'),'t'+n+'-m-matching')+
     '</div>'+
 
-    '<!-- Wrapper for matching dependent fields -->'+
     '<div id="t'+n+'-matching-dependent-fields" style="display:none;">'+
       '<div class="grid">'+
         lockableField('1. Buyer/Seller name', textHtml('t'+n+'-m-name','Name'),'t'+n+'-m-name')+
@@ -2292,10 +2026,6 @@ function tradeBlockHtml(n){
   '</div>';
 }
 
-// Rebuilds the "From which deal" field for trade n as a text box (default),
-// or a dropdown of Own RECs / Proceed Share options depending on which
-// tickbox (if any) is checked. Re-applies the field's lock state afterward,
-// since replacing the inner element loses its disabled/locked attribute.
 function updateDealField(n){
   const own = document.getElementById('t'+n+'-m-own');
   const proceed = document.getElementById('t'+n+'-m-proceed');
@@ -2316,33 +2046,25 @@ function updateDealField(n){
   applyFieldLockUi(key, locked);
 }
 
-// Handle matching conditional display (Open Position hides fields 1 to 4)
 function handleMatchingChange(n) {
   const matchingSelect = document.getElementById('t'+n+'-m-matching');
   const dependentContainer = document.getElementById('t'+n+'-matching-dependent-fields');
   if (!matchingSelect || !dependentContainer) return;
 
   if (matchingSelect.value === 'Open Position') {
-    // Hide and clear BD matching fields 1-4
     dependentContainer.style.display = 'none';
-    
-    // Clear standard input elements inside matching dependent area
     dependentContainer.querySelectorAll('input[type="text"], input[type="date"]').forEach(el => {
       el.value = '';
     });
-    // Uncheck checkboxes
     dependentContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => {
       cb.checked = false;
     });
-    // Reset specific subfield layouts
     updateDealField(n);
   } else {
-    // Reveal fields 1-4 when option is not 'Open Position'
     dependentContainer.style.display = 'block';
   }
 }
 
-// Watch changes on the Matching drop-down menu
 document.addEventListener('change', (e) => {
   if (e.target && e.target.id && e.target.id.endsWith('-m-matching')) {
     const n = e.target.id.match(/^t(\d+)-m-matching$/)[1];
@@ -2350,8 +2072,6 @@ document.addEventListener('change', (e) => {
   }
 });
 
-// Own RECs and Proceed Share are mutually exclusive — ticking one clears
-// the other — and either swaps (or, if unticked, un-swaps) the dropdown.
 document.addEventListener('change', (e)=>{
   const m = e.target && e.target.id && e.target.id.match(/^t(\d+)-m-(own|proceed)$/);
   if(!m) return;
@@ -2366,9 +2086,6 @@ document.addEventListener('change', (e)=>{
   updateDealField(n);
 });
 
-// Returns the value to fill into the generated table's "From which deal"
-// row: the mapped short code when Own RECs / Proceed Share is ticked and an
-// option is selected, or the raw typed value otherwise.
 function dealCodeFor(n){
   const raw = val('t'+n+'-m-deal');
   if(!raw) return '';
@@ -2385,12 +2102,12 @@ function renderTrades(){
   let html = '';
   for(let i=1;i<=n;i++) html += tradeBlockHtml(i);
   c.innerHTML = html;
-  initLocksIn(c); // restore any locked values/state for the freshly-rendered trade blocks
-  initSectionLock('trades'); // re-apply a locked Trades section to the freshly-rendered blocks
+  initLocksIn(c);
+  initSectionLock('trades');
   for(let i=1;i<=n;i++) {
-    handleMatchingChange(i); // initialize conditional visibility matching state
+    handleMatchingChange(i);
   }
-  updateTransferAccountLabels(); // update dynamic input labels
+  updateTransferAccountLabels();
 }
 document.getElementById('trade-count').addEventListener('change', renderTrades);
 renderTrades();
@@ -2400,16 +2117,11 @@ function fmtDate(v){
   const [y,m,d] = v.split('-');
   return d+'/'+m+'/'+y;
 }
-// Values read back from the SharePoint log table for a date-like column:
-// Excel silently converts a "YYYY-MM-DD" string into its own serial date
-// number the moment it's written, so what comes back from Graph is a plain
-// number (e.g. 46217), not the original string. This converts either form
-// into DD/MM/YYYY for display in the history/queue tables.
 function formatStoredDate(v){
   if(v === '' || v === null || v === undefined) return '';
   const str = String(v).trim();
   if(/^-?\d+(\.\d+)?$/.test(str)){
-    const ms = Math.round((Number(str) - 25569) * 86400 * 1000); // Excel serial date epoch -> Unix epoch
+    const ms = Math.round((Number(str) - 25569) * 86400 * 1000);
     const d = new Date(ms);
     if(isNaN(d.getTime())) return str;
     const dd = String(d.getUTCDate()).padStart(2,'0');
@@ -2438,8 +2150,6 @@ function ordinalSuffix(day){
     default: return 'th';
   }
 }
-// Produces "1st Jan 2026" style output — the format PowerAutomate's
-// Html_to_text -> formatDateTime/parseDateTime expression expects.
 function fmtDateOrdinal(v){
   if(!v) return '';
   const [y,m,d] = v.split('-').map(Number);
@@ -2447,14 +2157,7 @@ function fmtDateOrdinal(v){
 }
 function val(id){ const el=document.getElementById(id); return el ? el.value : ''; }
 
-// The Ops version table shows a Deal ID that encodes how many trades are in
-// this deal: the number of trades selected gets inserted as a single digit
-// right after the first 5 characters of the entered Deal ID (before the
-// company surname suffix). E.g. "01000DIY" with 3 trades -> "010003DIY".
 function opsDealId(){
-  // No real Deal ID exists until Level 1 approves — while currentDealDocId
-  // is still the temporary placeholder, show that instead of assembling a
-  // number that hasn't actually been assigned yet.
   if(isPendingDealId(currentDealDocId)) return friendlyDealId(currentDealDocId);
   const num = val('h-dealid-num');
   const alpha = val('h-dealid-alpha');
@@ -2463,9 +2166,6 @@ function opsDealId(){
   return num + filled + alpha;
 }
 
-// Builds one 3-column trade block (trades startIdx..startIdx+2), the same fixed
-// template used since day one. 'filled' is the total number of trades the person
-// actually filled in; trades beyond it render as blank columns.
 function buildTradeGroup(startIdx, filled){
   const rows = [];
   const addRow = (label, cells, span, parts) => rows.push({label, cells, span: !!span, parts});
@@ -2529,11 +2229,6 @@ function buildTradeGroup(startIdx, filled){
   return {n: size, rows};
 }
 
-// Trades 1-3 always form the first 3-column block. Trades 4-6, when present,
-// form a second 3-column block stacked directly beneath it (its own "Trade"
-// row through "5. Matching"), rather than widening a single table to 6
-// columns — matching the Ops-version layout used downstream.
-// The data row structure has been kept exactly as defined in the SOP logic, maintaining full back-compat.
 function buildTable(){
   const filled = parseInt(document.getElementById('trade-count').value,10);
 
@@ -2555,10 +2250,6 @@ function escapeHtml(s){
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-// Keeps the Preview card's title in sync with whichever Deal ID is currently
-// loaded into it — set on self-generate, and on "View" from the Approval
-// queue / All confirmations lists — so an admin flipping between deals
-// always knows which one they're looking at.
 function setPreviewDealIdLabel(dealId){
   const el = document.getElementById('preview-dealid-label');
   if(!el) return;
@@ -2575,32 +2266,16 @@ function cellStyle(align, extra, widthPx){
   return 'border:2px solid #000000;padding:6px 10px;font-family:Arial,Helvetica,sans-serif;font-size:13px;'+w+(align?'text-align:'+align+';':'')+(extra||'');
 }
 
-// hasPipe=true (default) renders a literal "|" character so it survives the
-// HTML-to-plain-text conversion Outlook/O365 performs, keeping split(body,'|')
-// token positions intact. The text is the same color as the background so it
-// stays visually invisible as a solid black bar, same as before.
-// hasPipe=false is used only for the leading divider at the very start of each
-// row: that cell exists purely to preserve the visual left margin/column and
-// must NOT contribute a "|" token, otherwise every index downstream shifts by one.
 function pipeTd(hasPipe){
   const content = hasPipe === false ? '&nbsp;' : '|';
   return '<td width="14" style="border:none;padding:0;width:14px;text-align:center;font-family:Arial,Helvetica,sans-serif;font-size:13px;background-color:#000000;color:#000000;line-height:1;">'+content+'</td>';
 }
 
-// Builds "Jan | 2025 | Dec | 2025" as plain flowing inline text (no nested
-// table). A nested table with fixed pixel widths looked right in the preview
-// but email clients (Gmail/Outlook) rewrite pasted HTML during copy, and that
-// rewriting was breaking the fixed widths and causing values to spill past
-// the cell edge. Plain text has nothing to overflow — if it doesn't fit on
-// one line it just wraps naturally inside the cell, which every email client
-// handles consistently.
 function splitCellHtml(parts){
   const sep = '<span style="color:#000000;font-weight:bold;padding:0 3px;">|</span>';
   return parts.map(p=>'<span style="white-space:nowrap;">'+escapeHtml(p)+'</span>').join(sep);
 }
 
-// Renders one stacked table (either the trades 1-3 block, with the Deal ID +
-// Details header rows on top, or the trades 4-6 block on its own underneath).
 function renderGroupTable(rows, n, dealIdRow){
   const labelW = 220, pipeW = 14, dataW = 280;
   const totalW = pipeW + labelW + pipeW + n*(dataW+pipeW);
@@ -2645,9 +2320,6 @@ function renderGroupTable(rows, n, dealIdRow){
   return html;
 }
 
-// data = {headerRows, groups}. Trades 1-3 render as one table (with Deal ID +
-// Details on top); trades 4-6, if present, render as a second table stacked
-// directly beneath — same 3-column width, no repeated Deal ID/Details.
 function renderPreview(data){
   const group1 = data.groups[0];
   let html = renderGroupTable(data.headerRows.concat(group1.rows), group1.n, true);
@@ -2660,8 +2332,6 @@ function renderPreview(data){
   return html;
 }
 
-// Renders one block's rows as pipe-delimited plain text. dealIdRow, when
-// true, adds the "Deal ID" title row on top of this block.
 function renderGroupPlainText(rows, n, dealIdRow){
   const numCols = 1 + n;
 
@@ -2682,7 +2352,7 @@ function renderGroupPlainText(rows, n, dealIdRow){
     return text + ' '.repeat(gap > 0 ? gap : 0);
   }
 
-  const dataColsTotalWidth = colWidths.slice(1).reduce((a,b)=>a+b,0) + (n-1)*3; // account for ' | ' between data columns
+  const dataColsTotalWidth = colWidths.slice(1).reduce((a,b)=>a+b,0) + (n-1)*3;
 
   const lines = [];
 
@@ -2704,8 +2374,6 @@ function renderGroupPlainText(rows, n, dealIdRow){
   return lines.join('\n');
 }
 
-// data = {headerRows, groups}. Trades 4-6, if present, form a second block
-// stacked below the trades 1-3 block, separated by a blank line.
 function buildPlainText(data){
   const group1 = data.groups[0];
   const blocks = [renderGroupPlainText(data.headerRows.concat(group1.rows), group1.n, true)];
@@ -2716,10 +2384,6 @@ function buildPlainText(data){
   return blocks.join('\n\n');
 }
 
-/* ---- "Without BD source matching" output: a flat point-format list
-   (Label: value, one per line) instead of the bordered pipe-table — closer
-   to a plain email-style trade confirmation. COD is still included, just
-   without any of the BD Source Matching rows. ---- */
 function buildPointFormat(){
   const filled = parseInt(document.getElementById('trade-count').value,10);
   const lines = [];
@@ -2728,16 +2392,11 @@ function buildPointFormat(){
 
   lines.push({type:'title', text:'Details: Transaction Recap'});
   addBlank();
-  // The 5-digit sequence number isn't claimed until Save agreement succeeds,
-  // so opsDealId() before that point is just "trade count + alpha suffix" —
-  // showing that here would look like a real (and wrong) Deal ID.
   addField('Deal ID', currentDealDocId ? opsDealId() : 'Assigned once saved');
   addField('Date', fmtDate(val('h-date')));
   addField('Entity', val('h-entity'));
   addField('BD in-charge', val('h-bd'));
   addField(currentRole(), val('h-buyer'));
-  // Counterparty line: our own side is always "Saxon", shown with whichever
-  // role is the opposite of the agreement's Buyer/Seller above.
   addField(currentRole() === 'Seller' ? 'Buyer' : 'Seller', 'Saxon');
 
   for(let i=1;i<=filled;i++){
@@ -2786,12 +2445,6 @@ function buildPointFormatText(lines){
 
 let lastHtml = '', lastPlain = '';
 
-/* ---- Ops version validation ----
-   The Ops version table (with BD Source Matching) must not be generated with
-   gaps in it — every Details field (Deal ID through Transfer Account Name)
-   and every active trade's fields (Vintage through Special Remarks) must be
-   filled in. If anything is missing, generation is blocked and the person
-   sees exactly what's left to fill in, with the offending fields outlined. ---- */
 function isEmpty(id){
   const v = val(id);
   return !v || !v.trim();
@@ -2804,22 +2457,16 @@ function detailFieldDefs(requireDealId){
     {id:'h-bd', label:'BD in-charge'},
     {id:'h-buyer', label:currentRole()+' Name'},
     {id:'h-order', label:'Order type'},
-    // Required so the saved Deal ID (sequence number + trade count + these
-    // letters) is never all-digits — an all-numeric value gets silently
-    // reinterpreted as a number by Excel, dropping the leading zero.
     {id:'h-dealid-alpha', label:'Deal ID letters'}
   );
   return defs;
 }
-// A field is valid if it has a custom validator that passes, or (by default)
-// simply isn't blank.
 function fieldIsValid(f){
   const v = val(f.id);
   if(f.validate) return f.validate(v);
   return !!(v && v.trim());
 }
 function tradeFieldDefs(i){
-  // Fields to validate for a standard Trade section
   const baseDefs = [
     {ids:['t'+i+'-registry'], label:'Registry'},
     {ids:['t'+i+'-dealership'], label:'Dealership'},
@@ -2840,11 +2487,9 @@ function tradeFieldDefs(i){
 
   const matchingValue = val('t'+i+'-m-matching');
   if (matchingValue === 'Open Position') {
-    // If Open Position is selected, we do not require the hidden dependent matching fields (1-4).
     return baseDefs;
   }
 
-  // If anything other than 'Open Position' is selected, matching fields 1-4 are mandatory.
   return baseDefs.concat([
     {ids:['t'+i+'-m-name'], label:'1. Buyer/Seller name'},
     {ids:['t'+i+'-m-recs'], label:'2. No of RECs'},
@@ -2859,9 +2504,6 @@ function markMissing(key){
   const wrap = document.getElementById(key+'-wrap');
   if(wrap) wrap.classList.add('field-missing');
 }
-// Returns a list of {section, label} for every required field that's blank.
-// Also outlines the corresponding fields on the form as a side effect.
-// requireDealId is true for the Ops version; the Customer version doesn't need it.
 function validateVersion(requireDealId){
   clearMissingHighlights();
   const missing = [];
@@ -2895,7 +2537,6 @@ function showValidationWarning(missing, versionLabel){
 function hideValidationWarning(){
   document.getElementById('validation-warning').style.display = 'none';
 }
-// Clear a field's "missing" outline as soon as the person edits it.
 document.addEventListener('input', (e)=>{
   const wrap = e.target.closest('[id$="-wrap"]');
   if(wrap) wrap.classList.remove('field-missing');
@@ -2905,11 +2546,7 @@ document.addEventListener('change', (e)=>{
   if(wrap) wrap.classList.remove('field-missing');
 });
 
-// Validates and builds the preview. Returns true/false for which version was
-// built (Ops/Customer), or null if validation failed (warning already shown).
 function generateOutput(){
-  // Ops version has been removed — Customer version (point-format) is now
-  // the only output the form generates.
   const includeBD = false;
 
   const missing = validateVersion(includeBD);
@@ -2930,11 +2567,6 @@ function generateOutput(){
     document.getElementById('table-preview').innerHTML = lastHtml;
     lastPlain = buildPointFormatText(lines);
   }
-  // The "Deal ID" field itself stays blank until Save agreement actually
-  // claims one from the shared counter, so opsDealId() before that point is
-  // really just "trade count + alpha suffix" — showing that here in the
-  // card label would look like a real (and wrong) Deal ID. Only show the
-  // label once a real one exists.
   setPreviewDealIdLabel(currentDealDocId ? opsDealId() : '');
   setPreviewAgreementLink('');
   document.getElementById('copy-btn').style.display = currentDealDocId ? 'inline-block' : 'none';
@@ -2961,13 +2593,6 @@ document.getElementById('copy-btn').addEventListener('click', async ()=>{
   setTimeout(()=>{ status.style.display='none'; }, 2500);
 });
 
-/* ---- Save agreement: writes the confirmation into the shared SharePoint
-   log table under a temporary placeholder ----
-   No real Deal ID is assigned at this point — that only happens once a
-   Level 1 approver approves it (see assignFormalDealId / approveDeal). This
-   just claims a placeholder so the row can be tracked/locked, and never
-   reassigns it again for this agreement — it's the underlying row key from
-   here until Level 1 approves, at which point it's swapped for the real ID. */
 document.getElementById('save-agreement-btn').addEventListener('click', async ()=>{
   if(!currentAccount) return;
   const btn = document.getElementById('save-agreement-btn');
@@ -2976,12 +2601,10 @@ document.getElementById('save-agreement-btn').addEventListener('click', async ()
   note.style.display = 'none';
   try{
     const includeBD = generateOutput();
-    if(includeBD === null) return; // validation warning already shown
+    if(includeBD === null) return;
 
     if(!currentDealDocId){
       assignPendingDealId();
-      // Rebuild the preview now that currentDealDocId is set, so the "Deal
-      // ID" line reads "Pending Level 1 approval" instead of blank.
       generateOutput();
     }
 
@@ -2989,7 +2612,7 @@ document.getElementById('save-agreement-btn').addEventListener('click', async ()
     await saveConfirmationToHistory(includeBD, currentDealDocId, submittedDateIso);
     currentSubmittedDate = submittedDateIso;
     saveDraft();
-    await loadHistory(); // refresh logRowsCache so dealAlreadySubmitted() sees this deal
+    await loadHistory();
     await notifyNextApprover(STATUS_PENDING_1, currentDealDocId);
 
     note.textContent = 'Submitted — awaiting Level 1 approval. A Deal ID will be assigned once that approval happens, and you\'ll get an email then.';
