@@ -528,6 +528,13 @@ const SP_FILE_NAME = "BD Agreement Record.xlsx";
 // resolveWorkbook needs to change.
 const SP_FILE_SHARE_URL = "https://saxonrenewables.sharepoint.com/:x:/s/Operations/IQCIkW5tgJWPQJB1t7KiWT7KAaDp_pqoAmZigGQ9UbvBQME?e=dquVG0";
 const LOG_TABLE_NAME = "TradeDealLog";        // must match the Excel Table name you create
+// Separate sheet/table that mirrors every row of a deal the moment it
+// finishes Level 3 approval (i.e. the "Pending Level 3" -> "Approved"
+// transition). Create an Excel Table named exactly this on its own sheet,
+// with the same 43 columns/order as TradeDealLog (see below) — addTableRow
+// pads/truncates to whatever column count that table actually has, so it
+// still works even if you set it up with fewer columns.
+const APPROVED_TABLE_NAME = "Approved";
 // Column layout of the restructured TradeDealLog "main list" table.
 // One physical row per TRADE (a multi-trade agreement produces several rows
 // sharing the same Agreement ID). Create the Excel Table with these 43
@@ -1446,6 +1453,17 @@ async function approveDeal(dealId, file){
       values[MC.agreementFileUrl] = agreementInfo.webUrl;
     }
     await updateTableRow(LOG_TABLE_NAME, r.index, values);
+    // Final sign-off (Pending Level 3 -> Approved): also copy this row into
+    // the standalone "Approved" table/sheet. Best-effort — if that table
+    // hasn't been created yet in the workbook, log it but don't fail the
+    // approval itself, since the row is already safely updated above.
+    if(nextStatus === STATUS_APPROVED){
+      try{
+        await addTableRow(APPROVED_TABLE_NAME, values);
+      }catch(err){
+        console.error('Could not copy row into the "Approved" table — has it been created in the workbook?', err);
+      }
+    }
   }
   await notifyNextApprover(nextStatus, dealId);
   if(nextStatus === STATUS_APPROVED){
