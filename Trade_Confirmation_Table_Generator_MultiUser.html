@@ -1933,12 +1933,14 @@ function statusBadge(status){
   const color = s === STATUS_APPROVED ? '#1f7a4d' : (s === STATUS_REJECTED ? '#8a2d1f' : '#8a6d1f');
   return '<span style="font-weight:600;color:'+color+';">'+escapeHtml(s)+'</span>';
 }
-// Short "L1 ✓ name · L2 ✓ name" trail of whoever has signed off so far.
+// Short "L1 ✓ · L2 ✓ · L3 ✓" trail of whoever has signed off so far — the
+// email address itself is only shown as a hover tooltip (title attribute),
+// not printed inline, to keep the row compact.
 function approvalTrailText(v){
   const parts = [];
-  if(v[MC.approvedBy1]) parts.push('L1 ✓ '+v[MC.approvedBy1]);
-  if(v[MC.approvedBy2]) parts.push('L2 ✓ '+v[MC.approvedBy2]);
-  if(v[MC.approvedBy3]) parts.push('L3 ✓ '+v[MC.approvedBy3]);
+  if(v[MC.approvedBy1]) parts.push('<span title="'+escapeHtml(v[MC.approvedBy1])+'">L1 ✓</span>');
+  if(v[MC.approvedBy2]) parts.push('<span title="'+escapeHtml(v[MC.approvedBy2])+'">L2 ✓</span>');
+  if(v[MC.approvedBy3]) parts.push('<span title="'+escapeHtml(v[MC.approvedBy3])+'">L3 ✓</span>');
   return parts.join(' · ');
 }
 function renderHistoryTable(el, groups, opts){
@@ -1973,7 +1975,7 @@ function renderHistoryTable(el, groups, opts){
       '<td style="padding:6px;">'+escapeHtml(v[MC.company]||'')+'</td>' +
       '<td style="padding:6px;">'+g.rows.length+'</td>' +
       '<td style="padding:6px;">'+statusBadge(status)+
-        (trail ? '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">'+escapeHtml(trail)+'</div>' : '')+
+        (trail ? '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">'+trail+'</div>' : '')+
         agreementLink+
       '</td>' +
       '<td style="padding:6px;white-space:nowrap;">' +
