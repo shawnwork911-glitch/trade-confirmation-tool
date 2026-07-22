@@ -404,7 +404,7 @@
     <div class="output-header">
       <p class="card-title" style="margin:0;">Preview<span id="preview-dealid-label" style="font-weight:normal;color:var(--text-secondary);"></span></p>
       <span id="preview-agreement-link" style="font-size:13px;"></span>
-      <button id="copy-btn" class="secondary" style="display:none;" title="Save the agreement first so the copied table shows the real Deal ID">Copy table</button>
+      <button id="copy-btn" class="secondary" style="display:none;" title="Appears once Level 1 approves and a real Deal ID is assigned">Copy table</button>
     </div>
     <div id="table-preview"></div>
     <p id="copy-status">Copied — paste directly into your email.</p>
@@ -1238,6 +1238,23 @@ function formatDeliveryDateDMY(v){
   }
   return str;
 }
+// The Approved list's "Agreement Date" column is type Number, so Graph
+// requires an actual JSON number — not a "YYYY-MM-DD" string, and not a
+// numeric value wrapped in quotes. values[MC.agreementDate] can arrive as
+// either form (same Excel-serial-vs-ISO-string ambiguity as the date
+// helpers above), so this always resolves to a real number, or null if it
+// can't be parsed (Graph accepts null; it does not accept a bad string).
+function toAgreementDateNumber(v){
+  if(v === '' || v === null || v === undefined) return null;
+  const str = String(v).trim();
+  if(/^-?\d+(\.\d+)?$/.test(str)) return Number(str); // already an Excel serial
+  if(/^\d{4}-\d{2}-\d{2}/.test(str)){
+    const [y,m,d] = str.split('-').map(Number);
+    const serial = Math.round(Date.UTC(y, m-1, d) / 86400000) + 25569; // Unix epoch -> Excel serial
+    return isNaN(serial) ? null : serial;
+  }
+  return null;
+}
 async function getApprovedListColumnMap(){
   if(approvedListColumnMapCache) return approvedListColumnMapCache;
   const data = await graphFetch("/sites/" + siteId + "/lists/" + approvedListId + "/columns?$select=name,displayName,hidden,readOnly");
@@ -1272,7 +1289,7 @@ async function addApprovedDealToList(values){
     const desiredByDisplayName = {
         'Title': values[MC.salesPic],
         'Entity': values[MC.entity],
-        'Agreement Date': values[MC.agreementDate],
+        'Agreement Date': toAgreementDateNumber(values[MC.agreementDate]),
         'Agreement ID (Assigned to BD)': values[MC.dealId],
         'Supply/Demand': values[MC.supplyDemand],
         'Company': values[MC.company],
@@ -1625,7 +1642,8 @@ function lockSubmittedForm(dealId){
     document.getElementById('table-preview').innerHTML = lastHtml;
     setPreviewDealIdLabel(isPendingDealId(dealId) ? '' : displayId);
     setPreviewAgreementLink(row.values[0][MC.agreementFileUrl]);
-    document.getElementById('copy-btn').style.display = 'inline-block';
+    // Copy table stays hidden until Level 1 approval assigns a real Deal ID.
+    document.getElementById('copy-btn').style.display = isPendingDealId(dealId) ? 'none' : 'inline-block';
     document.getElementById('output-section').style.display = 'flex';
   }
 }
@@ -2183,7 +2201,7 @@ document.getElementById('header-fields').innerHTML =
   headerField('Buyer or Seller', selectHtml('h-role',['Buyer','Seller'],'Buyer'),'h-role') +
   headerField('Buyer Name', textHtml('h-buyer','Company name'),'h-buyer') +
   headerField('Order type', selectHtml('h-order',ORDER_TYPES,'Stock-In (T)'),'h-order') +
-  '<div id="h-description-wrap" style="grid-column:1 / -1;"><label for="h-description">Description (for Level 1 approver)</label>' +
+  '<div id="h-description-wrap" style="grid-column:1 / -1;"><label for="h-description">Content for Level 1 approval</label>' +
   '<textarea id="h-description" placeholder="Briefly describe this agreement, for whoever approves it — not shown to the customer"></textarea></div>';
 
 /* Keeps the "Buyer/Seller" field's on-screen label, "Transfer Account" label, and the generated table's
@@ -2980,7 +2998,7 @@ function detailFieldDefs(requireDealId){
     {id:'h-bd', label:'BD in-charge'},
     {id:'h-buyer', label:currentRole()+' Name'},
     {id:'h-order', label:'Order type'},
-    {id:'h-description', label:'Description (for Level 1 approver)'},
+    {id:'h-description', label:'Content for Level 1 approval'},
     // Required so the saved Deal ID (sequence number + trade count + these
     // letters) is never all-digits — an all-numeric value gets silently
     // reinterpreted as a number by Excel, dropping the leading zero.
@@ -3114,7 +3132,10 @@ function generateOutput(){
   // label once a real one exists.
   setPreviewDealIdLabel(currentDealDocId ? opsDealId() : '');
   setPreviewAgreementLink('');
-  document.getElementById('copy-btn').style.display = currentDealDocId ? 'inline-block' : 'none';
+  // Copy table stays hidden until Level 1 approval assigns a real Deal ID —
+  // currentDealDocId is only a "PND_" placeholder before that happens.
+  document.getElementById('copy-btn').style.display =
+    (currentDealDocId && !isPendingDealId(currentDealDocId)) ? 'inline-block' : 'none';
   document.getElementById('output-section').style.display = 'flex';
   document.getElementById('copy-status').style.display = 'none';
   document.getElementById('output-section').scrollIntoView({behavior:'smooth', block:'nearest'});
