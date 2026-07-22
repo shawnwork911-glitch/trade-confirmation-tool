@@ -1952,9 +1952,9 @@ function renderHistoryTable(el, groups, opts){
     el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">'+escapeHtml(opts.emptyText || 'No saved confirmations yet.')+'</p>';
     return;
   }
-  let html = '<table><tr>' + (showOwner ? '<th style="text-align:left;padding:6px;">Owner</th>' : '') +
+  let html = '<table><tr>' + (showOwner ? '<th style="text-align:left;padding:6px;">BD in-charge</th>' : '') +
     '<th style="text-align:left;padding:6px;">Deal ID</th>' +
-    '<th style="text-align:left;padding:6px;">Date</th>' +
+    '<th style="text-align:left;padding:6px;">Agreement Date</th>' +
     '<th style="text-align:left;padding:6px;">Counterparty</th>' +
     '<th style="text-align:left;padding:6px;">Trades</th>' +
     '<th style="text-align:left;padding:6px;">Status</th>' +
@@ -1969,8 +1969,8 @@ function renderHistoryTable(el, groups, opts){
       ? '<div style="font-size:11px;margin-top:2px;"><a href="'+escapeHtml(agreementUrl)+'" target="_blank" rel="noopener">📄 View agreement</a></div>'
       : '';
     html += '<tr style="border-top:1px solid var(--border);">' +
-      (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[MC.submittedBy]||'')+'</td>' : '') +
-      '<td style="padding:6px;">'+escapeHtml(friendlyDealId(v[MC.dealId]))+'</td>' +
+      (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[MC.salesPic]||'')+'</td>' : '') +
+      '<td style="padding:6px;">'+(isPendingDealId(v[MC.dealId]) ? '-' : escapeHtml(friendlyDealId(v[MC.dealId])))+'</td>' +
       '<td style="padding:6px;">'+escapeHtml(formatStoredDate(v[MC.agreementDate]))+'</td>' +
       '<td style="padding:6px;">'+escapeHtml(v[MC.company]||'')+'</td>' +
       '<td style="padding:6px;">'+g.rows.length+'</td>' +
@@ -2803,7 +2803,7 @@ function escapeHtml(s){
 function setPreviewDealIdLabel(dealId){
   const el = document.getElementById('preview-dealid-label');
   if(!el) return;
-  el.textContent = dealId ? ' — Deal ID: ' + dealId : '';
+  el.textContent = ' — Deal ID: ' + (dealId || '-');
 }
 function setPreviewAgreementLink(url){
   const el = document.getElementById('preview-agreement-link');
