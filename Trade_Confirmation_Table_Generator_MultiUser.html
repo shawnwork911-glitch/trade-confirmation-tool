@@ -379,9 +379,9 @@
     <div class="trade-count-row">
       <label style="margin:0;">Number of trades</label>
       <select id="trade-count">
-        <option value="1">1</option>
+        <option value="1" selected>1</option>
         <option value="2">2</option>
-        <option value="3" selected>3</option>
+        <option value="3">3</option>
         <option value="4">4</option>
         <option value="5">5</option>
         <option value="6">6</option>
@@ -1544,7 +1544,7 @@ async function saveDraft(){
 }
 function applyDraftData(data){
   suppressAutosave = true;
-  document.getElementById('trade-count').value = data.tradeCount || '3';
+  document.getElementById('trade-count').value = data.tradeCount || '1';
   renderTrades();
   Object.keys(data.allValues || {}).forEach(id=>{
     const el = document.getElementById(id);
