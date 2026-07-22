@@ -1240,26 +1240,40 @@ function formatDeliveryDateDMY(v){
   }
   return str;
 }
-// The Approved list's "Agreement Date" column is type Number, so Graph
-// requires an actual JSON number — not a "YYYY-MM-DD" string, and not a
-// numeric value wrapped in quotes. values[MC.agreementDate] can arrive as
-// either form (same Excel-serial-vs-ISO-string ambiguity as the date
-// helpers above), so this always resolves to a real number, or null if it
-// can't be parsed (Graph accepts null; it does not accept a bad string).
-function toAgreementDateNumber(v){
-  if(v === '' || v === null || v === undefined) return null;
-  const str = String(v).trim();
-  if(/^-?\d+(\.\d+)?$/.test(str)) return Number(str); // already an Excel serial
-  if(/^\d{4}-\d{2}-\d{2}/.test(str)){
-    const [y,m,d] = str.split('-').map(Number);
-    const serial = Math.round(Date.UTC(y, m-1, d) / 86400000) + 25569; // Unix epoch -> Excel serial
-    return isNaN(serial) ? null : serial;
+// Generic value coercion for whatever type the Approved list's column
+// actually is, based on Graph's column schema (see getApprovedListColumnMap
+// below) — this replaces guessing per-field which columns are Number vs
+// Text vs Date, and fixes the root cause of "invalidRequest / badArgument"
+// errors: Graph rejects e.g. a "YYYY-MM-DD" string for a Number column, or
+// a bare date (no time) for some DateTime column configurations.
+function coerceForColumnType(raw, colType){
+  if(raw === '' || raw === null || raw === undefined) return null;
+  const str = String(raw).trim();
+  if(colType === 'number'){
+    if(/^-?\d+(\.\d+)?$/.test(str)) return Number(str); // plain number or Excel serial
+    if(/^\d{4}-\d{2}-\d{2}/.test(str)){
+      // date-like string landing on a Number column -> Excel serial date
+      const [y,m,d] = str.split('-').map(Number);
+      const serial = Math.round(Date.UTC(y, m-1, d) / 86400000) + 25569; // Unix epoch -> Excel serial
+      return isNaN(serial) ? null : serial;
+    }
+    return null; // not parseable as a number — send null rather than a bad string
   }
-  return null;
+  if(colType === 'dateTime'){
+    if(/^\d{4}-\d{2}-\d{2}$/.test(str)) return str + 'T00:00:00Z';
+    if(/^-?\d+(\.\d+)?$/.test(str)){
+      // Excel serial date -> ISO 8601
+      const ms = Math.round((Number(str) - 25569) * 86400 * 1000);
+      const d = new Date(ms);
+      return isNaN(d.getTime()) ? null : d.toISOString();
+    }
+    return str; // already ISO-ish, or unparseable — pass through as-is
+  }
+  return raw; // text/choice/boolean/etc — send as given
 }
 async function getApprovedListColumnMap(){
   if(approvedListColumnMapCache) return approvedListColumnMapCache;
-  const data = await graphFetch("/sites/" + siteId + "/lists/" + approvedListId + "/columns?$select=name,displayName,hidden,readOnly");
+  const data = await graphFetch("/sites/" + siteId + "/lists/" + approvedListId + "/columns?$select=name,displayName,hidden,readOnly,text,number,dateTime,boolean,choice");
   const map = {};
   (data.value || []).forEach(col => {
     // SharePoint lists carry extra hidden/computed columns that piggyback
@@ -1271,7 +1285,11 @@ async function getApprovedListColumnMap(){
     // like `Field 'LinkTitleNoMenu' is read-only`. Skipping anything
     // hidden or read-only ensures only the genuine, writable column wins.
     if(col.hidden || col.readOnly) return;
-    map[col.displayName] = col.name;
+    let type = 'text';
+    if(col.number) type = 'number';
+    else if(col.dateTime) type = 'dateTime';
+    else if(col.boolean) type = 'boolean';
+    map[col.displayName] = { name: col.name, type };
   });
   approvedListColumnMapCache = map;
   return map;
@@ -1287,11 +1305,12 @@ async function addApprovedDealToList(values){
     // Keyed by the column's DISPLAY name, i.e. what you actually see as the
     // header in the "Approved" list. Add a line here any time a new column
     // is added to that list and should be populated on approval — no need
-    // to know or guess its internal name.
+    // to know or guess its internal name or type; coerceForColumnType()
+    // adapts the value to whatever type Graph reports for that column.
     const desiredByDisplayName = {
         'Title': values[MC.salesPic],
         'Entity': values[MC.entity],
-        'Agreement Date': toAgreementDateNumber(values[MC.agreementDate]),
+        'Agreement Date': values[MC.agreementDate],
         'Agreement ID (Assigned to BD)': values[MC.dealId],
         'Supply/Demand': values[MC.supplyDemand],
         'Company': values[MC.company],
@@ -1328,9 +1347,9 @@ async function addApprovedDealToList(values){
     const fields = {};
     const skipped = [];
     Object.keys(desiredByDisplayName).forEach(displayName => {
-        const internalName = columnMap[displayName];
-        if(internalName){
-            fields[internalName] = desiredByDisplayName[displayName];
+        const col = columnMap[displayName];
+        if(col){
+            fields[col.name] = coerceForColumnType(desiredByDisplayName[displayName], col.type);
         } else {
             skipped.push(displayName);
         }
@@ -1339,16 +1358,23 @@ async function addApprovedDealToList(values){
         console.warn('"' + APPROVED_LIST_NAME + '" list has no column matching these labels — skipped: ' + skipped.join(', '));
     }
 
-    await graphFetch(
-        "/sites/" + siteId +
-        "/lists/" + approvedListId +
-        "/items",
+    try{
+        await graphFetch(
+            "/sites/" + siteId +
+            "/lists/" + approvedListId +
+            "/items",
         {
             method:"POST",
             body:JSON.stringify({ fields })
         }
     );
-
+    }catch(err){
+        // Annotate with exactly what was sent so a failure here is diagnosable
+        // from the error alone, without needing another round of screenshots —
+        // the caller (approveDeal) surfaces err.message directly to the user.
+        err.message = (err.message || String(err)) + '\n\nFields sent: ' + JSON.stringify(fields);
+        throw err;
+    }
 }
 // Caches how many columns the live Excel Table actually has right now, so
 // row writes can be shaped to match — this is what keeps saves working even
@@ -1781,8 +1807,10 @@ async function approveDeal(dealId, file){
   if(file){
     agreementInfo = await uploadAgreementFile(assignedDealId || dealId, file);
   }
-  let approvedListError = null;
+  const approvedListErrors = []; // one entry per trade row that failed to copy, not just the last
+  let tradeNum = 0;
   for(const r of matching){
+    tradeNum++;
     const values = r.values[0].slice();
     if(assignedDealId){
       values[MC.dealId] = assignedDealId;
@@ -1802,14 +1830,16 @@ async function approveDeal(dealId, file){
     // above has already been safely updated, so we don't want to fail the
     // whole approval. But the person taking the approval action should
     // actually SEE that it failed, instead of it only showing up in the
-    // browser console — so the error is captured here and surfaced via
-    // alert() once the loop and the rest of the approval flow finish below.
+    // browser console — so every failure (not just the last one) is
+    // captured here and surfaced via alert() once the loop and the rest of
+    // the approval flow finish below. A multi-trade deal writes one row per
+    // trade, and each write can fail independently of the others.
     if(nextStatus === STATUS_APPROVED){
       try{
         await addApprovedDealToList(values);
       }catch(err){
-        console.error('Could not copy row into the "Approved" list — check that its column internal names match what this app sends (see the fields{} object in addApprovedDealToList).', err);
-        approvedListError = err;
+        console.error('Could not copy Trade ' + tradeNum + ' into the "Approved" list — check that its column internal names match what this app sends (see the fields{} object in addApprovedDealToList).', err);
+        approvedListErrors.push('Trade ' + tradeNum + ': ' + err.message);
       }
     }
   }
@@ -1822,16 +1852,17 @@ async function approveDeal(dealId, file){
     await notifyDealIdAssigned(assignedDealId, matching[0].values[0][MC.submittedBy]);
   }
   await loadHistory();
-  if(approvedListError){
+  if(approvedListErrors.length){
     // Deliberately a plain alert() rather than routing through the
     // approve/reject modal's inline error box: this can fire from either
     // the modal path (Level 2) or the plain confirm() path (Level 1/3), and
     // by this point the approval itself has already succeeded and been
     // saved — this is a secondary, non-blocking notice, not a failure of
     // the action the person just took.
-    alert('This deal was approved successfully, but copying it into the "Approved" SharePoint list failed:\n\n' +
-      approvedListError.message +
-      '\n\nThe approval itself is saved — this only affects the separate "Approved" list. Check that the list\'s column internal names match what the app sends (see addApprovedDealToList in the code), then ask an admin to fix the mismatch.');
+    alert('This deal was approved successfully, but copying ' + approvedListErrors.length + ' of ' + matching.length +
+      ' trade row(s) into the "Approved" SharePoint list failed:\n\n' +
+      approvedListErrors.join('\n\n') +
+      '\n\nThe approval itself is saved — this only affects the separate "Approved" list. Check that the list\'s column internal names/types match what the app sends (see addApprovedDealToList in the code), then ask an admin to fix the mismatch and re-copy the missing trade(s).');
   }
 }
 /* Rejects a deal at whatever stage it's currently pending at, recording who
