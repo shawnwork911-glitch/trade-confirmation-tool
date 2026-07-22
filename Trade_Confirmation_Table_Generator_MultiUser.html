@@ -348,7 +348,7 @@
     <span>Signed in as <strong id="user-email-label"></strong><span id="user-role-label"></span></span>
     <div class="right">
       <span id="draft-status"></span>
-      <button type="button" id="new-confirmation-btn" class="secondary">New confirmation</button>
+      <button type="button" id="new-confirmation-btn" class="secondary">New Agreement</button>
       <button type="button" id="signout-btn" class="secondary">Sign out</button>
     </div>
   </div>
@@ -1582,7 +1582,7 @@ async function loadDraftAndHistory(){
     draftRowIndex = mine ? mine.index : null;
     if(mine){
       try{ applyDraftData(JSON.parse(mine.values[0][1])); setDraftStatus('Draft loaded'); }
-      catch(e){ console.error('Draft could not be read', e); setDraftStatus('Draft could not be read — ' + e.message); }
+      catch(e){ console.error('Draft could not be read', e); setDraftStatus('Draft retrieve error, please press New Agreement to start.'); }
     }else{
       setDraftStatus('New draft — Deal ID is assigned once Level 1 approves your saved agreement.');
     }
@@ -1653,7 +1653,7 @@ function lockSubmittedForm(dealId){
     ' has been submitted (status: ' + escapeHtml(status || STATUS_PENDING_1) +
     ') and can no longer be edited — it is locked permanently, even if it\'s rejected.</strong> ' +
     (isPendingDealId(dealId) ? 'A Deal ID will be assigned once Level 1 approves, and you\'ll get an email then. ' : '') +
-    'To submit a new agreement, use "New confirmation" above — it will get its own Deal ID.';
+    'To submit a new agreement, use "New Agreement" above — it will get its own Deal ID.';
   banner.style.display = 'block';
 
   // "Generate table" is gone once locked (nothing left to regenerate), so
@@ -1690,7 +1690,7 @@ document.addEventListener('change', ()=>{
 
 document.getElementById('new-confirmation-btn').addEventListener('click', async ()=>{
   if(!currentAccount) return;
-  if(!confirm('Start a new confirmation? Locked fields are kept; unlocked fields clear. This new agreement will get its own Deal ID once Level 1 approves it. Your saved history is not affected.')) return;
+  if(!confirm('Start a new agreement? Locked fields are kept; unlocked fields clear. This new agreement will get its own Deal ID once Level 1 approves it. Your saved history is not affected.')) return;
   try{
     if(draftRowIndex !== null) await deleteTableRow(DRAFT_TABLE_NAME, draftRowIndex);
   }catch(err){ console.error('Could not clear draft row', err); }
@@ -1713,7 +1713,7 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
   const rows = await getTableRows(LOG_TABLE_NAME);
   const existingRows = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
   if(existingRows.length){
-    throw new Error((isPendingDealId(dealId) ? 'This agreement' : 'Deal ID ' + dealId) + ' has already been submitted and cannot be resaved. Start a New confirmation instead.');
+    throw new Error((isPendingDealId(dealId) ? 'This agreement' : 'Deal ID ' + dealId) + ' has already been submitted and cannot be resaved. Start a New Agreement instead.');
   }
   const nowIso = submittedDateIso || new Date().toISOString();
   const tradeCount = parseInt(document.getElementById('trade-count').value, 10) || 1;
