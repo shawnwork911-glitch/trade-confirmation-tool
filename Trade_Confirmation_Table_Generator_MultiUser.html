@@ -1433,25 +1433,20 @@ async function addApprovedDealToList(values){
         console.warn('"' + APPROVED_LIST_NAME + '" list has no column matching these labels — skipped: ' + skipped.join(', '));
     }
 
-    // If this trade was already copied into the "Approved" list once (a
-    // normal full approval), its item ID is on file — update that same
-    // item in place. This is what makes a later matching-info correction
-    // overwrite the existing "Approved" list row instead of adding a
-    // duplicate one when it's re-approved at Level 3.
-    const existingItemId = values[MC.approvedListItemId];
+    // Always create a brand-new "Approved" list item for every approval —
+    // including a matching-info correction being re-approved at Level 3.
+    // Deliberately NOT patching a prior item by its stored
+    // "Approved List Item Id" here: that used to make a correction
+    // overwrite the earlier "Approved" list row, which erased the history
+    // of what the deal looked like before. Every approval event (original
+    // or corrected) now gets its own separate, permanent list item —
+    // "Row Uid" (below) still carries the same stable value across all of
+    // them, which is what lets the "Approved list with matched" Power
+    // Automate flow keep matching them to the one right row in the Master
+    // Folder file and overwrite it there — the Master Folder file is
+    // meant to always reflect just the latest version; this list, like
+    // TradeDealLog, is meant to keep every version.
     try{
-        if(existingItemId){
-            await graphFetch(
-                "/sites/" + siteId +
-                "/lists/" + approvedListId +
-                "/items/" + existingItemId + "/fields",
-            {
-                method:"PATCH",
-                body:JSON.stringify(fields)
-            }
-        );
-            return existingItemId;
-        }
         const created = await graphFetch(
             "/sites/" + siteId +
             "/lists/" + approvedListId +
@@ -2091,6 +2086,7 @@ async function resubmitMatchingInfo(dealId, edits){
   if(String(matching[0].values[0][MC.submittedBy] || '').toLowerCase() !== myEmail){
     throw new Error('Only the original submitter can correct this agreement\'s matching info.');
   }
+  const nowIso = new Date().toISOString();
   const changeLines = []; // one entry per trade that actually changed, for the email
   let tradeNum = 0;
   for(const r of matching){
@@ -2123,6 +2119,23 @@ async function resubmitMatchingInfo(dealId, edits){
     // Approved sign-off instead of nuking the whole deal.
     values[MC.matchingEditNote] = 'Trade ' + tradeNum + ' — ' + changeText;
     changeLines.push('Trade ' + tradeNum + ': ' + changeText);
+    // Preserve full history: before overwriting the active row with the
+    // correction, permanently archive exactly what it looked like right
+    // before this edit as a brand-new row appended at the end of the
+    // table. It's tagged with a distinct Deal ID (a " (superseded ...)"
+    // suffix) so it's never picked up by the `rows.filter(dealId === ...)`
+    // lookups used everywhere else in the app (approve/reject/history/
+    // matching), and given a fresh rowUid so it can never be confused with
+    // the live row by resolveLogRowIndexByUid. The live row below keeps
+    // its original rowUid — that's what stays constant across edits and is
+    // what lets the Master Folder file's row still get found and
+    // overwritten in place; TradeDealLog itself, like this, never loses a
+    // version.
+    const archived = oldV.slice();
+    archived[MC.dealId] = String(oldV[MC.dealId] || '') + ' (superseded ' + nowIso + ')';
+    archived[MC.rowUid] = genRowUid();
+    archived[MC.matchingEditNote] = 'Superseded by a matching-info correction — see the current "' + dealId + '" row for the latest version.';
+    await addTableRow(LOG_TABLE_NAME, archived);
     await updateTableRow(LOG_TABLE_NAME, await resolveLogRowIndexByUid(oldV[MC.rowUid], r.index), values);
   }
   if(!changeLines.length){
