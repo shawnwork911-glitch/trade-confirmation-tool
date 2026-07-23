@@ -1154,7 +1154,7 @@ async function graphFetch(path, options){
     // Excel sessions expire after ~5 min idle (or a longer hard cap) — if a
     // workbook call reports the session is gone, get a fresh one and retry
     // rather than surfacing an error the person can't do anything about.
-    const sessionExpired = isWorkbookCall && /InvalidSessionError|SessionNotFound/i.test(text);
+    const sessionExpired = isWorkbookCall && /InvalidSession|SessionNotFound/i.test(text);
     if(sessionExpired && !isLastAttempt){
       await createWorkbookSession();
       continue;
