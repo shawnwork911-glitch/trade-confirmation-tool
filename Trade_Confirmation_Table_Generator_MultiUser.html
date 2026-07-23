@@ -1405,7 +1405,15 @@ async function addApprovedDealToList(values){
         'Delivery Date': values[MC.deliveryDateM],
         'Status': values[MC.status],
         'Submitted By': values[MC.submittedBy],
-        'Submitted Date': values[MC.submittedDate]
+        'Submitted Date': values[MC.submittedDate],
+        // Row Uid: the same stable UID already stamped on this row in
+        // TradeDealLog (see MC.rowUid / genRowUid). Sending it here is what
+        // lets the "Approved list with matched" flow match this list item
+        // back to its one exact row in the master file's SingleTrade table
+        // (via the empty "ID" column there) instead of the old 13-field
+        // match. Requires a "Row Uid" text column on this list — same
+        // pattern as the TradeDealLog fix.
+        'Row Uid': values[MC.rowUid]
         // Agreement File: no matching column on this list — intentionally
         // left out rather than sent-and-skipped. Add a line here (with the
         // exact display name) if a column for it is ever created.
