@@ -1289,6 +1289,30 @@ function patchDealIdInGeneratedHtml(html, dealId){
 // depending on how Excel chose to store it) — but this one always outputs
 // DD-MM-YYYY (dashes, 4-digit year), which is what the Approved list's
 // "Delivery Date" column expects.
+// Values read back from the log for a date-like field can be an Excel
+// serial number, an ISO "YYYY-MM-DD"(-ish) string, or a "DD-MM-YYYY"
+// display string (same ambiguity as formatStoredDate/formatDeliveryDateDMY
+// above) — but a native <input type="date"> will only accept an exact
+// "YYYY-MM-DD" value and silently blanks itself on anything else. This
+// normalizes any of those stored shapes into that exact format so the
+// "Edit matching info" modal's delivery date field pre-fills correctly.
+function toDateInputValue(v){
+  if(v === '' || v === null || v === undefined) return '';
+  const str = String(v).trim();
+  if(/^\d{4}-\d{2}-\d{2}/.test(str)) return str.slice(0,10);
+  if(/^-?\d+(\.\d+)?$/.test(str)){
+    const ms = Math.round((Number(str) - 25569) * 86400 * 1000); // Excel serial date epoch -> Unix epoch
+    const d = new Date(ms);
+    if(isNaN(d.getTime())) return '';
+    const dd = String(d.getUTCDate()).padStart(2,'0');
+    const mm = String(d.getUTCMonth()+1).padStart(2,'0');
+    const yyyy = d.getUTCFullYear();
+    return yyyy+'-'+mm+'-'+dd;
+  }
+  const m = str.match(/^(\d{2})[-\/](\d{2})[-\/](\d{4})$/); // DD-MM-YYYY or DD/MM/YYYY
+  if(m) return m[3]+'-'+m[2]+'-'+m[1];
+  return '';
+}
 function formatDeliveryDateDMY(v){
   if(v === '' || v === null || v === undefined) return '';
   const str = String(v).trim();
@@ -2457,7 +2481,7 @@ function editMatchingRowHtml(rowIndex, v, tradeLabel){
           '</div>'+
         '</div>'+
         '<div><label for="em-'+rowIndex+'-deal">3. From which deal</label><div id="em-'+rowIndex+'-deal-field">'+dealField.fieldHtml+'</div></div>'+
-        '<div><label for="em-'+rowIndex+'-ddate">4. Delivery date</label><input type="date" id="em-'+rowIndex+'-ddate" value="'+escapeHtml(v[MC.deliveryDateM]||'')+'"></div>'+
+        '<div><label for="em-'+rowIndex+'-ddate">4. Delivery date</label><input type="date" id="em-'+rowIndex+'-ddate" value="'+escapeHtml(toDateInputValue(v[MC.deliveryDateM]))+'"></div>'+
       '</div>'+
     '</div>'+
   '</div>';
