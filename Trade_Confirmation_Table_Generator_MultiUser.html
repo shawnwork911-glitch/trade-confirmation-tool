@@ -1709,6 +1709,7 @@ function applyDraftData(data){
     const dealEl = document.getElementById('t'+i+'-m-deal');
     if(dealEl && data.allValues && data.allValues['t'+i+'-m-deal'] !== undefined) dealEl.value = data.allValues['t'+i+'-m-deal'];
     handleMatchingChange(i);
+    updateTechExclusivity(i);
   }
   updateBuyerSellerFieldLabel();
   updateTransferAccountLabels();
@@ -2829,6 +2830,7 @@ function syncTechCheckboxesFromHidden(n){
     const cb = document.getElementById('t'+n+'-tech-'+t);
     if(cb) cb.checked = active.has(t);
   });
+  updateTechExclusivity(n);
 }
 // Restores saved values/lock state for every lockable field found inside `container`.
 // Safe to call repeatedly (e.g. every time trade blocks are re-rendered).
@@ -2988,9 +2990,36 @@ function updateTechField(n){
   });
   hidden.value = checked.join('/');
 }
+// "ANY" means "any technology" and doesn't combine with specific techs, so
+// it's mutually exclusive with the rest: ticking ANY clears and disables
+// every other tech box, and ticking any other tech box clears and disables
+// ANY. Safe to call any time checkbox states change, including after a
+// programmatic restore (draft load, field-lock restore).
+function updateTechExclusivity(n){
+  const anyCb = document.getElementById('t'+n+'-tech-ANY');
+  const otherCbs = TECHS.filter(t=>t!=='ANY').map(t=>document.getElementById('t'+n+'-tech-'+t)).filter(Boolean);
+  if(!anyCb) return;
+  const otherChecked = otherCbs.some(cb=>cb.checked);
+  otherCbs.forEach(cb=>{ cb.disabled = anyCb.checked; });
+  anyCb.disabled = otherChecked;
+}
 document.addEventListener('change', (e)=>{
   if(e.target && e.target.classList && e.target.classList.contains('tech-checkbox')){
-    updateTechField(e.target.dataset.trade);
+    const n = e.target.dataset.trade;
+    if(e.target.checked){
+      if(e.target.dataset.tech === 'ANY'){
+        TECHS.forEach(t=>{
+          if(t === 'ANY') return;
+          const cb = document.getElementById('t'+n+'-tech-'+t);
+          if(cb) cb.checked = false;
+        });
+      } else {
+        const anyCb = document.getElementById('t'+n+'-tech-ANY');
+        if(anyCb) anyCb.checked = false;
+      }
+    }
+    updateTechExclusivity(n);
+    updateTechField(n);
   }
 });
 
