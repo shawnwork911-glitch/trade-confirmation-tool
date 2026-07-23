@@ -616,6 +616,23 @@ const STATUS_PENDING_2 = "Pending Level 2";
 const STATUS_PENDING_3 = "Pending Level 3";
 const STATUS_APPROVED = "Approved";
 const STATUS_REJECTED = "Rejected";
+// Every trade row in a deal normally shares one status, EXCEPT while a
+// matching-info correction is in flight: resubmitMatchingInfo() only sends
+// the actually-edited trade(s) back to Pending Level 3 and leaves the rest
+// sitting at Approved untouched. dealStatus() picks whichever status is
+// "least finished" across the deal's rows, so the deal is shown/actioned as
+// still needing attention until that correction is resolved one way or
+// another. In the normal (all-rows-match) case this is just that status.
+const STATUS_PRECEDENCE = [STATUS_PENDING_1, STATUS_PENDING_2, STATUS_PENDING_3, STATUS_REJECTED, STATUS_APPROVED];
+function dealStatus(rows){
+  let best = null, bestRank = -1;
+  rows.forEach(r=>{
+    const s = r.values[0][MC.status] || STATUS_PENDING_1;
+    const rank = STATUS_PRECEDENCE.indexOf(s);
+    if(best === null || rank < bestRank){ best = s; bestRank = rank; }
+  });
+  return best || STATUS_PENDING_1;
+}
 
 /* ---- Deal ID is now only assigned once Level 1 approval happens ----
    Before that, a submitted agreement is tracked internally with a temporary
@@ -973,6 +990,30 @@ async function notifySubmitter(status, dealId, submitterEmail, reason){
     await sendMailGraph([email], subject, html);
   }catch(err){
     console.error('Outcome notification email failed', err);
+  }
+}
+
+// Emails the submitter when a matching-info correction (resubmitMatchingInfo)
+// is rejected at Level 3 on an otherwise-Approved deal. Distinct from
+// notifySubmitter, which is for a whole deal being rejected/locked — here
+// the deal itself is untouched and stays Approved; only the correction
+// didn't go through.
+async function notifyCorrectionRejected(dealId, submitterEmail, reason){
+  const email = (submitterEmail || '').trim();
+  if(!email){
+    console.warn('No submitter email on file — skipping correction-rejected notification for Deal ID ' + dealId);
+    return;
+  }
+  const link = dealDeepLink(dealId);
+  const displayId = friendlyDealId(dealId);
+  const label = isPendingDealId(dealId) ? 'Your agreement (' + escapeHtml(displayId) + ')' : 'Deal ID <strong>' + escapeHtml(displayId) + '</strong>';
+  const html = '<p>' + label + ' — your matching info correction was rejected at Level 3. The affected trade\'s prior approval stands unchanged; nothing else about the deal was touched.</p>' +
+    (reason ? '<p><strong>Reason:</strong> ' + escapeHtml(reason) + '</p>' : '') +
+    '<p><a href="' + link + '">View it in the Trade Confirmation app</a></p>';
+  try{
+    await sendMailGraph([email], 'Correction rejected — ' + (isPendingDealId(dealId) ? 'agreement' : displayId), html);
+  }catch(err){
+    console.error('Correction-rejected notification email failed', err);
   }
 }
 
@@ -1645,9 +1686,10 @@ function dealAlreadySubmitted(dealId){
   return myRowsBySubmissionRef().length > 0;
 }
 function submittedDealStatus(dealId){
-  let row = logRowsCache.find(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
-  if(!row) row = myRowsBySubmissionRef()[0];
-  return row ? (row.values[0][MC.status] || STATUS_PENDING_1) : null;
+  const dealRows = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  if(dealRows.length) return dealStatus(dealRows);
+  const mine = myRowsBySubmissionRef();
+  return mine.length ? (mine[0].values[0][MC.status] || STATUS_PENDING_1) : null;
 }
 function checkSubmittedLock(){
   // Resync currentDealDocId if Level 1 has since assigned the real Deal ID
@@ -1798,7 +1840,7 @@ async function approveDeal(dealId, file){
   const rows = await getTableRows(LOG_TABLE_NAME);
   const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
   if(!matching.length) return;
-  const currentStatus = matching[0].values[0][MC.status];
+  const currentStatus = dealStatus(matching);
   if(!canActOnStatus(currentStatus)) throw new Error('You are not able to approve this deal at its current stage.');
   const nowIso = new Date().toISOString();
   let nextStatus, byCol, dateCol;
@@ -1832,6 +1874,11 @@ async function approveDeal(dealId, file){
   let tradeNum = 0;
   for(const r of matching){
     tradeNum++;
+    const rowStatus = r.values[0][MC.status] || STATUS_PENDING_1;
+    // A partial matching-info correction can leave some trades in this deal
+    // already at Approved while only the corrected trade(s) sit at
+    // currentStatus — only advance the ones actually waiting at this stage.
+    if(rowStatus !== currentStatus) continue;
     const values = r.values[0].slice();
     if(assignedDealId){
       values[MC.dealId] = assignedDealId;
@@ -1897,18 +1944,38 @@ async function rejectDeal(dealId, reason){
   const rows = await getTableRows(LOG_TABLE_NAME);
   const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
   if(!matching.length) return;
-  const currentStatus = matching[0].values[0][MC.status];
+  const currentStatus = dealStatus(matching);
   if(!canActOnStatus(currentStatus)) throw new Error('You are not able to reject this deal at its current stage.');
   const nowIso = new Date().toISOString();
+  // If the deal already has other trades sitting at Approved, this
+  // "Pending Level 3" is only a matching-info correction on top of an
+  // otherwise-approved agreement (see resubmitMatchingInfo) — rejecting it
+  // should undo just the correction, not blow away the whole deal's
+  // approval and lock it permanently.
+  const isPartialCorrection = currentStatus === STATUS_PENDING_3 &&
+    matching.some(r => (r.values[0][MC.status] || '') === STATUS_APPROVED);
   for(const r of matching){
+    const rowStatus = r.values[0][MC.status] || STATUS_PENDING_1;
+    if(rowStatus !== currentStatus) continue; // e.g. trades an in-flight correction left at Approved
     const values = r.values[0].slice();
-    values[MC.status] = STATUS_REJECTED;
-    values[MC.rejectedBy] = currentAccount.username;
-    values[MC.rejectedDate] = nowIso;
-    values[MC.rejectReason] = trimmedReason;
+    if(isPartialCorrection){
+      // Revert — this trade's prior Level 3 sign-off (never cleared by
+      // resubmitMatchingInfo) still stands, so it just goes back to normal.
+      values[MC.status] = STATUS_APPROVED;
+      values[MC.matchingEditNote] = 'Correction rejected by ' + currentAccount.username + ': ' + trimmedReason;
+    } else {
+      values[MC.status] = STATUS_REJECTED;
+      values[MC.rejectedBy] = currentAccount.username;
+      values[MC.rejectedDate] = nowIso;
+      values[MC.rejectReason] = trimmedReason;
+    }
     await updateTableRow(LOG_TABLE_NAME, r.index, values);
   }
-  await notifySubmitter(STATUS_REJECTED, dealId, matching[0].values[0][MC.submittedBy], trimmedReason);
+  if(isPartialCorrection){
+    await notifyCorrectionRejected(dealId, matching[0].values[0][MC.submittedBy], trimmedReason);
+  } else {
+    await notifySubmitter(STATUS_REJECTED, dealId, matching[0].values[0][MC.submittedBy], trimmedReason);
+  }
   await loadHistory();
 }
 // Builds a plain-English "what changed" line for one trade row, comparing
@@ -1959,6 +2026,12 @@ async function resubmitMatchingInfo(dealId, edits){
     if(!edit) continue;
     const oldV = r.values[0];
     const changeText = describeMatchingChange(oldV, edit);
+    // Nothing actually changed on this trade — skip it entirely. Its row is
+    // left exactly as-is: no write, no status change, no cleared L3 sign-off.
+    // This is what lets a deal with several trades go back for re-approval
+    // on just the one trade that was corrected, instead of the whole
+    // agreement.
+    if(!changeText) continue;
     const values = oldV.slice();
     values[MC.matching] = edit.matching;
     values[MC.buyerSeller] = edit.buyerSeller;
@@ -1966,17 +2039,22 @@ async function resubmitMatchingInfo(dealId, edits){
     values[MC.whichDeal] = edit.whichDeal;
     values[MC.deliveryDateM] = edit.deliveryDateM;
     values[MC.status] = STATUS_PENDING_3;
-    // Level 3 needs to sign off again on the corrected info — clear its
-    // previous sign-off. Level 1 and Level 2 stay as they were.
-    values[MC.approvedBy3] = '';
-    values[MC.approvedDate3] = '';
-    values[MC.matchingEditNote] = changeText ? ('Trade ' + tradeNum + ' — ' + changeText) : '';
-    if(changeText) changeLines.push('Trade ' + tradeNum + ': ' + changeText);
+    // Level 3 needs to sign off again on the corrected info. Deliberately
+    // NOT clearing approvedBy3/approvedDate3 here (unlike before) — they're
+    // kept as a fallback so that if this correction is later rejected,
+    // rejectDeal() can revert this trade straight back to its prior
+    // Approved sign-off instead of nuking the whole deal.
+    values[MC.matchingEditNote] = 'Trade ' + tradeNum + ' — ' + changeText;
+    changeLines.push('Trade ' + tradeNum + ': ' + changeText);
     await updateTableRow(LOG_TABLE_NAME, r.index, values);
   }
-  const changeSummary = changeLines.length
-    ? changeLines.join('\n')
-    : 'No matching fields were actually changed.';
+  if(!changeLines.length){
+    // Nothing changed on any trade — nothing was written, nothing to send
+    // back for re-approval.
+    await loadHistory();
+    return;
+  }
+  const changeSummary = changeLines.join('\n');
   await notifyNextApprover(STATUS_PENDING_3, dealId, matching[0].values[0][MC.description], changeSummary);
   await loadHistory();
 }
@@ -2007,7 +2085,7 @@ async function loadHistory(){
         .sort((a,b)=> String(b.rows[0].values[0][MC.submittedDate]||'').localeCompare(String(a.rows[0].values[0][MC.submittedDate]||'')));
 
       const queueEl = document.getElementById('approval-queue-list');
-      const queueGroups = allGroups.filter(g => canActOnStatus(g.rows[0].values[0][MC.status] || STATUS_PENDING_1));
+      const queueGroups = allGroups.filter(g => canActOnStatus(dealStatus(g.rows)));
       renderHistoryTable(queueEl, queueGroups, {showOwner:true, showActions:true, emptyText:'Nothing waiting on your approval right now.'});
 
       const adminListEl = document.getElementById('admin-history-list');
@@ -2052,9 +2130,15 @@ function renderHistoryTable(el, groups, opts){
     '<th style="padding:6px;"></th></tr>';
   groups.forEach(g=>{
     const v = g.rows[0].values[0];
-    const status = v[MC.status] || STATUS_PENDING_1;
+    const status = dealStatus(g.rows);
     const canAct = showActions && canActOnStatus(status);
-    const trail = approvalTrailText(v);
+    // Header-level display fields (date, counterparty, etc.) are shared
+    // across every trade row, so v (row 0) is fine for those. But the L1/L2/L3
+    // trail is per-row, and during a partial correction row 0 might still be
+    // showing an old checkmark that doesn't match the deal's overall status
+    // — use whichever row is actually sitting at that status instead.
+    const statusRow = (g.rows.find(r => (r.values[0][MC.status] || STATUS_PENDING_1) === status) || g.rows[0]).values[0];
+    const trail = approvalTrailText(statusRow);
     const agreementUrl = v[MC.agreementFileUrl];
     const agreementLink = agreementUrl
       ? '<div style="font-size:11px;margin-top:2px;"><a href="'+escapeHtml(agreementUrl)+'" target="_blank" rel="noopener">📄 View agreement</a></div>'
@@ -2099,6 +2183,16 @@ function renderHistoryTable(el, groups, opts){
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
         '<div style="background:#fdf3e7;border:1px solid #e8c99a;color:#8a6d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
         '<strong>What changed (matching info correction):</strong><br>'+matchingNotes.map(n=>escapeHtml(n)).join('<br>') +
+        '</div></td></tr>';
+    }
+    // A rejected correction reverts its trade to Approved (see rejectDeal),
+    // so this can't rely on status === Pending Level 3 to surface — check
+    // for the note directly instead.
+    const rejectedCorrectionNotes = matchingNotes.filter(n => n.indexOf('Correction rejected by ') === 0);
+    if(rejectedCorrectionNotes.length && status === STATUS_APPROVED){
+      html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
+        '<div style="background:#fdecea;border:1px solid #e2a49a;color:#8a2d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
+        rejectedCorrectionNotes.map(n=>escapeHtml(n)).join('<br>') +
         '</div></td></tr>';
     }
   });
