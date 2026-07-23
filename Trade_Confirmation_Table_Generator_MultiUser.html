@@ -2184,9 +2184,23 @@ document.getElementById('reject-modal-submit').addEventListener('click', async (
    dynamically (one block per trade row) rather than reusing the main form's
    tradeBlockHtml, since only the matching fields are editable here. ---- */
 let editMatchingDealId = null;
+// Stored "From which deal" is just the plain final value — own/proceed
+// checkbox state isn't stored separately — so infer which source (if any)
+// was in play from whether the stored value matches one of those option
+// lists, and pre-select the matching dropdown accordingly.
+function editMatchingDealFieldHtml(rowIndex, storedValue){
+  if(OWN_RECS_OPTIONS.includes(storedValue)){
+    return {own:true, proceed:false, fieldHtml: selectHtml('em-'+rowIndex+'-deal', OWN_RECS_OPTIONS, storedValue)};
+  }
+  if(PROCEED_SHARE_OPTIONS.includes(storedValue)){
+    return {own:false, proceed:true, fieldHtml: selectHtml('em-'+rowIndex+'-deal', PROCEED_SHARE_OPTIONS, storedValue)};
+  }
+  return {own:false, proceed:false, fieldHtml: textHtml('em-'+rowIndex+'-deal','Deal Recap ID', storedValue||'')};
+}
 function editMatchingRowHtml(rowIndex, v, tradeLabel){
   const matchingVal = v[MC.matching] || 'Open Position';
   const active = matchingVal && matchingVal !== 'Open Position';
+  const dealField = editMatchingDealFieldHtml(rowIndex, v[MC.whichDeal]||'');
   return '<div class="trade-block" style="margin-top:10px;">'+
     '<p class="trade-title">'+escapeHtml(tradeLabel)+'</p>'+
     '<div class="grid" style="margin-bottom:12px;">'+
@@ -2198,12 +2212,53 @@ function editMatchingRowHtml(rowIndex, v, tradeLabel){
       '<div class="grid">'+
         '<div><label for="em-'+rowIndex+'-name">1. Buyer/Seller name</label>'+textHtml('em-'+rowIndex+'-name','Name',v[MC.buyerSeller]||'')+'</div>'+
         '<div><label for="em-'+rowIndex+'-recs">2. No of RECs</label>'+textHtml('em-'+rowIndex+'-recs','',v[MC.noOfRecs]||'')+'</div>'+
-        '<div><label for="em-'+rowIndex+'-deal">3. From which deal</label>'+textHtml('em-'+rowIndex+'-deal','Deal Recap ID',v[MC.whichDeal]||'')+'</div>'+
+        '<div style="grid-column:1 / -1;">'+
+          '<label style="margin-bottom:6px;">Source</label>'+
+          '<div style="display:flex;gap:20px;flex-wrap:wrap;">'+
+            '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
+              '<input type="checkbox" id="em-'+rowIndex+'-own" style="width:auto;margin:0;"'+(dealField.own?' checked':'')+'> Own RECs'+
+            '</label>'+
+            '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
+              '<input type="checkbox" id="em-'+rowIndex+'-proceed" style="width:auto;margin:0;"'+(dealField.proceed?' checked':'')+'> Proceed Share'+
+            '</label>'+
+          '</div>'+
+        '</div>'+
+        '<div><label for="em-'+rowIndex+'-deal">3. From which deal</label><div id="em-'+rowIndex+'-deal-field">'+dealField.fieldHtml+'</div></div>'+
         '<div><label for="em-'+rowIndex+'-ddate">4. Delivery date</label><input type="date" id="em-'+rowIndex+'-ddate" value="'+escapeHtml(v[MC.deliveryDateM]||'')+'"></div>'+
       '</div>'+
     '</div>'+
   '</div>';
 }
+// Rebuilds the "From which deal" field for a row as a text box (default),
+// or a dropdown of Own RECs / Proceed Share options — mirrors updateDealField
+// for the main form, scoped to the edit-matching modal's row ids.
+function updateEditDealField(rowIndex){
+  const own = document.getElementById('em-'+rowIndex+'-own');
+  const proceed = document.getElementById('em-'+rowIndex+'-proceed');
+  const target = document.getElementById('em-'+rowIndex+'-deal-field');
+  if(!own || !proceed || !target) return;
+  if(own.checked){
+    target.innerHTML = selectHtml('em-'+rowIndex+'-deal', OWN_RECS_OPTIONS, OWN_RECS_OPTIONS[0]);
+  } else if(proceed.checked){
+    target.innerHTML = selectHtml('em-'+rowIndex+'-deal', PROCEED_SHARE_OPTIONS, PROCEED_SHARE_OPTIONS[0]);
+  } else {
+    target.innerHTML = textHtml('em-'+rowIndex+'-deal','Deal Recap ID','');
+  }
+}
+// Own RECs / Proceed Share are mutually exclusive within a row.
+document.addEventListener('change', (e)=>{
+  const m = e.target && e.target.id && e.target.id.match(/^em-(\d+)-(own|proceed)$/);
+  if(!m) return;
+  const rowIndex = m[1], which = m[2];
+  if(which === 'own' && e.target.checked){
+    const p = document.getElementById('em-'+rowIndex+'-proceed');
+    if(p) p.checked = false;
+  } else if(which === 'proceed' && e.target.checked){
+    const o = document.getElementById('em-'+rowIndex+'-own');
+    if(o) o.checked = false;
+  }
+  updateEditDealField(rowIndex);
+});
 function openEditMatchingModal(dealId){
   const rows = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
   if(!rows.length) return;
