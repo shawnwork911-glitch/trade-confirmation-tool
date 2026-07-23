@@ -544,7 +544,7 @@ const SP_FILE_SHARE_URL = "https://saxonrenewables.sharepoint.com/:x:/s/Operatio
 const LOG_TABLE_NAME = "TradeDealLog";        // must match the Excel Table name you create
 // Column layout of the restructured TradeDealLog "main list" table.
 // One physical row per TRADE (a multi-trade agreement produces several rows
-// sharing the same Agreement ID). Create the Excel Table with these 45
+// sharing the same Agreement ID). Create the Excel Table with these 46
 // columns in exactly this order:
 // Sales PIC, Entity, Agreement Date, Agreement ID, Supply/Demand, Company,
 // Broker, Country, Registry, Tech, Match/Open Position, Volume (RECs),
@@ -555,11 +555,16 @@ const LOG_TABLE_NAME = "TradeDealLog";        // must match the Excel Table name
 // Approved By (Level 1), Approved Date (Level 1), Approved By (Level 2),
 // Approved Date (Level 2), Approved By (Level 3), Approved Date (Level 3),
 // Rejected By, Rejected Date, Rejection Comment, Agreement File Name,
-// Agreement File URL, Description, Matching Edit Note
+// Agreement File URL, Description, Matching Edit Note, Approved List Item Id
+// ("Approved List Item Id" holds the SharePoint item ID this trade got
+// copied to in the "Approved" list, once Level 3 approves it — used so a
+// later matching-info correction updates that same item instead of adding
+// a duplicate; see addApprovedDealToList.)
 // NOTE: if you're adding this to an existing workbook, add any new column
-// ("Description" and "Matching Edit Note" included) at the END of the live
-// TradeDealLog Excel Table — don't insert them in the middle, or every
-// existing column index below will point at the wrong data.
+// ("Description", "Matching Edit Note", and "Approved List Item Id"
+// included) at the END of the live TradeDealLog Excel Table — don't insert
+// them in the middle, or every existing column index below will point at
+// the wrong data.
 const MC = {
   salesPic:0, entity:1, agreementDate:2, dealId:3, supplyDemand:4, company:5,
   broker:6, country:7, registry:8, tech:9, matching:10, volume:11,
@@ -570,9 +575,9 @@ const MC = {
   approvedBy1:32, approvedDate1:33, approvedBy2:34, approvedDate2:35,
   approvedBy3:36, approvedDate3:37, rejectedBy:38, rejectedDate:39,
   rejectReason:40, agreementFileName:41, agreementFileUrl:42, description:43,
-  matchingEditNote:44
+  matchingEditNote:44, approvedListItemId:45
 };
-const COL_COUNT = 45;
+const COL_COUNT = 46;
 const DRAFT_TABLE_NAME = "TradeDealDrafts";   // must match the Excel Table name you create
 // Small generic key/value settings table. Currently holds one row:
 // key="dealIdStart", value=the lowest 5-digit number the next new Deal ID
@@ -1420,8 +1425,26 @@ async function addApprovedDealToList(values){
         console.warn('"' + APPROVED_LIST_NAME + '" list has no column matching these labels — skipped: ' + skipped.join(', '));
     }
 
+    // If this trade was already copied into the "Approved" list once (a
+    // normal full approval), its item ID is on file — update that same
+    // item in place. This is what makes a later matching-info correction
+    // overwrite the existing "Approved" list row instead of adding a
+    // duplicate one when it's re-approved at Level 3.
+    const existingItemId = values[MC.approvedListItemId];
     try{
-        await graphFetch(
+        if(existingItemId){
+            await graphFetch(
+                "/sites/" + siteId +
+                "/lists/" + approvedListId +
+                "/items/" + existingItemId + "/fields",
+            {
+                method:"PATCH",
+                body:JSON.stringify(fields)
+            }
+        );
+            return existingItemId;
+        }
+        const created = await graphFetch(
             "/sites/" + siteId +
             "/lists/" + approvedListId +
             "/items",
@@ -1430,6 +1453,7 @@ async function addApprovedDealToList(values){
             body:JSON.stringify({ fields })
         }
     );
+        return created && created.id;
     }catch(err){
         // Annotate with exactly what was sent so a failure here is diagnosable
         // from the error alone, without needing another round of screenshots —
@@ -1904,7 +1928,14 @@ async function approveDeal(dealId, file){
     // trade, and each write can fail independently of the others.
     if(nextStatus === STATUS_APPROVED){
       try{
-        await addApprovedDealToList(values);
+        const itemId = await addApprovedDealToList(values);
+        // Save the item id back onto the log row (only if it's new/changed)
+        // so a future correction on this same trade can update this exact
+        // "Approved" list item instead of creating a duplicate.
+        if(itemId && values[MC.approvedListItemId] !== itemId){
+          values[MC.approvedListItemId] = itemId;
+          await updateTableRow(LOG_TABLE_NAME, r.index, values);
+        }
       }catch(err){
         console.error('Could not copy Trade ' + tradeNum + ' into the "Approved" list — check that its column internal names match what this app sends (see the fields{} object in addApprovedDealToList).', err);
         approvedListErrors.push('Trade ' + tradeNum + ': ' + err.message);
