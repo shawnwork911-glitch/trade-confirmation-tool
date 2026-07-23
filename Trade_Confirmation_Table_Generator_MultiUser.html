@@ -1690,6 +1690,11 @@ function applyDraftData(data){
   suppressAutosave = true;
   document.getElementById('trade-count').value = data.tradeCount || '1';
   renderTrades();
+  // Tech tick boxes default to SLR checked on a fresh render (unlike other
+  // checkboxes, which default unchecked) — clear them first so restoring a
+  // draft ends up with exactly the saved selection, not SLR-plus-whatever
+  // was saved.
+  document.querySelectorAll('.tech-checkbox').forEach(cb=>{ cb.checked = false; });
   Object.keys(data.allValues || {}).forEach(id=>{
     const el = document.getElementById(id);
     if(el) el.value = data.allValues[id];
@@ -2620,7 +2625,7 @@ document.addEventListener('click', (e)=>{
 
 
 const COUNTRIES = ["MY","BN","CN","JP","SA","TH","IN","PH","SG","VN","INDO","AUS","TW"];
-const TECHS = ["SLR","ANY","GEO","BIO","HYD","BGS","SHY","LHY","CC","WND","S/WND"];
+const TECHS = ["SLR","ANY","GEO","BIO","HYD","BGS","SHY","LHY","CC","WND","ALL"];
 
 // Hardcoded code -> full name lookups for the Customer version output (per
 // the reference sheet). Keys are matched case-insensitively; anything not
@@ -2633,16 +2638,23 @@ const COUNTRY_FULLNAMES = {
 const TECH_FULLNAMES = {
   'SLR':'Solar', 'ANY':'Any tech', 'GEO':'Geothermal', 'BIO':'Biomass', 'HYD':'Hydro',
   'BGS':'Biogas', 'SHY':'Small Hydro', 'LHY':'Large Hydro', 'CC':'Carbon Credit',
-  'WND':'Wind', 'SLR/WND':'Solar/Wind', 'S/WND':'Solar/Wind', 'SLR/BIO':'Solar/Biomass',
+  'WND':'Wind', 'ALL':'All Tech',
+  'SLR/WND':'Solar/Wind', 'S/WND':'Solar/Wind', 'SLR/BIO':'Solar/Biomass',
   'SLR/WND/SHY':'Solar/Wind/Small Hydro', 'SLR/WND/LHY':'Solar/Wind/Large Hydro'
 };
 function countryFullName(code){
   const key = String(code||'').trim().toUpperCase();
   return COUNTRY_FULLNAMES[key] || code;
 }
+// Tech values can now be a "/"-joined set of ticked checkboxes (e.g.
+// "SLR/WND"), so resolve each component individually and rejoin, falling
+// back to any pre-existing combo entries in TECH_FULLNAMES first.
 function techFullName(code){
-  const key = String(code||'').trim().toUpperCase();
-  return TECH_FULLNAMES[key] || code;
+  const raw = String(code||'').trim();
+  if(!raw) return code;
+  const key = raw.toUpperCase();
+  if(TECH_FULLNAMES[key]) return TECH_FULLNAMES[key];
+  return key.split('/').map(p=>TECH_FULLNAMES[p] || p).join('/');
 }
 const REGISTRIES = ["IREC","TIGR","GEC","Rehash","JEPX","BCX","Verra","LGC","T-REC","K-REC"];
 const ORDER_TYPES = ["Stock-In (T)","Stock-Out (T)","Stock-Out (R)"];
@@ -2656,10 +2668,11 @@ const YEARS = ["2025","2026","2027","2028","2029","2030"];
    Ticking "Own RECs" or "Proceed Share" swaps the "From which deal" text
    box for a dropdown of the relevant options, and the generated table fills
    in a short code for that selection rather than the option's display text. */
-const OWN_RECS_OPTIONS = ["TIGR/I-REC MY SLR","TIGR MY SLR","TIGR SG SLR","I-REC MY SLR","I-REC SG SLR"];
+const OWN_RECS_OPTIONS = ["TIGR/I-REC MY SLR","TIGR/IREC SG SLR","TIGR MY SLR","TIGR SG SLR","I-REC MY SLR","I-REC SG SLR"];
 const PROCEED_SHARE_OPTIONS = ["Tadau","IS Energy","Aenergy","PLTM"];
 const OWN_RECS_CODE_MAP = {
   "TIGR/I-REC MY SLR":"OR-TI-MY-SLR",
+  "TIGR/IREC SG SLR":"OR-TI-SG-SLR",
   "TIGR MY SLR":"OR-TIGR-MY-SLR",
   "TIGR SG SLR":"OR-TIGR-SG-SLR",
   "I-REC MY SLR":"OR-IREC-MY-SLR",
@@ -2804,6 +2817,19 @@ function applyFieldLockUi(key, locked){
     btn.title = locked ? 'Unlock this field' : 'Lock this field';
   }
 }
+// Ticks the correct Tech checkboxes for trade n to match whatever is
+// currently in its hidden 't{n}-tech' value — needed anywhere that value
+// gets restored programmatically (field lock restore) rather than via the
+// checkboxes' own change handler.
+function syncTechCheckboxesFromHidden(n){
+  const hidden = document.getElementById('t'+n+'-tech');
+  if(!hidden) return;
+  const active = new Set(hidden.value.split('/').map(s=>s.trim()).filter(Boolean));
+  TECHS.forEach(t=>{
+    const cb = document.getElementById('t'+n+'-tech-'+t);
+    if(cb) cb.checked = active.has(t);
+  });
+}
 // Restores saved values/lock state for every lockable field found inside `container`.
 // Safe to call repeatedly (e.g. every time trade blocks are re-rendered).
 function initLocksIn(container){
@@ -2819,6 +2845,8 @@ function initLocksIn(container){
         if(el && saved.values && saved.values[id] !== undefined) el.value = saved.values[id];
       });
       applyFieldLockUi(key, !!saved.locked);
+      const techMatch = key.match(/^t(\d+)-tech$/);
+      if(techMatch) syncTechCheckboxesFromHidden(techMatch[1]);
     }
   });
 }
@@ -2933,6 +2961,39 @@ document.addEventListener('click', (e)=>{
 initSectionLock('header');
 
 
+// Tech field: a row of tick boxes (one per TECHS entry) plus a hidden input
+// (id 't{n}-tech') that always holds the "/"-joined string of whichever
+// boxes are ticked, in TECHS order — e.g. ticking SLR and WND produces
+// "SLR/WND". The hidden input is what every other part of the form (val(),
+// validation, table/point-format output, drafts) reads/writes, so the rest
+// of the code needs no changes.
+function techCheckboxesHtml(n){
+  const boxes = TECHS.map(t=>
+    '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
+      '<input type="checkbox" id="t'+n+'-tech-'+t+'" class="tech-checkbox" data-trade="'+n+'" data-tech="'+t+'" style="width:auto;margin:0;"'+(t==='SLR'?' checked':'')+'> '+t+
+    '</label>'
+  ).join('');
+  return '<input type="hidden" id="t'+n+'-tech" value="SLR">'+
+    '<div style="display:flex;gap:14px;flex-wrap:wrap;">'+boxes+'</div>';
+}
+// Recomputes trade n's hidden Tech value from whichever tick boxes are
+// checked, in TECHS order (not click order), so "SLR" + "WND" always
+// renders as "SLR/WND" regardless of which box was ticked first.
+function updateTechField(n){
+  const hidden = document.getElementById('t'+n+'-tech');
+  if(!hidden) return;
+  const checked = TECHS.filter(t=>{
+    const cb = document.getElementById('t'+n+'-tech-'+t);
+    return cb && cb.checked;
+  });
+  hidden.value = checked.join('/');
+}
+document.addEventListener('change', (e)=>{
+  if(e.target && e.target.classList && e.target.classList.contains('tech-checkbox')){
+    updateTechField(e.target.dataset.trade);
+  }
+});
+
 function tradeBlockHtml(n){
   return '<div class="trade-block" data-trade-num="'+n+'">'+
     '<p class="trade-title">Trade '+n+'</p>'+
@@ -2955,7 +3016,8 @@ function tradeBlockHtml(n){
         comboHtml('t'+n+'-vintage-end-year','t'+n+'-end-year-list', YEARS, '2025')+
       '</div>',
       ['t'+n+'-vintage-end-month','t'+n+'-vintage-end-year'])+
-    lockableField('Tech', comboHtml('t'+n+'-tech','t'+n+'-tech-list',TECHS,'SLR'),'t'+n+'-tech')+
+    lockableField('Tech', techCheckboxesHtml(n), 't'+n+'-tech')
+      .replace('<div id=','<div style="grid-column:1 / -1;" id=')+
     lockableField('Country', comboHtml('t'+n+'-country','t'+n+'-country-list',COUNTRIES,'MY'),'t'+n+'-country')+
     lockableField('Volume (RECs)', textHtml('t'+n+'-volume','e.g. 30,000'),'t'+n+'-volume')+
     lockableField('Price currency', comboHtml('t'+n+'-currency','t'+n+'-currency-list',CURRENCIES,'USD'),'t'+n+'-currency')+
