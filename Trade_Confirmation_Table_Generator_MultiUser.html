@@ -575,9 +575,9 @@ const MC = {
   approvedBy1:32, approvedDate1:33, approvedBy2:34, approvedDate2:35,
   approvedBy3:36, approvedDate3:37, rejectedBy:38, rejectedDate:39,
   rejectReason:40, agreementFileName:41, agreementFileUrl:42, description:43,
-  matchingEditNote:44, approvedListItemId:45
+  matchingEditNote:44, approvedListItemId:45, rowUid:46
 };
-const COL_COUNT = 46;
+const COL_COUNT = 47;
 const DRAFT_TABLE_NAME = "TradeDealDrafts";   // must match the Excel Table name you create
 // Small generic key/value settings table. Currently holds one row:
 // key="dealIdStart", value=the lowest 5-digit number the next new Deal ID
@@ -1487,6 +1487,11 @@ async function addTableRow(tableName, values){
     body: JSON.stringify({ values: [fitRowToColumnCount(values, count)] })
   });
 }
+function genRowUid(){
+  return (window.crypto && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : (Date.now().toString(36) + Math.random().toString(36).slice(2,10) + Math.random().toString(36).slice(2,10));
+}
 async function updateTableRow(tableName, rowIndex, values){
   const count = await getTableColumnCount(tableName);
   return graphFetch(workbookTablePath(tableName) + '/rows/itemAt(index=' + rowIndex + ')', {
@@ -1497,6 +1502,32 @@ async function updateTableRow(tableName, rowIndex, values){
 }
 async function deleteTableRow(tableName, rowIndex){
   return graphFetch(workbookTablePath(tableName) + '/rows/itemAt(index=' + rowIndex + ')', { method: 'DELETE' });
+}
+/* Row position in the shared Excel table (row.index) is NOT a stable
+   identifier — it shifts whenever ANY user adds or deletes ANY row
+   anywhere in the table, including concurrently with this session's own
+   in-flight edit. Caching an index from an earlier fetch and reusing it
+   for a write later is what let one person's "Edit matching info" save
+   land on a completely different deal's row.
+   The fix: every LOG_TABLE_NAME row gets a permanent rowUid at creation
+   time (see MC.rowUid), and any function that needs to WRITE to a
+   specific row (not just read it) re-resolves that row's CURRENT index
+   via this helper immediately before the write — never reusing an index
+   captured earlier in the same flow. Rows created before this rowUid
+   column existed won't have one; callers fall back to whatever index
+   they already have for those, since there's no better identifier
+   available for legacy rows. */
+async function resolveLogRowIndexByUid(uid, fallbackIndex){
+  if(!uid){
+    if(fallbackIndex == null) throw new Error('Could not identify this row to update (no rowUid and no fallback index) — reload the page and try again.');
+    return fallbackIndex;
+  }
+  const rows = await getTableRows(LOG_TABLE_NAME);
+  const row = rows.find(r => String(r.values[0][MC.rowUid] || '') === uid);
+  if(!row){
+    throw new Error('Could not find this row anymore — it may have been changed by someone else. Reload the page and try again.');
+  }
+  return row.index;
 }
 
 /* ---- Level 2 approval: agreement file upload ----
@@ -1850,6 +1881,7 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
     row[MC.rejectedDate] = '';
     row[MC.rejectReason] = '';
     row[MC.description] = val('h-description');
+    row[MC.rowUid] = genRowUid();
     await addTableRow(LOG_TABLE_NAME, row);
   }
   await loadHistory();
@@ -1873,7 +1905,7 @@ async function approveDeal(dealId, file){
     if(!file) throw new Error('Please attach the signed agreement before approving at Level 2.');
     const liveColumnCount = await getTableColumnCount(LOG_TABLE_NAME);
     if(liveColumnCount < COL_COUNT){
-      throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing one or more columns this app expects (at minimum "Agreement File Name" and "Agreement File URL" needed to save the attachment, and now also "Matching Edit Note"). Ask an admin to add the missing column(s) at the end of the table, then try again.');
+      throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing one or more columns this app expects (at minimum "Agreement File Name" and "Agreement File URL" needed to save the attachment, and now also "Matching Edit Note" and "Row Uid"). Ask an admin to add the missing column(s) at the end of the table, then try again.');
     }
     nextStatus = STATUS_PENDING_3; byCol = MC.approvedBy2; dateCol = MC.approvedDate2;
   }
@@ -1904,6 +1936,7 @@ async function approveDeal(dealId, file){
     // currentStatus — only advance the ones actually waiting at this stage.
     if(rowStatus !== currentStatus) continue;
     const values = r.values[0].slice();
+    if(!values[MC.rowUid]) values[MC.rowUid] = genRowUid(); // backfill legacy rows as they're touched
     if(assignedDealId){
       values[MC.dealId] = assignedDealId;
       if(values[MC.generatedHtml]) values[MC.generatedHtml] = patchDealIdInGeneratedHtml(values[MC.generatedHtml], assignedDealId);
@@ -1915,7 +1948,7 @@ async function approveDeal(dealId, file){
       values[MC.agreementFileName] = agreementInfo.name;
       values[MC.agreementFileUrl] = agreementInfo.webUrl;
     }
-    await updateTableRow(LOG_TABLE_NAME, r.index, values);
+    await updateTableRow(LOG_TABLE_NAME, await resolveLogRowIndexByUid(r.values[0][MC.rowUid], r.index), values);
     // Final sign-off (Pending Level 3 -> Approved): also copy this row into
     // the standalone "Approved" SharePoint list. Best-effort — if the write
     // fails (e.g. the list is missing a column the app expects), the row
@@ -1934,7 +1967,7 @@ async function approveDeal(dealId, file){
         // "Approved" list item instead of creating a duplicate.
         if(itemId && values[MC.approvedListItemId] !== itemId){
           values[MC.approvedListItemId] = itemId;
-          await updateTableRow(LOG_TABLE_NAME, r.index, values);
+          await updateTableRow(LOG_TABLE_NAME, await resolveLogRowIndexByUid(r.values[0][MC.rowUid], r.index), values);
         }
       }catch(err){
         console.error('Could not copy Trade ' + tradeNum + ' into the "Approved" list — check that its column internal names match what this app sends (see the fields{} object in addApprovedDealToList).', err);
@@ -1989,6 +2022,7 @@ async function rejectDeal(dealId, reason){
     const rowStatus = r.values[0][MC.status] || STATUS_PENDING_1;
     if(rowStatus !== currentStatus) continue; // e.g. trades an in-flight correction left at Approved
     const values = r.values[0].slice();
+    if(!values[MC.rowUid]) values[MC.rowUid] = genRowUid(); // backfill legacy rows as they're touched
     if(isPartialCorrection){
       // Revert — this trade's prior Level 3 sign-off (never cleared by
       // resubmitMatchingInfo) still stands, so it just goes back to normal.
@@ -2000,7 +2034,7 @@ async function rejectDeal(dealId, reason){
       values[MC.rejectedDate] = nowIso;
       values[MC.rejectReason] = trimmedReason;
     }
-    await updateTableRow(LOG_TABLE_NAME, r.index, values);
+    await updateTableRow(LOG_TABLE_NAME, await resolveLogRowIndexByUid(r.values[0][MC.rowUid], r.index), values);
   }
   if(isPartialCorrection){
     await notifyCorrectionRejected(dealId, matching[0].values[0][MC.submittedBy], trimmedReason);
@@ -2015,7 +2049,7 @@ async function rejectDeal(dealId, reason){
 function describeMatchingChange(oldV, edit){
   const parts = [];
   const was = (label, oldVal, newVal) => {
-    const o = (oldVal||'').trim(), n = (newVal||'').trim();
+    const o = String(oldVal==null?'':oldVal).trim(), n = String(newVal==null?'':newVal).trim();
     if(o !== n) parts.push(label + ': "' + (o || '—') + '" → "' + (n || '—') + '"');
   };
   was('Matching', oldV[MC.matching], edit.matching);
@@ -2052,10 +2086,13 @@ async function resubmitMatchingInfo(dealId, edits){
   const changeLines = []; // one entry per trade that actually changed, for the email
   let tradeNum = 0;
   for(const r of matching){
-    tradeNum++;
-    const edit = edits[r.index];
-    if(!edit) continue;
     const oldV = r.values[0];
+    // Prefer the row's stable UID as the lookup key; only fall back to
+    // position-within-deal for legacy rows that predate the rowUid column.
+    const editKey = oldV[MC.rowUid] || ('pos:' + tradeNum);
+    tradeNum++;
+    const edit = edits[editKey];
+    if(!edit) continue;
     const changeText = describeMatchingChange(oldV, edit);
     // Nothing actually changed on this trade — skip it entirely. Its row is
     // left exactly as-is: no write, no status change, no cleared L3 sign-off.
@@ -2064,6 +2101,7 @@ async function resubmitMatchingInfo(dealId, edits){
     // agreement.
     if(!changeText) continue;
     const values = oldV.slice();
+    if(!values[MC.rowUid]) values[MC.rowUid] = genRowUid(); // backfill legacy rows as they're touched
     values[MC.matching] = edit.matching;
     values[MC.buyerSeller] = edit.buyerSeller;
     values[MC.noOfRecs] = edit.noOfRecs;
@@ -2077,7 +2115,7 @@ async function resubmitMatchingInfo(dealId, edits){
     // Approved sign-off instead of nuking the whole deal.
     values[MC.matchingEditNote] = 'Trade ' + tradeNum + ' — ' + changeText;
     changeLines.push('Trade ' + tradeNum + ': ' + changeText);
-    await updateTableRow(LOG_TABLE_NAME, r.index, values);
+    await updateTableRow(LOG_TABLE_NAME, await resolveLogRowIndexByUid(oldV[MC.rowUid], r.index), values);
   }
   if(!changeLines.length){
     // Nothing changed on any trade — nothing was written, nothing to send
@@ -2439,7 +2477,7 @@ function openEditMatchingModal(dealId){
   editMatchingDealId = dealId;
   document.getElementById('edit-matching-modal-dealid').textContent = friendlyDealId(dealId);
   document.getElementById('edit-matching-modal-body').innerHTML =
-    rows.map((r,i)=> editMatchingRowHtml(r.index, r.values[0], 'Trade '+(i+1))).join('');
+    rows.map((r,i)=> editMatchingRowHtml(i, r.values[0], 'Trade '+(i+1))).join('');
   document.getElementById('edit-matching-modal-error').style.display = 'none';
   document.getElementById('edit-matching-modal-overlay').style.display = 'flex';
 }
@@ -2467,16 +2505,24 @@ document.getElementById('edit-matching-modal-submit').addEventListener('click', 
   if(!dealId) return;
   const rows = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
   const edits = {};
-  rows.forEach(r=>{
-    const rowIndex = r.index;
-    const matchingVal = val('em-'+rowIndex+'-matching');
+  // Keyed by each row's stable rowUid (falling back to position within this
+  // deal's own rows, 0,1,2..., only for legacy rows that predate the rowUid
+  // column). The DOM field ids ('em-0-...', 'em-1-...') still use plain
+  // position since they're just this modal's own render and never persisted
+  // — but the key used to hand edits off to resubmitMatchingInfo must match
+  // row identity, not raw table index, since table index shifts whenever
+  // ANY user adds/removes ANY row anywhere in the shared table.
+  rows.forEach((r,i)=>{
+    const domIndex = i;
+    const editKey = r.values[0][MC.rowUid] || ('pos:' + i);
+    const matchingVal = val('em-'+domIndex+'-matching');
     const active = matchingVal && matchingVal !== 'Open Position';
-    edits[rowIndex] = {
+    edits[editKey] = {
       matching: matchingVal,
-      buyerSeller: active ? val('em-'+rowIndex+'-name') : '',
-      noOfRecs: active ? val('em-'+rowIndex+'-recs') : '',
-      whichDeal: val('em-'+rowIndex+'-deal'),
-      deliveryDateM: val('em-'+rowIndex+'-ddate')
+      buyerSeller: active ? val('em-'+domIndex+'-name') : '',
+      noOfRecs: active ? val('em-'+domIndex+'-recs') : '',
+      whichDeal: val('em-'+domIndex+'-deal'),
+      deliveryDateM: val('em-'+domIndex+'-ddate')
     };
   });
   btn.disabled = true;
