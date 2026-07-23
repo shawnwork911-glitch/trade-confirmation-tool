@@ -511,6 +511,19 @@
   </div>
 </div>
 
+<div id="edit-matching-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
+  <div style="width:100%;max-width:700px;max-height:85vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:10px;">
+    <h2 style="margin:0;font-size:16px;">Correct matching info — Deal ID <span id="edit-matching-modal-dealid"></span></h2>
+    <p style="margin:0;font-size:13px;color:var(--text-secondary);">This agreement is already fully Approved. Only the BD source matching fields below can be corrected here — everything else about the agreement stays as approved. Saving sends it back for Level 3 re-approval only (Level 1 and Level 2 sign-offs already stand).</p>
+    <div id="edit-matching-modal-body"></div>
+    <div id="edit-matching-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
+      <button type="button" class="secondary" id="edit-matching-modal-cancel">Cancel</button>
+      <button type="button" id="edit-matching-modal-submit">Save &amp; send for Level 3 re-approval</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* =======================================================================
    MICROSOFT SIGN-IN + SHAREPOINT EXCEL SETUP — fill these in before use.
@@ -1890,6 +1903,46 @@ async function rejectDeal(dealId, reason){
   await notifySubmitter(STATUS_REJECTED, dealId, matching[0].values[0][MC.submittedBy], trimmedReason);
   await loadHistory();
 }
+/* Lets the original submitter correct ONLY the BD source matching fields
+   (5. Matching, and — when active — 1. Buyer/Seller name, 2. No of RECs,
+   3. From which deal, 4. Delivery date) on a deal that has already reached
+   full Approved status. Everything else about the agreement is untouched.
+   Rather than restarting the whole 3-level chain, this sends the deal back
+   to "Pending Level 3" only — Level 1 and Level 2 sign-offs already stand
+   and are left as-is. edits is keyed by row index (r.index), one entry per
+   trade row belonging to this deal. */
+async function resubmitMatchingInfo(dealId, edits){
+  if(!dealId) return;
+  const rows = await getTableRows(LOG_TABLE_NAME);
+  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  if(!matching.length) throw new Error('Could not find this deal.');
+  const currentStatus = matching[0].values[0][MC.status];
+  if(currentStatus !== STATUS_APPROVED){
+    throw new Error('This deal is no longer Approved (its status has changed) — reload the page and try again.');
+  }
+  const myEmail = (currentAccount.username || '').toLowerCase();
+  if(String(matching[0].values[0][MC.submittedBy] || '').toLowerCase() !== myEmail){
+    throw new Error('Only the original submitter can correct this agreement\'s matching info.');
+  }
+  for(const r of matching){
+    const edit = edits[r.index];
+    if(!edit) continue;
+    const values = r.values[0].slice();
+    values[MC.matching] = edit.matching;
+    values[MC.buyerSeller] = edit.buyerSeller;
+    values[MC.noOfRecs] = edit.noOfRecs;
+    values[MC.whichDeal] = edit.whichDeal;
+    values[MC.deliveryDateM] = edit.deliveryDateM;
+    values[MC.status] = STATUS_PENDING_3;
+    // Level 3 needs to sign off again on the corrected info — clear its
+    // previous sign-off. Level 1 and Level 2 stay as they were.
+    values[MC.approvedBy3] = '';
+    values[MC.approvedDate3] = '';
+    await updateTableRow(LOG_TABLE_NAME, r.index, values);
+  }
+  await notifyNextApprover(STATUS_PENDING_3, dealId, matching[0].values[0][MC.description]);
+  await loadHistory();
+}
 function groupByDealId(rows){
   const groups = {};
   const order = [];
@@ -1910,7 +1963,7 @@ async function loadHistory(){
     const mineGroups = groupByDealId(
       rows.filter(r => (String(r.values[0][MC.submittedBy] || '')).toLowerCase() === myEmail)
     ).sort((a,b)=> String(b.rows[0].values[0][MC.submittedDate]||'').localeCompare(String(a.rows[0].values[0][MC.submittedDate]||'')));
-    renderHistoryTable(listEl, mineGroups, {showOwner:false, showActions:false});
+    renderHistoryTable(listEl, mineGroups, {showOwner:false, showActions:false, allowEditMatching:true});
 
     if(isAdmin){
       const allGroups = groupByDealId(rows)
@@ -1947,6 +2000,7 @@ function renderHistoryTable(el, groups, opts){
   opts = opts || {};
   const showOwner = !!opts.showOwner;
   const showActions = !!opts.showActions;
+  const allowEditMatching = !!opts.allowEditMatching;
   const colCount = showOwner ? 7 : 6;
   if(!groups.length){
     el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">'+escapeHtml(opts.emptyText || 'No saved confirmations yet.')+'</p>';
@@ -1968,6 +2022,7 @@ function renderHistoryTable(el, groups, opts){
     const agreementLink = agreementUrl
       ? '<div style="font-size:11px;margin-top:2px;"><a href="'+escapeHtml(agreementUrl)+'" target="_blank" rel="noopener">📄 View agreement</a></div>'
       : '';
+    const canEditMatching = allowEditMatching && status === STATUS_APPROVED;
     html += '<tr style="border-top:1px solid var(--border);">' +
       (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[MC.salesPic]||'')+'</td>' : '') +
       '<td style="padding:6px;">'+(isPendingDealId(v[MC.dealId]) ? '-' : escapeHtml(friendlyDealId(v[MC.dealId])))+'</td>' +
@@ -1982,6 +2037,7 @@ function renderHistoryTable(el, groups, opts){
         '<button type="button" class="secondary history-view-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;">View</button>' +
         (canAct ? ' <button type="button" class="secondary history-approve-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;">Approve</button>' +
                   ' <button type="button" class="secondary history-reject-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;color:#8a2d1f;border-color:#c1493a;">Reject</button>' : '') +
+        (canEditMatching ? ' <button type="button" class="secondary history-editmatch-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;">Edit matching info</button>' : '') +
       '</td>' +
     '</tr>';
     if(status === STATUS_REJECTED && v[MC.rejectReason]){
@@ -2123,6 +2179,90 @@ document.getElementById('reject-modal-submit').addEventListener('click', async (
     btn.disabled = false;
   }
 });
+/* ---- "Edit matching info" modal — corrects an Approved deal's BD source
+   matching fields only, then sends it back for Level 3 re-approval. Built
+   dynamically (one block per trade row) rather than reusing the main form's
+   tradeBlockHtml, since only the matching fields are editable here. ---- */
+let editMatchingDealId = null;
+function editMatchingRowHtml(rowIndex, v, tradeLabel){
+  const matchingVal = v[MC.matching] || 'Open Position';
+  const active = matchingVal && matchingVal !== 'Open Position';
+  return '<div class="trade-block" style="margin-top:10px;">'+
+    '<p class="trade-title">'+escapeHtml(tradeLabel)+'</p>'+
+    '<div class="grid" style="margin-bottom:12px;">'+
+      '<div><label for="em-'+rowIndex+'-matching">5. Matching</label>'+
+        selectHtml('em-'+rowIndex+'-matching', MATCHING, matchingVal)+
+      '</div>'+
+    '</div>'+
+    '<div id="em-'+rowIndex+'-dependent" style="'+(active?'':'display:none;')+'">'+
+      '<div class="grid">'+
+        '<div><label for="em-'+rowIndex+'-name">1. Buyer/Seller name</label>'+textHtml('em-'+rowIndex+'-name','Name',v[MC.buyerSeller]||'')+'</div>'+
+        '<div><label for="em-'+rowIndex+'-recs">2. No of RECs</label>'+textHtml('em-'+rowIndex+'-recs','',v[MC.noOfRecs]||'')+'</div>'+
+        '<div><label for="em-'+rowIndex+'-deal">3. From which deal</label>'+textHtml('em-'+rowIndex+'-deal','Deal Recap ID',v[MC.whichDeal]||'')+'</div>'+
+        '<div><label for="em-'+rowIndex+'-ddate">4. Delivery date</label><input type="date" id="em-'+rowIndex+'-ddate" value="'+escapeHtml(v[MC.deliveryDateM]||'')+'"></div>'+
+      '</div>'+
+    '</div>'+
+  '</div>';
+}
+function openEditMatchingModal(dealId){
+  const rows = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  if(!rows.length) return;
+  editMatchingDealId = dealId;
+  document.getElementById('edit-matching-modal-dealid').textContent = friendlyDealId(dealId);
+  document.getElementById('edit-matching-modal-body').innerHTML =
+    rows.map((r,i)=> editMatchingRowHtml(r.index, r.values[0], 'Trade '+(i+1))).join('');
+  document.getElementById('edit-matching-modal-error').style.display = 'none';
+  document.getElementById('edit-matching-modal-overlay').style.display = 'flex';
+}
+function closeEditMatchingModal(){
+  document.getElementById('edit-matching-modal-overlay').style.display = 'none';
+  editMatchingDealId = null;
+}
+document.getElementById('edit-matching-modal-cancel').addEventListener('click', closeEditMatchingModal);
+document.getElementById('edit-matching-modal-overlay').addEventListener('click', (e)=>{
+  if(e.target.id === 'edit-matching-modal-overlay') closeEditMatchingModal();
+});
+// Toggle fields 1-4 for a row when its own Matching dropdown changes.
+document.addEventListener('change', (e)=>{
+  const m = e.target && e.target.id && e.target.id.match(/^em-(\d+)-matching$/);
+  if(!m) return;
+  const dependent = document.getElementById('em-'+m[1]+'-dependent');
+  if(!dependent) return;
+  dependent.style.display = (e.target.value === 'Open Position') ? 'none' : 'block';
+});
+document.getElementById('edit-matching-modal-submit').addEventListener('click', async ()=>{
+  const dealId = editMatchingDealId;
+  const errEl = document.getElementById('edit-matching-modal-error');
+  const btn = document.getElementById('edit-matching-modal-submit');
+  errEl.style.display = 'none';
+  if(!dealId) return;
+  const rows = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  const edits = {};
+  rows.forEach(r=>{
+    const rowIndex = r.index;
+    const matchingVal = val('em-'+rowIndex+'-matching');
+    const active = matchingVal && matchingVal !== 'Open Position';
+    edits[rowIndex] = {
+      matching: matchingVal,
+      buyerSeller: active ? val('em-'+rowIndex+'-name') : '',
+      noOfRecs: active ? val('em-'+rowIndex+'-recs') : '',
+      whichDeal: val('em-'+rowIndex+'-deal'),
+      deliveryDateM: val('em-'+rowIndex+'-ddate')
+    };
+  });
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  try{
+    await resubmitMatchingInfo(dealId, edits);
+    closeEditMatchingModal();
+  }catch(err){
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
+  }finally{
+    btn.disabled = false;
+    btn.textContent = 'Save & send for Level 3 re-approval';
+  }
+});
 document.addEventListener('click', (e)=>{
   const viewBtn = e.target.closest('.history-view-btn');
   if(viewBtn){
@@ -2150,6 +2290,11 @@ document.addEventListener('click', (e)=>{
   const rejectBtn = e.target.closest('.history-reject-btn');
   if(rejectBtn){
     openRejectModal(rejectBtn.getAttribute('data-dealid'));
+    return;
+  }
+  const editMatchBtn = e.target.closest('.history-editmatch-btn');
+  if(editMatchBtn){
+    openEditMatchingModal(editMatchBtn.getAttribute('data-dealid'));
   }
 });
 
@@ -2249,7 +2394,7 @@ document.getElementById('header-fields').innerHTML =
   headerField('Buyer Name', textHtml('h-buyer','Company name'),'h-buyer') +
   headerField('Order type', selectHtml('h-order',ORDER_TYPES,'Stock-In (T)'),'h-order') +
   '<div id="h-description-wrap" style="grid-column:1 / -1;"><label for="h-description">Content for Level 1 approval</label>' +
-  '<textarea id="h-description" placeholder="Briefly describe this agreement, for whoever approves it — not shown to the customer"></textarea></div>';
+  '<textarea id="h-description" placeholder="What is the Deal type? Back to Back/Position Opening; Sell to; buy from; target closing price; GP Margin and GP"></textarea></div>';
 
 /* Keeps the "Buyer/Seller" field's on-screen label, "Transfer Account" label, and the generated table's
    row labels in sync with the Buyer-or-Seller role selector. */
