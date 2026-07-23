@@ -544,7 +544,7 @@ const SP_FILE_SHARE_URL = "https://saxonrenewables.sharepoint.com/:x:/s/Operatio
 const LOG_TABLE_NAME = "TradeDealLog";        // must match the Excel Table name you create
 // Column layout of the restructured TradeDealLog "main list" table.
 // One physical row per TRADE (a multi-trade agreement produces several rows
-// sharing the same Agreement ID). Create the Excel Table with these 44
+// sharing the same Agreement ID). Create the Excel Table with these 45
 // columns in exactly this order:
 // Sales PIC, Entity, Agreement Date, Agreement ID, Supply/Demand, Company,
 // Broker, Country, Registry, Tech, Match/Open Position, Volume (RECs),
@@ -555,11 +555,11 @@ const LOG_TABLE_NAME = "TradeDealLog";        // must match the Excel Table name
 // Approved By (Level 1), Approved Date (Level 1), Approved By (Level 2),
 // Approved Date (Level 2), Approved By (Level 3), Approved Date (Level 3),
 // Rejected By, Rejected Date, Rejection Comment, Agreement File Name,
-// Agreement File URL, Description
+// Agreement File URL, Description, Matching Edit Note
 // NOTE: if you're adding this to an existing workbook, add any new column
-// ("Description" included) at the END of the live TradeDealLog Excel
-// Table — don't insert them in the middle, or every existing column index
-// below will point at the wrong data.
+// ("Description" and "Matching Edit Note" included) at the END of the live
+// TradeDealLog Excel Table — don't insert them in the middle, or every
+// existing column index below will point at the wrong data.
 const MC = {
   salesPic:0, entity:1, agreementDate:2, dealId:3, supplyDemand:4, company:5,
   broker:6, country:7, registry:8, tech:9, matching:10, volume:11,
@@ -569,9 +569,10 @@ const MC = {
   submittedBy:28, submittedDate:29, generatedHtml:30, status:31,
   approvedBy1:32, approvedDate1:33, approvedBy2:34, approvedDate2:35,
   approvedBy3:36, approvedDate3:37, rejectedBy:38, rejectedDate:39,
-  rejectReason:40, agreementFileName:41, agreementFileUrl:42, description:43
+  rejectReason:40, agreementFileName:41, agreementFileUrl:42, description:43,
+  matchingEditNote:44
 };
-const COL_COUNT = 44;
+const COL_COUNT = 45;
 const DRAFT_TABLE_NAME = "TradeDealDrafts";   // must match the Excel Table name you create
 // Small generic key/value settings table. Currently holds one row:
 // key="dealIdStart", value=the lowest 5-digit number the next new Deal ID
@@ -917,7 +918,10 @@ async function sendMailGraph(toEmails, subject, htmlBody){
 }
 // status = the deal's status *after* this submit/approve just happened —
 // looks up which role is now responsible and emails everyone holding it.
-async function notifyNextApprover(status, dealId, description){
+// changeSummary is optional — used when a deal is sent back to Level 3 with
+// only its matching info corrected, so the approver sees exactly what
+// changed without having to compare the whole agreement by eye.
+async function notifyNextApprover(status, dealId, description, changeSummary){
   const role = APPROVER_ROLE_FOR_STATUS[status];
   if(!role) return; // e.g. Approved — no next approver to notify
   const toEmails = emailsForRole(role);
@@ -930,8 +934,12 @@ async function notifyNextApprover(status, dealId, description){
   const displayId = friendlyDealId(dealId);
   const label = isPendingDealId(dealId) ? 'An agreement' : 'Deal ID <strong>' + escapeHtml(displayId) + '</strong>';
   const descBlock = (description && description.trim()) ? '<p><strong>Description:</strong> ' + escapeHtml(description) + '</p>' : '';
+  const changeBlock = (changeSummary && changeSummary.trim())
+    ? '<p><strong>What changed (matching info correction):</strong><br>' + escapeHtml(changeSummary).replace(/\n/g,'<br>') + '</p>'
+    : '';
   const html = '<p>' + label + ' is waiting on your ' + escapeHtml(levelLabel) + ' approval.</p>' +
     descBlock +
+    changeBlock +
     '<p><a href="' + link + '">Open it in the Trade Confirmation app</a></p>';
   try{
     await sendMailGraph(toEmails, 'Approval needed — ' + (isPendingDealId(dealId) ? levelLabel : displayId + ' (' + levelLabel + ')'), html);
@@ -1799,7 +1807,7 @@ async function approveDeal(dealId, file){
     if(!file) throw new Error('Please attach the signed agreement before approving at Level 2.');
     const liveColumnCount = await getTableColumnCount(LOG_TABLE_NAME);
     if(liveColumnCount < COL_COUNT){
-      throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing the "Agreement File Name" and "Agreement File URL" columns needed to save the attachment. Ask an admin to add those two columns at the end of the table, then try again.');
+      throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing one or more columns this app expects (at minimum "Agreement File Name" and "Agreement File URL" needed to save the attachment, and now also "Matching Edit Note"). Ask an admin to add the missing column(s) at the end of the table, then try again.');
     }
     nextStatus = STATUS_PENDING_3; byCol = MC.approvedBy2; dateCol = MC.approvedDate2;
   }
@@ -1903,6 +1911,22 @@ async function rejectDeal(dealId, reason){
   await notifySubmitter(STATUS_REJECTED, dealId, matching[0].values[0][MC.submittedBy], trimmedReason);
   await loadHistory();
 }
+// Builds a plain-English "what changed" line for one trade row, comparing
+// its old matching-related values against the edited ones. Returns '' if
+// nothing in this row actually changed.
+function describeMatchingChange(oldV, edit){
+  const parts = [];
+  const was = (label, oldVal, newVal) => {
+    const o = (oldVal||'').trim(), n = (newVal||'').trim();
+    if(o !== n) parts.push(label + ': "' + (o || '—') + '" → "' + (n || '—') + '"');
+  };
+  was('Matching', oldV[MC.matching], edit.matching);
+  was('Buyer/Seller name', oldV[MC.buyerSeller], edit.buyerSeller);
+  was('No of RECs', oldV[MC.noOfRecs], edit.noOfRecs);
+  was('From which deal', oldV[MC.whichDeal], edit.whichDeal);
+  was('Delivery date', oldV[MC.deliveryDateM], edit.deliveryDateM);
+  return parts.join('; ');
+}
 /* Lets the original submitter correct ONLY the BD source matching fields
    (5. Matching, and — when active — 1. Buyer/Seller name, 2. No of RECs,
    3. From which deal, 4. Delivery date) on a deal that has already reached
@@ -1910,7 +1934,10 @@ async function rejectDeal(dealId, reason){
    Rather than restarting the whole 3-level chain, this sends the deal back
    to "Pending Level 3" only — Level 1 and Level 2 sign-offs already stand
    and are left as-is. edits is keyed by row index (r.index), one entry per
-   trade row belonging to this deal. */
+   trade row belonging to this deal. A plain-English summary of exactly what
+   changed (per trade) is written into the Matching Edit Note column, and
+   included in the Level 3 approver's email, so the approver can see what's
+   different without having to compare the whole agreement by eye. */
 async function resubmitMatchingInfo(dealId, edits){
   if(!dealId) return;
   const rows = await getTableRows(LOG_TABLE_NAME);
@@ -1924,10 +1951,15 @@ async function resubmitMatchingInfo(dealId, edits){
   if(String(matching[0].values[0][MC.submittedBy] || '').toLowerCase() !== myEmail){
     throw new Error('Only the original submitter can correct this agreement\'s matching info.');
   }
+  const changeLines = []; // one entry per trade that actually changed, for the email
+  let tradeNum = 0;
   for(const r of matching){
+    tradeNum++;
     const edit = edits[r.index];
     if(!edit) continue;
-    const values = r.values[0].slice();
+    const oldV = r.values[0];
+    const changeText = describeMatchingChange(oldV, edit);
+    const values = oldV.slice();
     values[MC.matching] = edit.matching;
     values[MC.buyerSeller] = edit.buyerSeller;
     values[MC.noOfRecs] = edit.noOfRecs;
@@ -1938,9 +1970,14 @@ async function resubmitMatchingInfo(dealId, edits){
     // previous sign-off. Level 1 and Level 2 stay as they were.
     values[MC.approvedBy3] = '';
     values[MC.approvedDate3] = '';
+    values[MC.matchingEditNote] = changeText ? ('Trade ' + tradeNum + ' — ' + changeText) : '';
+    if(changeText) changeLines.push('Trade ' + tradeNum + ': ' + changeText);
     await updateTableRow(LOG_TABLE_NAME, r.index, values);
   }
-  await notifyNextApprover(STATUS_PENDING_3, dealId, matching[0].values[0][MC.description]);
+  const changeSummary = changeLines.length
+    ? changeLines.join('\n')
+    : 'No matching fields were actually changed.';
+  await notifyNextApprover(STATUS_PENDING_3, dealId, matching[0].values[0][MC.description], changeSummary);
   await loadHistory();
 }
 function groupByDealId(rows){
@@ -2050,6 +2087,18 @@ function renderHistoryTable(el, groups, opts){
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
         '<div style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:12px;font-weight:bold;color:var(--text);">' +
         '<strong style="color:var(--text);">Content for Level 1 approval:</strong> '+escapeHtml(v[MC.description]) +
+        '</div></td></tr>';
+    }
+    // Matching Edit Note is stored per-trade row, so gather it across every
+    // row in this deal (not just the first) — otherwise a change on Trade 2
+    // wouldn't show if Trade 1's note is blank.
+    const matchingNotes = g.rows
+      .map(r => (r.values[0][MC.matchingEditNote] || '').trim())
+      .filter(Boolean);
+    if(matchingNotes.length && status === STATUS_PENDING_3){
+      html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
+        '<div style="background:#fdf3e7;border:1px solid #e8c99a;color:#8a6d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
+        '<strong>What changed (matching info correction):</strong><br>'+matchingNotes.map(n=>escapeHtml(n)).join('<br>') +
         '</div></td></tr>';
     }
   });
