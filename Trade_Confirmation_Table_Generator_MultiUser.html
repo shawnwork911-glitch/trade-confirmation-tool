@@ -2547,6 +2547,24 @@ document.addEventListener('change', (e)=>{
   }
   updateEditRequestDealField(idx);
 });
+// Open Position means there's nothing to match yet, so Buyer/Seller,
+// Source, and Which deal don't apply — hide AND clear them, the same way
+// the main form's handleMatchingChange does, so a stale value from before
+// switching to Open Position can't accidentally get submitted.
+document.addEventListener('change', (e)=>{
+  if(!e.target.classList || !e.target.classList.contains('edit-request-matching')) return;
+  const idx = e.target.getAttribute('data-idx');
+  const dependent = document.getElementById('er-'+idx+'-dependent');
+  if(!dependent) return;
+  if(e.target.value === 'Open Position'){
+    dependent.style.display = 'none';
+    dependent.querySelectorAll('input[type="text"]').forEach(el=>{ el.value = ''; });
+    dependent.querySelectorAll('input[type="checkbox"]').forEach(cb=>{ cb.checked = false; });
+    updateEditRequestDealField(idx);
+  } else {
+    dependent.style.display = 'flex';
+  }
+});
 // Populates one editable block per product on the deal, prefilled from its
 // current (live, already-Approved) Matching/Buyer-Seller/Which deal values.
 // Deliberately only these three fields — the rest of an Approved deal's
@@ -2561,8 +2579,10 @@ function openEditRequestModal(dealId){
   const fieldsEl = document.getElementById('edit-request-modal-fields');
   fieldsEl.innerHTML = group.map((r, idx)=>{
     const v = r.values[0];
+    const matchingVal = v[MC.matching] || 'Open Position';
+    const active = matchingVal && matchingVal !== 'Open Position';
     const matchOptions = MATCHING.map(m =>
-      '<option value="'+escapeHtml(m)+'"'+(m===v[MC.matching]?' selected':'')+'>'+escapeHtml(MATCHING_DISPLAY_NAMES[m]||m)+'</option>'
+      '<option value="'+escapeHtml(m)+'"'+(m===matchingVal?' selected':'')+'>'+escapeHtml(MATCHING_DISPLAY_NAMES[m]||m)+'</option>'
     ).join('');
     const label = group.length > 1 ? 'Product ' + (idx+1) : 'Product';
     const dealField = editRequestDealFieldHtml(idx, v[MC.whichDeal]||'');
@@ -2570,20 +2590,22 @@ function openEditRequestModal(dealId){
       '<p style="margin:0;font-size:13px;font-weight:600;">'+escapeHtml(label)+'</p>' +
       '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Matching</label>' +
         '<select class="edit-request-matching" data-idx="'+idx+'">'+matchOptions+'</select></div>' +
-      '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Buyer/Seller</label>' +
-        '<input type="text" class="edit-request-buyerseller" data-idx="'+idx+'" value="'+escapeHtml(v[MC.buyerSeller]||'')+'"/></div>' +
-      '<div>' +
-        '<label style="margin:0 0 6px;display:block;font-size:12px;">Source</label>' +
-        '<div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:8px;">' +
-          '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">' +
-            '<input type="checkbox" id="er-'+idx+'-own" style="width:auto;margin:0;"'+(dealField.own?' checked':'')+'> Own RECs' +
-          '</label>' +
-          '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">' +
-            '<input type="checkbox" id="er-'+idx+'-proceed" style="width:auto;margin:0;"'+(dealField.proceed?' checked':'')+'> Proceed Share' +
-          '</label>' +
+      '<div id="er-'+idx+'-dependent" style="display:flex;flex-direction:column;gap:8px;'+(active?'':'display:none;')+'">' +
+        '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Buyer/Seller</label>' +
+          '<input type="text" class="edit-request-buyerseller" data-idx="'+idx+'" value="'+escapeHtml(v[MC.buyerSeller]||'')+'"/></div>' +
+        '<div>' +
+          '<label style="margin:0 0 6px;display:block;font-size:12px;">Source</label>' +
+          '<div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:8px;">' +
+            '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">' +
+              '<input type="checkbox" id="er-'+idx+'-own" style="width:auto;margin:0;"'+(dealField.own?' checked':'')+'> Own RECs' +
+            '</label>' +
+            '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">' +
+              '<input type="checkbox" id="er-'+idx+'-proceed" style="width:auto;margin:0;"'+(dealField.proceed?' checked':'')+'> Proceed Share' +
+            '</label>' +
+          '</div>' +
+          '<label style="margin:0 0 4px;display:block;font-size:12px;">Which deal</label>' +
+          '<div id="er-'+idx+'-deal-field">'+dealField.fieldHtml+'</div>' +
         '</div>' +
-        '<label style="margin:0 0 4px;display:block;font-size:12px;">Which deal</label>' +
-        '<div id="er-'+idx+'-deal-field">'+dealField.fieldHtml+'</div>' +
       '</div>' +
       '</div>';
   }).join('');
