@@ -1394,6 +1394,21 @@ async function addTableRow(tableName, values){
     body: JSON.stringify({ values: [fitRowToColumnCount(values, count)] })
   });
 }
+// Writes several rows in ONE Graph call instead of one call per row (rows/add
+// accepts a 2-D array natively). Used by saveConfirmationToHistory so an
+// N-product deal is a single all-or-nothing write instead of N sequential
+// awaited calls — removes the "partially-written deal" failure mode entirely
+// rather than just retrying around it: if this call throws, nothing at all
+// was written for the deal, so there's no partial-row cleanup and the Deal ID
+// is free to be resubmitted immediately.
+async function addTableRows(tableName, rowsArray){
+  if(!rowsArray.length) return;
+  const count = await getTableColumnCount(tableName);
+  return graphFetch(workbookTablePath(tableName) + '/rows/add', {
+    method: 'POST',
+    body: JSON.stringify({ values: rowsArray.map(v => fitRowToColumnCount(v, count)) })
+  });
+}
 async function updateTableRow(tableName, rowIndex, values){
   const count = await getTableColumnCount(tableName);
   return graphFetch(workbookTablePath(tableName) + '/rows/itemAt(index=' + rowIndex + ')', {
@@ -1489,7 +1504,7 @@ async function assignFormalDealId(placeholderId, tradeCount){
     candidate += 1;
     padded = String(candidate).padStart(5,'0');
   }
-  return padded + (parseInt(tradeCount,10) || '');
+  return padded + '-' + (parseInt(tradeCount,10) || '');
 }
 
 /* ---- Per-user draft (autosaves the in-progress form into the Drafts table) ---- */
@@ -1704,6 +1719,7 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
   }
   const nowIso = submittedDateIso || new Date().toISOString();
   const tradeCount = parseInt(document.getElementById('trade-count').value, 10) || 1;
+  const rowsToWrite = [];
   for(let n = 1; n <= tradeCount; n++){
     const matching = val('t'+n+'-m-matching');
     const matchingActive = matching && matching !== 'Open Position';
@@ -1750,8 +1766,9 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
     row[MC.rejectedDate] = '';
     row[MC.rejectReason] = '';
     row[MC.description] = val('h-description');
-    await addTableRow(LOG_TABLE_NAME, row);
+    rowsToWrite.push(row);
   }
+  await addTableRows(LOG_TABLE_NAME, rowsToWrite);
   await loadHistory();
 }
 /* Advances a deal one step through the approval chain, writing the
@@ -2229,6 +2246,17 @@ function comboHtml(id, listId, options, def){
   const dl = '<datalist id="'+listId+'">' + options.map(v=>'<option value="'+v+'">').join('') + '</datalist>';
   return '<input type="text" list="'+listId+'" id="'+id+'" value="'+(def||'')+'"/>' + dl;
 }
+// Like selectHtml, but shows a human-readable full name (looked up from
+// fullNameMap) while the option's actual value — what val() reads, and what
+// gets saved to SharePoint — stays the original shortform code. Falls back to
+// showing the code itself if it has no entry in fullNameMap.
+function selectWithFullNamesHtml(id, codes, fullNameMap, def){
+  const o = codes.map(code => {
+    const label = fullNameMap[code] || code;
+    return '<option value="'+code+'"'+(code===def?' selected':'')+'>'+label+'</option>';
+  }).join('');
+  return '<select id="'+id+'">'+o+'</select>';
+}
 
 document.getElementById('header-fields').innerHTML =
   headerField('Deal ID',
@@ -2457,9 +2485,9 @@ function tradeBlockHtml(n){
   return '<div class="trade-block" data-trade-num="'+n+'">'+
     '<p class="trade-title">Product '+n+'</p>'+
     '<div class="grid">'+
-    lockableField('Country', comboHtml('t'+n+'-country','t'+n+'-country-list',COUNTRIES,'MY'),'t'+n+'-country')+
+    lockableField('Country', selectWithFullNamesHtml('t'+n+'-country',COUNTRIES,COUNTRY_FULLNAMES,'MY'),'t'+n+'-country')+
     lockableField('Registry', comboHtml('t'+n+'-registry','t'+n+'-registry-list',REGISTRIES,'IREC'),'t'+n+'-registry')+
-    lockableField('Tech', comboHtml('t'+n+'-tech','t'+n+'-tech-list',TECHS,'SLR'),'t'+n+'-tech')+
+    lockableField('Tech', selectWithFullNamesHtml('t'+n+'-tech',TECHS,TECH_FULLNAMES,'SLR'),'t'+n+'-tech')+
     lockableField('Vintage start month &amp; year',
       '<div style="display:flex;gap:6px;">'+
         selectHtml('t'+n+'-vintage-start-month', MONTHS, 'Jan')+
