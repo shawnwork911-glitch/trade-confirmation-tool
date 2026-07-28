@@ -2381,10 +2381,46 @@ function syncTechCheckboxesFromHidden(n){
   group.querySelectorAll('input.tech-checkbox').forEach(cb=>{
     cb.checked = codes.indexOf(cb.value.toUpperCase()) !== -1;
   });
+  applyTechExclusivityUi(n);
+}
+// "Any Tech" can't be combined with specific techs — it means any/unspecified
+// tech, which is a different thing from a defined combination of techs. So
+// ticking Any Tech clears every other tick, and ticking any other tech
+// clears Any Tech, for whichever checkbox the person just changed.
+function enforceTechExclusivity(n, changedCb){
+  const group = document.getElementById('t'+n+'-tech-boxes');
+  if(!group || !changedCb) return;
+  const anyCb = group.querySelector('input.tech-checkbox[value="ANY"]');
+  if(!anyCb) return;
+  if(changedCb === anyCb && anyCb.checked){
+    group.querySelectorAll('input.tech-checkbox').forEach(cb=>{ if(cb !== anyCb) cb.checked = false; });
+  } else if(changedCb !== anyCb && changedCb.checked){
+    anyCb.checked = false;
+  }
+}
+// Greys out whichever side is currently unselectable, so it's visually clear
+// Any Tech and specific techs can't be combined. Left alone while the field
+// is locked (the lock's own disabling already covers that case).
+function applyTechExclusivityUi(n){
+  const group = document.getElementById('t'+n+'-tech-boxes');
+  if(!group) return;
+  const wrap = document.getElementById('t'+n+'-tech-wrap');
+  if(wrap && wrap.classList.contains('field-locked')) return;
+  const anyCb = group.querySelector('input.tech-checkbox[value="ANY"]');
+  if(!anyCb) return;
+  const othersChecked = Array.from(group.querySelectorAll('input.tech-checkbox')).some(cb=>cb!==anyCb && cb.checked);
+  group.querySelectorAll('input.tech-checkbox').forEach(cb=>{
+    cb.disabled = (cb === anyCb) ? othersChecked : anyCb.checked;
+  });
 }
 document.addEventListener('change', (e)=>{
   const cb = e.target.closest('.tech-checkbox');
-  if(cb) updateTechValue(cb.getAttribute('data-trade'));
+  if(cb){
+    const n = cb.getAttribute('data-trade');
+    enforceTechExclusivity(n, cb);
+    updateTechValue(n);
+    applyTechExclusivityUi(n);
+  }
 });
 function selectWithFullNamesHtml(id, codes, fullNameMap, def){
   const o = codes.map(code => {
@@ -2558,6 +2594,8 @@ document.addEventListener('click', (e)=>{
     writeLockState(state);
     applyFieldLockUi(key, true);
   }
+  const techMatch = key.match(/^t(\d+)-tech$/);
+  if(techMatch) applyTechExclusivityUi(techMatch[1]);
 });
 
 initLocksIn(document.getElementById('header-fields'));
@@ -2599,6 +2637,8 @@ function setAllFieldLocksIn(container, locked){
       state[key] = { locked:false, values: state[key] ? state[key].values : {} };
     }
     applyFieldLockUi(key, locked);
+    const techMatch = key.match(/^t(\d+)-tech$/);
+    if(techMatch) applyTechExclusivityUi(techMatch[1]);
   });
   writeLockState(state);
 }
