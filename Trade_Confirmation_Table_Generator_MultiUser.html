@@ -563,9 +563,11 @@ const LOG_TABLE_NAME = "TradeDealLog";        // must match the Excel Table name
 // Approved By (Level 1), Approved Date (Level 1), Approved By (Level 2),
 // Approved Date (Level 2), Approved By (Level 3), Approved Date (Level 3),
 // Rejected By, Rejected Date, Rejection Comment, Agreement File Name,
-// Agreement File URL, Description
+// Agreement File URL, Description, Broker Fee Type, Broker Fee Currency,
+// Broker Fee Price
 // NOTE: if you're adding this to an existing workbook, add any new column
-// ("Description" included) at the END of the live TradeDealLog Excel
+// ("Broker Fee Type"/"Broker Fee Currency"/"Broker Fee Price" included) at
+// the END of the live TradeDealLog Excel
 // Table — don't insert them in the middle, or every existing column index
 // below will point at the wrong data.
 const MC = {
@@ -577,9 +579,10 @@ const MC = {
   submittedBy:28, submittedDate:29, generatedHtml:30, status:31,
   approvedBy1:32, approvedDate1:33, approvedBy2:34, approvedDate2:35,
   approvedBy3:36, approvedDate3:37, rejectedBy:38, rejectedDate:39,
-  rejectReason:40, agreementFileName:41, agreementFileUrl:42, description:43
+  rejectReason:40, agreementFileName:41, agreementFileUrl:42, description:43,
+  brokerFeeType:44, brokerFeeCurrency:45, brokerFeePrice:46
 };
-const COL_COUNT = 44;
+const COL_COUNT = 47;
 const DRAFT_TABLE_NAME = "TradeDealDrafts";   // must match the Excel Table name you create
 // Small generic key/value settings table. Currently holds one row:
 // key="dealIdStart", value=the lowest 5-digit number the next new Deal ID
@@ -1586,12 +1589,15 @@ function applyDraftData(data){
     const el = document.getElementById(id);
     if(el) el.checked = true;
   });
+  updateBrokerUi();
+  updateBrokerFeeUi();
   const n = parseInt(document.getElementById('trade-count').value, 10);
   for(let i=1;i<=n;i++){
     updateDealField(i);
     const dealEl = document.getElementById('t'+i+'-m-deal');
     if(dealEl && data.allValues && data.allValues['t'+i+'-m-deal'] !== undefined) dealEl.value = data.allValues['t'+i+'-m-deal'];
     handleMatchingChange(i);
+    syncTechCheckboxesFromHidden(i);
   }
   refreshRoleDependentUi();
   currentDealDocId = data.dealId || val('h-dealid-num') || null;
@@ -1746,6 +1752,14 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
   if(existingRows.length){
     throw new Error((isPendingDealId(dealId) ? 'This agreement' : 'Deal ID ' + dealId) + ' has already been submitted and cannot be resaved. Start a New Agreement instead.');
   }
+  // fitRowToColumnCount() would otherwise silently truncate each row to
+  // however many columns the live table actually has — which for the
+  // 3 new Broker Fee columns means the data would just quietly vanish on
+  // save instead of failing loudly. Fail loudly instead.
+  const liveColumnCount = await getTableColumnCount(LOG_TABLE_NAME);
+  if(liveColumnCount < COL_COUNT){
+    throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing the "Broker Fee Type", "Broker Fee Currency" and "Broker Fee Price" columns. Ask an admin to add those three columns at the end of the table, then try again.');
+  }
   const nowIso = submittedDateIso || new Date().toISOString();
   const tradeCount = parseInt(document.getElementById('trade-count').value, 10) || 1;
   const rowsToWrite = [];
@@ -1795,6 +1809,9 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
     row[MC.rejectedDate] = '';
     row[MC.rejectReason] = '';
     row[MC.description] = val('h-description');
+    row[MC.brokerFeeType] = brokerFeeTypeValue();
+    row[MC.brokerFeeCurrency] = brokerFeeTypeValue() ? val('h-broker-fee-currency') : '';
+    row[MC.brokerFeePrice] = brokerFeeTypeValue() ? val('h-broker-fee-price') : '';
     rowsToWrite.push(row);
   }
   await addTableRows(LOG_TABLE_NAME, rowsToWrite);
@@ -2196,7 +2213,7 @@ document.addEventListener('click', (e)=>{
 
 
 const COUNTRIES = ["MY","BN","CN","JP","SA","TH","IN","PH","SG","VN","INDO","AUS","TW"];
-const TECHS = ["SLR","ANY","GEO","BIO","HYD","BGS","SHY","LHY","CC","WND","S/WND"];
+const TECHS = ["SLR","ANY","GEO","BIO","HYD","BGS","SHY","LHY","CC","WND"];
 
 // Hardcoded code -> full name lookups for the Customer version output (per
 // the reference sheet). Keys are matched case-insensitively; anything not
@@ -2217,13 +2234,27 @@ function countryFullName(code){
   return COUNTRY_FULLNAMES[key] || code;
 }
 function techFullName(code){
-  const key = String(code||'').trim().toUpperCase();
-  return TECH_FULLNAMES[key] || code;
+  const raw = String(code||'').trim();
+  if(!raw) return raw;
+  const key = raw.toUpperCase();
+  if(TECH_FULLNAMES[key]) return TECH_FULLNAMES[key];
+  // No exact match (e.g. a freshly-combined code like "GEO/BIO" that isn't
+  // one of the hardcoded combos above) — map each ticked tech individually
+  // and rejoin, so any combination of tech checkboxes resolves correctly.
+  return raw.split('/').map(part=>{
+    const partKey = part.trim().toUpperCase();
+    return TECH_FULLNAMES[partKey] || part.trim();
+  }).join('/');
 }
 const REGISTRIES = ["IREC","TIGR","GEC","Rehash","JEPX","BCX","Verra","LGC","T-REC","K-REC"];
 const ORDER_TYPES = ["Stock-In (T)","Stock-Out (T)","Stock-Out (R)"];
 const CURRENCIES = ["USD","SGD","MYR"];
 const MATCHING = ["Partially Matched","Open Position","Matched","V-Matched"];
+// Display-only label overrides for the Matching dropdown — the option's
+// value (what gets saved/written to SharePoint) is unaffected.
+const MATCHING_DISPLAY_NAMES = {
+  "V-Matched":"Matched without Agreement"
+};
 const BD_NAMES = ["Addam","Aston U","Colwen Chan","Edmund Lam","Jordan Tan","Reik Ong","Roseanne Png","Sharon Lim","Thao","TM Lim"];
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const YEARS = ["2025","2026","2027","2028","2029","2030"];
@@ -2232,10 +2263,11 @@ const YEARS = ["2025","2026","2027","2028","2029","2030"];
    Ticking "Own RECs" or "Proceed Share" swaps the "From which deal" text
    box for a dropdown of the relevant options, and the generated table fills
    in a short code for that selection rather than the option's display text. */
-const OWN_RECS_OPTIONS = ["TIGR/I-REC MY SLR","TIGR MY SLR","TIGR SG SLR","I-REC MY SLR","I-REC SG SLR"];
+const OWN_RECS_OPTIONS = ["TIGR/I-REC MY SLR","TIGR/I-REC SG SLR","TIGR MY SLR","TIGR SG SLR","I-REC MY SLR","I-REC SG SLR"];
 const PROCEED_SHARE_OPTIONS = ["Tadau","IS Energy","Aenergy","PLTM"];
 const OWN_RECS_CODE_MAP = {
   "TIGR/I-REC MY SLR":"OR-TI-MY-SLR",
+  "TIGR/I-REC SG SLR":"OR-TI-SG-SLR",
   "TIGR MY SLR":"OR-TIGR-MY-SLR",
   "TIGR SG SLR":"OR-TIGR-SG-SLR",
   "I-REC MY SLR":"OR-IREC-MY-SLR",
@@ -2308,6 +2340,52 @@ function comboHtml(id, listId, options, def){
 // fullNameMap) while the option's actual value — what val() reads, and what
 // gets saved to SharePoint — stays the original shortform code. Falls back to
 // showing the code itself if it has no entry in fullNameMap.
+// Tech is a tick-box group (a trade can be more than one tech, e.g. Solar +
+// Wind). The actual value the rest of the app reads/writes (val('tN-tech'),
+// saved to SharePoint, shown in the preview via techFullName) lives in a
+// hidden input with the same id the field always used — so every existing
+// caller keeps working unchanged. The hidden input's value is kept in sync
+// with the ticked boxes as "SLR/WND" (codes joined in TECHS order), which is
+// exactly the short-code format that gets written to SharePoint.
+function techCheckboxesHtml(n, defaultCode){
+  const def = defaultCode || 'SLR';
+  const boxes = TECHS.map(code=>{
+    const checked = code === def ? ' checked' : '';
+    return '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;font-weight:400;">'+
+      '<input type="checkbox" class="tech-checkbox" data-trade="'+n+'" value="'+code+'"'+checked+' style="width:auto;margin:0;"> '+(TECH_FULLNAMES[code]||code)+
+    '</label>';
+  }).join('');
+  return '<input type="hidden" id="t'+n+'-tech" value="'+def+'"/>'+
+    '<div class="tech-checkbox-group" id="t'+n+'-tech-boxes" style="display:flex;flex-wrap:wrap;gap:8px 16px;">'+boxes+'</div>';
+}
+// Recomputes the hidden tN-tech value from whichever boxes are ticked,
+// keeping them in TECHS order (so the code/display order is consistent
+// regardless of tick order) e.g. ticking Wind then Solar still saves SLR/WND.
+function updateTechValue(n){
+  const group = document.getElementById('t'+n+'-tech-boxes');
+  const hidden = document.getElementById('t'+n+'-tech');
+  if(!group || !hidden) return;
+  const checked = Array.from(group.querySelectorAll('input.tech-checkbox:checked')).map(cb=>cb.value);
+  const ordered = TECHS.filter(t=>checked.indexOf(t) !== -1);
+  hidden.value = ordered.join('/');
+}
+// Ticks/unticks the checkboxes to match whatever code (e.g. "SLR/WND") is
+// currently sitting in the hidden field — used after restoring a locked
+// value or a loaded draft, where the hidden field's value is set directly
+// via JS and the checkboxes need to be brought back into sync with it.
+function syncTechCheckboxesFromHidden(n){
+  const hidden = document.getElementById('t'+n+'-tech');
+  const group = document.getElementById('t'+n+'-tech-boxes');
+  if(!hidden || !group) return;
+  const codes = (hidden.value||'').split('/').map(s=>s.trim().toUpperCase()).filter(Boolean);
+  group.querySelectorAll('input.tech-checkbox').forEach(cb=>{
+    cb.checked = codes.indexOf(cb.value.toUpperCase()) !== -1;
+  });
+}
+document.addEventListener('change', (e)=>{
+  const cb = e.target.closest('.tech-checkbox');
+  if(cb) updateTechValue(cb.getAttribute('data-trade'));
+});
 function selectWithFullNamesHtml(id, codes, fullNameMap, def){
   const o = codes.map(code => {
     const label = fullNameMap[code] || code;
@@ -2325,18 +2403,39 @@ document.getElementById('header-fields').innerHTML =
   headerField('BD in-charge', selectHtml('h-bd',BD_NAMES,BD_NAMES[0]),'h-bd') +
   headerField('Order type', selectHtml('h-order',ORDER_TYPES,'Stock-In (T)'),'h-order') +
   '<div id="h-role-wrap"><label for="h-role">Buyer or Seller</label>'+
-  '<input type="text" id="h-role" value="Buyer" readonly/></div>' +
+  '<input type="text" id="h-role" value="Seller" readonly/></div>' +
   headerField('Buyer/Seller Full Name', textHtml('h-buyer','Company name'),'h-buyer') +
-  headerField('Broker (if any)', textHtml('h-broker','NA','NA'),'h-broker') +
+  '<div id="h-broker-yes-wrap" style="grid-column:1 / -1;">'+
+    '<label style="margin-bottom:6px;">Broker</label>'+
+    '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;font-weight:400;">'+
+      '<input type="checkbox" id="h-broker-yes" style="width:auto;margin:0;"> Broker involved'+
+    '</label>'+
+  '</div>'+
+  lockableField('Broker name', textHtml('h-broker','Broker name','NA'),'h-broker') +
+  '<div id="h-broker-fees-wrap" style="display:none;grid-column:1 / -1;">'+
+    '<label style="margin-bottom:6px;">Broker Fees</label>'+
+    '<div id="h-broker-fee-type-wrap" style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:10px;">'+
+      '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
+        '<input type="checkbox" id="h-broker-fee-per-rec" style="width:auto;margin:0;"> Currency + Price/RECs'+
+      '</label>'+
+      '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
+        '<input type="checkbox" id="h-broker-fee-fixed" style="width:auto;margin:0;"> Fixed price'+
+      '</label>'+
+    '</div>'+
+    '<div class="grid" id="h-broker-fee-fields-wrap" style="display:none;">'+
+      lockableField('Currency', selectHtml('h-broker-fee-currency',CURRENCIES,'USD'),'h-broker-fee-currency')+
+      lockableField('Price / RECs', textHtml('h-broker-fee-price','e.g. 0.10'),'h-broker-fee-price')+
+    '</div>'+
+  '</div>'+
   '<div id="h-description-wrap" style="grid-column:1 / -1;"><label for="h-description">Commercial Justification</label>' +
   '<textarea id="h-description" placeholder="Briefly describe this agreement, for whoever approves it — not shown to the customer"></textarea></div>';
 
 /* Buyer/Seller is derived automatically from Order type — Stock-In means we're
-   buying, Stock-Out means we're selling — and is no longer a manual selector.
+   selling, Stock-Out means we're buying — and is no longer a manual selector.
    This keeps the "Buyer or Seller" field's value, its on-screen label, the
    "Transfer Account" label, and the generated table's row labels all in sync. */
 function roleFromOrderType(orderType){
-  return (orderType || '').indexOf('Stock-In') === 0 ? 'Buyer' : 'Seller';
+  return (orderType || '').indexOf('Stock-In') === 0 ? 'Seller' : 'Buyer';
 }
 function currentRole(){
   return roleFromOrderType(val('h-order'));
@@ -2403,7 +2502,10 @@ function applyFieldLockUi(key, locked){
     const el = document.getElementById(id);
     if(el) el.disabled = locked;
   });
-  if(wrap) wrap.classList.toggle('field-locked', locked);
+  if(wrap){
+    wrap.classList.toggle('field-locked', locked);
+    wrap.querySelectorAll('input[type=checkbox]').forEach(cb=>{ cb.disabled = locked; });
+  }
   if(btn){
     btn.textContent = locked ? '🔒' : '🔓';
     btn.classList.toggle('is-locked', locked);
@@ -2428,6 +2530,10 @@ function initLocksIn(container){
     }
   });
   refreshAllDateDisplays(container);
+  container.querySelectorAll('.tech-checkbox-group').forEach(group=>{
+    const n = group.id.replace(/^t/,'').replace(/-tech-boxes$/,'');
+    syncTechCheckboxesFromHidden(n);
+  });
 }
 
 // One delegated click handler covers header fields, all trade fields, and
@@ -2456,6 +2562,8 @@ document.addEventListener('click', (e)=>{
 
 initLocksIn(document.getElementById('header-fields'));
 refreshRoleDependentUi();
+updateBrokerUi();
+updateBrokerFeeUi();
 
 /* ---- Section-level lock/persist (Details / Trades) ----
    Locking a section locks every field inside it in one go, and disables the
@@ -2546,7 +2654,8 @@ function tradeBlockHtml(n){
     '<div class="grid">'+
     lockableField('Country', selectWithFullNamesHtml('t'+n+'-country',COUNTRIES,COUNTRY_FULLNAMES,'MY'),'t'+n+'-country')+
     lockableField('Registry', comboHtml('t'+n+'-registry','t'+n+'-registry-list',REGISTRIES,'IREC'),'t'+n+'-registry')+
-    lockableField('Tech', selectWithFullNamesHtml('t'+n+'-tech',TECHS,TECH_FULLNAMES,'SLR'),'t'+n+'-tech')+
+    lockableField('Tech', techCheckboxesHtml(n,'SLR'),'t'+n+'-tech')
+      .replace('<div id=','<div style="grid-column:1 / -1;" id=')+
     lockableField('Vintage start month &amp; year',
       '<div style="display:flex;gap:6px;">'+
         selectHtml('t'+n+'-vintage-start-month', MONTHS, 'Jan')+
@@ -2575,7 +2684,7 @@ function tradeBlockHtml(n){
     
     '<!-- Matching dropdown is now at the top of BD Source Matching section -->'+
     '<div class="grid" style="margin-bottom: 12px;">'+
-      lockableField('5. Matching', selectHtml('t'+n+'-m-matching',MATCHING,'Open Position'),'t'+n+'-m-matching')+
+      lockableField('5. Matching', selectWithFullNamesHtml('t'+n+'-m-matching',MATCHING,MATCHING_DISPLAY_NAMES,'Open Position'),'t'+n+'-m-matching')+
     '</div>'+
 
     '<!-- Wrapper for matching dependent fields -->'+
@@ -2675,6 +2784,82 @@ document.addEventListener('change', (e)=>{
   }
   updateDealField(n);
 });
+
+/* ---- Broker / Broker Fees ----
+   "Broker involved" is a plain tickbox: ticked -> the broker name field is
+   shown (and required) and the Broker Fees section appears; unticked -> the
+   name field is hidden and its value is forced back to "NA", matching the
+   old default. Broker Fees itself offers two mutually-exclusive fee
+   structures (like Own RECs / Proceed Share above) — ticking one clears the
+   other, and the shared Currency/Price fields' label switches between
+   "Price / RECs" and "Fixed price" depending on which is picked. */
+function updateBrokerFeeUi(){
+  const perRec = document.getElementById('h-broker-fee-per-rec');
+  const fixed = document.getElementById('h-broker-fee-fixed');
+  const fieldsWrap = document.getElementById('h-broker-fee-fields-wrap');
+  const priceLabel = document.querySelector('label[for="h-broker-fee-price"]');
+  if(!perRec || !fixed || !fieldsWrap) return;
+  const anyChecked = perRec.checked || fixed.checked;
+  fieldsWrap.style.display = anyChecked ? 'grid' : 'none';
+  if(priceLabel) priceLabel.textContent = fixed.checked ? 'Fixed price' : 'Price / RECs';
+  if(!anyChecked){
+    const priceEl = document.getElementById('h-broker-fee-price');
+    if(priceEl) priceEl.value = '';
+  }
+}
+function updateBrokerUi(){
+  const yes = document.getElementById('h-broker-yes');
+  const nameWrap = document.getElementById('h-broker-wrap');
+  const feesWrap = document.getElementById('h-broker-fees-wrap');
+  const nameEl = document.getElementById('h-broker');
+  if(!yes) return;
+  const checked = yes.checked;
+  if(nameWrap) nameWrap.style.display = checked ? '' : 'none';
+  if(feesWrap) feesWrap.style.display = checked ? '' : 'none';
+  if(checked){
+    if(nameEl && nameEl.value === 'NA') nameEl.value = '';
+  } else {
+    if(nameEl) nameEl.value = 'NA';
+    // Unticking clears any in-progress fee selection so a hidden, stale fee
+    // doesn't silently get saved with the deal.
+    const perRec = document.getElementById('h-broker-fee-per-rec');
+    const fixed = document.getElementById('h-broker-fee-fixed');
+    const currEl = document.getElementById('h-broker-fee-currency');
+    const priceEl = document.getElementById('h-broker-fee-price');
+    if(perRec) perRec.checked = false;
+    if(fixed) fixed.checked = false;
+    if(currEl) currEl.value = 'USD';
+    if(priceEl) priceEl.value = '';
+    updateBrokerFeeUi();
+  }
+}
+document.addEventListener('change', (e)=>{
+  if(e.target && e.target.id === 'h-broker-yes') updateBrokerUi();
+});
+document.addEventListener('change', (e)=>{
+  if(e.target && e.target.id === 'h-broker-fee-per-rec' && e.target.checked){
+    const fixed = document.getElementById('h-broker-fee-fixed');
+    if(fixed) fixed.checked = false;
+    updateBrokerFeeUi();
+  } else if(e.target && e.target.id === 'h-broker-fee-fixed' && e.target.checked){
+    const perRec = document.getElementById('h-broker-fee-per-rec');
+    if(perRec) perRec.checked = false;
+    updateBrokerFeeUi();
+  } else if(e.target && (e.target.id === 'h-broker-fee-per-rec' || e.target.id === 'h-broker-fee-fixed')){
+    updateBrokerFeeUi();
+  }
+});
+// Returns '' when no broker fee applies, otherwise the human-readable fee
+// type label that also gets written to TradeDealLog's "Broker Fee Type" column.
+function brokerFeeTypeValue(){
+  const yes = document.getElementById('h-broker-yes');
+  if(!yes || !yes.checked) return '';
+  const perRec = document.getElementById('h-broker-fee-per-rec');
+  const fixed = document.getElementById('h-broker-fee-fixed');
+  if(perRec && perRec.checked) return 'Currency + Price/RECs';
+  if(fixed && fixed.checked) return 'Fixed price';
+  return '';
+}
 
 // Returns the value to fill into the generated table's "From which deal"
 // row: the mapped short code when Own RECs / Proceed Share is ticked and an
@@ -3114,6 +3299,16 @@ function detailFieldDefs(requireDealId){
     {id:'h-order', label:'Order type'},
     {id:'h-description', label:'Commercial Justification'}
   );
+  const brokerYes = document.getElementById('h-broker-yes');
+  if(brokerYes && brokerYes.checked){
+    defs.push({id:'h-broker', label:'Broker name'});
+    defs.push({id:'h-broker-fee-type', label:'Broker Fees (choose Currency + Price/RECs, or Fixed price)',
+      validate: ()=>!!brokerFeeTypeValue()});
+    if(brokerFeeTypeValue()){
+      defs.push({id:'h-broker-fee-currency', label:'Broker Fee Currency'});
+      defs.push({id:'h-broker-fee-price', label:'Broker Fee Price'});
+    }
+  }
   return defs;
 }
 // A field is valid if it has a custom validator that passes, or (by default)
