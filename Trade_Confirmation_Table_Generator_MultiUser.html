@@ -533,6 +533,19 @@
   </div>
 </div>
 
+<div id="edit-request-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
+  <div style="width:100%;max-width:640px;max-height:85vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:12px;">
+    <h2 style="margin:0;font-size:16px;">Request BD source matching change — Deal ID <span id="edit-request-modal-dealid"></span></h2>
+    <p style="margin:0;font-size:13px;color:var(--text-secondary);">This deal is already Approved, so any correction here needs a fresh Level 3 sign-off before it takes effect. The current, live values stay in place everywhere until that happens.</p>
+    <div id="edit-request-modal-fields" style="display:flex;flex-direction:column;gap:16px;"></div>
+    <div id="edit-request-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
+      <button type="button" class="secondary" id="edit-request-modal-cancel">Cancel</button>
+      <button type="button" id="edit-request-modal-submit">Submit for Level 3 approval</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* =======================================================================
    MICROSOFT SIGN-IN + SHAREPOINT EXCEL SETUP — fill these in before use.
@@ -565,12 +578,14 @@ const LOG_TABLE_NAME = "TradeDealLog";        // must match the Excel Table name
 // Approved Date (Level 2), Approved By (Level 3), Approved Date (Level 3),
 // Rejected By, Rejected Date, Rejection Comment, Agreement File Name,
 // Agreement File URL, Description, Broker Fee Type, Broker Fee Currency,
-// Broker Fee Price
+// Broker Fee Price, Pending Matching, Pending Buyer/Seller,
+// Pending Which Deal, Change Requested By, Change Requested Date
 // NOTE: if you're adding this to an existing workbook, add any new column
-// ("Broker Fee Type"/"Broker Fee Currency"/"Broker Fee Price" included) at
-// the END of the live TradeDealLog Excel
-// Table — don't insert them in the middle, or every existing column index
-// below will point at the wrong data.
+// ("Broker Fee Type"/"Broker Fee Currency"/"Broker Fee Price" included, and
+// now the 5 "Pending ..."/"Change Requested ..." columns used for
+// post-approval BD source matching change requests) at the END of the live
+// TradeDealLog Excel Table — don't insert them in the middle, or every
+// existing column index below will point at the wrong data.
 const MC = {
   salesPic:0, entity:1, agreementDate:2, dealId:3, supplyDemand:4, company:5,
   broker:6, country:7, registry:8, tech:9, matching:10, volume:11,
@@ -581,9 +596,18 @@ const MC = {
   approvedBy1:32, approvedDate1:33, approvedBy2:34, approvedDate2:35,
   approvedBy3:36, approvedDate3:37, rejectedBy:38, rejectedDate:39,
   rejectReason:40, agreementFileName:41, agreementFileUrl:42, description:43,
-  brokerFeeType:44, brokerFeeCurrency:45, brokerFeePrice:46
+  brokerFeeType:44, brokerFeeCurrency:45, brokerFeePrice:46,
+  // ---- Post-approval BD source matching change requests ----
+  // Staging area for an edit the original submitter has requested after the
+  // deal already reached Approved. Nothing here touches the live
+  // matching/buyerSeller/whichDeal columns until a Level 3 approver signs
+  // off (see requestBdMatchChange/approveBdMatchChange/rejectBdMatchChange)
+  // — so the currently-approved values stay authoritative and visible
+  // everywhere else in the app while a change is pending.
+  pendingMatching:47, pendingBuyerSeller:48, pendingWhichDeal:49,
+  pendingRequestedBy:50, pendingRequestedDate:51
 };
-const COL_COUNT = 47;
+const COL_COUNT = 52;
 const DRAFT_TABLE_NAME = "TradeDealDrafts";   // must match the Excel Table name you create
 // Small generic key/value settings table. Currently holds one row:
 // key="dealIdStart", value=the lowest 5-digit number the next new Deal ID
@@ -627,6 +651,13 @@ const STATUS_PENDING_2 = "Pending Level 2";
 const STATUS_PENDING_3 = "Pending Level 3";
 const STATUS_APPROVED = "Approved";
 const STATUS_REJECTED = "Rejected";
+// A fully Approved deal's original submitter can request a change to just
+// its BD source matching fields (Matching, Buyer/Seller, Which deal) — this
+// status means that request is sitting in the Level 3 queue. The deal's
+// live matching/buyerSeller/whichDeal values are untouched and stay visible
+// everywhere until a Level 3 approver applies (or rejects) the request; see
+// requestBdMatchChange/approveBdMatchChange/rejectBdMatchChange.
+const STATUS_PENDING_CHANGE_3 = "Pending Change - Level 3";
 
 /* ---- Deal ID is now only assigned once Level 1 approval happens ----
    Before that, a submitted agreement is tracked internally with a temporary
@@ -841,10 +872,10 @@ function applyRoleUi(){
 /* Which pending status (if any) the current user's role is allowed to act
    on. Superadmin can act on any pending stage. */
 function actionableStatusesForRole(role){
-  if(role === 'superadmin') return [STATUS_PENDING_1, STATUS_PENDING_2, STATUS_PENDING_3];
+  if(role === 'superadmin') return [STATUS_PENDING_1, STATUS_PENDING_2, STATUS_PENDING_3, STATUS_PENDING_CHANGE_3];
   if(role === 'admin1') return [STATUS_PENDING_1];
   if(role === 'admin2') return [STATUS_PENDING_2];
-  if(role === 'admin3') return [STATUS_PENDING_3];
+  if(role === 'admin3') return [STATUS_PENDING_3, STATUS_PENDING_CHANGE_3];
   return [];
 }
 function canActOnStatus(status){
@@ -895,6 +926,7 @@ const APPROVER_ROLE_FOR_STATUS = {};
 APPROVER_ROLE_FOR_STATUS[STATUS_PENDING_1] = 'admin1';
 APPROVER_ROLE_FOR_STATUS[STATUS_PENDING_2] = 'admin2';
 APPROVER_ROLE_FOR_STATUS[STATUS_PENDING_3] = 'admin3';
+APPROVER_ROLE_FOR_STATUS[STATUS_PENDING_CHANGE_3] = 'admin3';
 function emailsForRole(role){
   const seen = new Set();
   const emails = [];
@@ -977,6 +1009,32 @@ async function notifySubmitter(status, dealId, submitterEmail, reason){
     await sendMailGraph([email], subject, html);
   }catch(err){
     console.error('Outcome notification email failed', err);
+  }
+}
+
+// Emails the original submitter once their post-approval BD source matching
+// change request is resolved — either applied (Level 3 approved it) or
+// rejected. Separate from notifySubmitter, which only covers the original
+// 3-level approval chain.
+async function notifyChangeSubmitter(dealId, submitterEmail, outcome, reason){
+  const email = (submitterEmail || '').trim();
+  if(!email){
+    console.warn('No submitter email on file — skipping change-outcome notification for Deal ID ' + dealId);
+    return;
+  }
+  const link = dealDeepLink(dealId);
+  const displayId = friendlyDealId(dealId);
+  const label = 'Deal ID <strong>' + escapeHtml(displayId) + '</strong>';
+  const applied = outcome === 'applied';
+  const subject = (applied ? 'Change approved — ' : 'Change rejected — ') + displayId;
+  const html = '<p>Your requested BD source matching change for ' + label + ' has been ' +
+      (applied ? 'approved and applied.' : 'rejected.') + '</p>' +
+    (!applied && reason ? '<p><strong>Reason:</strong> ' + escapeHtml(reason) + '</p>' : '') +
+    '<p><a href="' + link + '">View it in the Trade Confirmation app</a></p>';
+  try{
+    await sendMailGraph([email], subject, html);
+  }catch(err){
+    console.error('Change-outcome notification email failed', err);
   }
 }
 
@@ -1971,6 +2029,131 @@ async function rejectDeal(dealId, reason){
   await notifySubmitter(STATUS_REJECTED, dealId, matching[0].values[0][MC.submittedBy], trimmedReason);
   await loadHistory();
 }
+/* ---- Post-approval BD source matching change requests ----
+   Only the original submitter, and only once a deal is fully Approved, can
+   ask to correct its Matching / Buyer-Seller / Which deal fields (see the
+   "Request edit" button on "My saved confirmations"). The new values are
+   staged in the pending* columns and the deal's Status moves to
+   "Pending Change - Level 3" — exactly like a normal pending stage, it shows
+   up in the Level 3/Superadmin Approval queue — while the live
+   matching/buyerSeller/whichDeal columns (and everything already written to
+   the "Approved" SharePoint list) are left untouched until that approval
+   happens. edits is an array of {matching, buyerSeller, whichDeal}, one per
+   product row, in the same order as the deal's rows sorted by index. */
+async function requestBdMatchChange(dealId, edits){
+  if(!dealId) return;
+  const rows = await getTableRows(LOG_TABLE_NAME);
+  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
+  if(!matching.length) throw new Error('Could not find this deal.');
+  const currentStatus = matching[0].values[0][MC.status];
+  if(currentStatus !== STATUS_APPROVED) throw new Error('You can only request a change to a fully Approved deal.');
+  const myEmail = (currentAccount.username || '').toLowerCase();
+  if((matching[0].values[0][MC.submittedBy] || '').toLowerCase() !== myEmail){
+    throw new Error('Only the original submitter can request a change to this deal.');
+  }
+  const liveColumnCount = await getTableColumnCount(LOG_TABLE_NAME);
+  if(liveColumnCount < COL_COUNT){
+    throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing the "Pending Matching", "Pending Buyer/Seller", "Pending Which Deal", "Change Requested By" and "Change Requested Date" columns. Ask an admin to add those five columns at the end of the table, then try again.');
+  }
+  const nowIso = new Date().toISOString();
+  for(let i = 0; i < matching.length; i++){
+    const r = matching[i];
+    const edit = edits[i] || {};
+    const values = r.values[0].slice();
+    values[MC.pendingMatching] = edit.matching || '';
+    values[MC.pendingBuyerSeller] = edit.buyerSeller || '';
+    values[MC.pendingWhichDeal] = edit.whichDeal || '';
+    values[MC.pendingRequestedBy] = currentAccount.username;
+    values[MC.pendingRequestedDate] = nowIso;
+    values[MC.status] = STATUS_PENDING_CHANGE_3;
+    // Clear out any note from a previous, already-resolved change request
+    // so it doesn't linger next to this new one.
+    values[MC.rejectedBy] = '';
+    values[MC.rejectedDate] = '';
+    values[MC.rejectReason] = '';
+    await updateTableRow(LOG_TABLE_NAME, r.index, values);
+  }
+  await notifyNextApprover(STATUS_PENDING_CHANGE_3, dealId, matching[0].values[0][MC.description]);
+  await loadHistory();
+}
+// Applies a pending BD source matching change: copies pendingMatching/
+// pendingBuyerSeller/pendingWhichDeal into the live columns, clears the
+// staging columns, puts Status back to Approved, and — same as the original
+// final sign-off — appends a fresh row to the "Approved" SharePoint list
+// (APPROVED_LIST_NAME) for each product so that list keeps a full history of
+// every change ever made, all still tagged with the same Agreement ID /
+// Deal ID (the UID that ties every one of these rows back to the product).
+async function approveBdMatchChange(dealId){
+  if(!dealId) return;
+  const rows = await getTableRows(LOG_TABLE_NAME);
+  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
+  if(!matching.length) return;
+  const currentStatus = matching[0].values[0][MC.status];
+  if(currentStatus !== STATUS_PENDING_CHANGE_3) throw new Error('This deal is not awaiting a change approval.');
+  if(!canActOnStatus(STATUS_PENDING_CHANGE_3)) throw new Error('You are not able to approve this change.');
+  const nowIso = new Date().toISOString();
+  const submitterEmail = matching[0].values[0][MC.submittedBy];
+  const approvedListErrors = [];
+  let tradeNum = 0;
+  for(const r of matching){
+    tradeNum++;
+    const values = r.values[0].slice();
+    values[MC.matching] = values[MC.pendingMatching];
+    values[MC.buyerSeller] = values[MC.pendingBuyerSeller];
+    values[MC.whichDeal] = values[MC.pendingWhichDeal];
+    values[MC.pendingMatching] = '';
+    values[MC.pendingBuyerSeller] = '';
+    values[MC.pendingWhichDeal] = '';
+    values[MC.pendingRequestedBy] = '';
+    values[MC.pendingRequestedDate] = '';
+    values[MC.status] = STATUS_APPROVED;
+    values[MC.approvedBy3] = currentAccount.username;
+    values[MC.approvedDate3] = nowIso;
+    await updateTableRow(LOG_TABLE_NAME, r.index, values);
+    try{
+      await addApprovedDealToList(values);
+    }catch(err){
+      console.error('Could not copy Product ' + tradeNum + '\'s change into the "' + APPROVED_LIST_NAME + '" list — check that its column internal names match what this app sends (see the fields{} object in addApprovedDealToList).', err);
+      approvedListErrors.push('Product ' + tradeNum + ': ' + err.message);
+    }
+  }
+  await notifyChangeSubmitter(dealId, submitterEmail, 'applied');
+  await loadHistory();
+  if(approvedListErrors.length){
+    alert('The change was approved and applied, but couldn\'t be copied into the "' + APPROVED_LIST_NAME + '" list for:\n' + approvedListErrors.join('\n'));
+  }
+}
+// Rejects a pending BD source matching change: discards the staged pending*
+// values (the live, already-Approved data was never touched) and puts
+// Status back to Approved with a comment the submitter can see.
+async function rejectBdMatchChange(dealId, reason){
+  if(!dealId) return;
+  const trimmedReason = (reason || '').trim();
+  if(!trimmedReason) throw new Error('A comment is required so the submitter knows why this change was rejected.');
+  const rows = await getTableRows(LOG_TABLE_NAME);
+  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  if(!matching.length) return;
+  const currentStatus = matching[0].values[0][MC.status];
+  if(currentStatus !== STATUS_PENDING_CHANGE_3) throw new Error('This deal is not awaiting a change approval.');
+  if(!canActOnStatus(STATUS_PENDING_CHANGE_3)) throw new Error('You are not able to reject this change.');
+  const nowIso = new Date().toISOString();
+  const submitterEmail = matching[0].values[0][MC.submittedBy];
+  for(const r of matching){
+    const values = r.values[0].slice();
+    values[MC.status] = STATUS_APPROVED;
+    values[MC.pendingMatching] = '';
+    values[MC.pendingBuyerSeller] = '';
+    values[MC.pendingWhichDeal] = '';
+    values[MC.pendingRequestedBy] = '';
+    values[MC.pendingRequestedDate] = '';
+    values[MC.rejectedBy] = currentAccount.username;
+    values[MC.rejectedDate] = nowIso;
+    values[MC.rejectReason] = trimmedReason;
+    await updateTableRow(LOG_TABLE_NAME, r.index, values);
+  }
+  await notifyChangeSubmitter(dealId, submitterEmail, 'rejected', trimmedReason);
+  await loadHistory();
+}
 function groupByDealId(rows){
   const groups = {};
   const order = [];
@@ -1991,7 +2174,7 @@ async function loadHistory(){
     const mineGroups = groupByDealId(
       rows.filter(r => (String(r.values[0][MC.submittedBy] || '')).toLowerCase() === myEmail)
     ).sort((a,b)=> String(b.rows[0].values[0][MC.submittedDate]||'').localeCompare(String(a.rows[0].values[0][MC.submittedDate]||'')));
-    renderHistoryTable(listEl, mineGroups, {showOwner:false, showActions:false});
+    renderHistoryTable(listEl, mineGroups, {showOwner:false, showActions:false, showRequestEdit:true});
 
     if(isAdmin){
       const allGroups = groupByDealId(rows)
@@ -2011,8 +2194,19 @@ async function loadHistory(){
 }
 function statusBadge(status){
   const s = status || STATUS_PENDING_1;
-  const color = s === STATUS_APPROVED ? '#1f7a4d' : (s === STATUS_REJECTED ? '#8a2d1f' : '#8a6d1f');
+  const color = s === STATUS_APPROVED ? '#1f7a4d'
+    : s === STATUS_REJECTED ? '#8a2d1f'
+    : s === STATUS_PENDING_CHANGE_3 ? '#7a4d9f'
+    : '#8a6d1f';
   return '<span style="font-weight:600;color:'+color+';">'+escapeHtml(s)+'</span>';
+}
+// MATCHING_DISPLAY_NAMES-aware label for the Matching dropdown's stored
+// value — same lookup the generated table itself uses, kept here so the
+// change-request diff (below) shows the same wording a BD would recognise.
+function matchingDisplayLabel(code){
+  const raw = String(code||'').trim();
+  if(!raw) return '(blank)';
+  return MATCHING_DISPLAY_NAMES[raw] || raw;
 }
 // Short "L1 ✓ · L2 ✓ · L3 ✓" trail of whoever has signed off so far — the
 // email address itself is only shown as a hover tooltip (title attribute),
@@ -2028,6 +2222,7 @@ function renderHistoryTable(el, groups, opts){
   opts = opts || {};
   const showOwner = !!opts.showOwner;
   const showActions = !!opts.showActions;
+  const showRequestEdit = !!opts.showRequestEdit;
   const colCount = showOwner ? 7 : 6;
   if(!groups.length){
     el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">'+escapeHtml(opts.emptyText || 'No saved confirmations yet.')+'</p>';
@@ -2049,6 +2244,7 @@ function renderHistoryTable(el, groups, opts){
     const agreementLink = agreementUrl
       ? '<div style="font-size:11px;margin-top:2px;"><a href="'+escapeHtml(agreementUrl)+'" target="_blank" rel="noopener">📄 View agreement</a></div>'
       : '';
+    const canRequestEdit = showRequestEdit && status === STATUS_APPROVED;
     html += '<tr style="border-top:1px solid var(--border);">' +
       (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[MC.salesPic]||'')+'</td>' : '') +
       '<td style="padding:6px;">'+(isPendingDealId(v[MC.dealId]) ? '-' : escapeHtml(friendlyDealId(v[MC.dealId])))+'</td>' +
@@ -2063,12 +2259,44 @@ function renderHistoryTable(el, groups, opts){
         '<button type="button" class="secondary history-view-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;">View</button>' +
         (canAct ? ' <button type="button" class="secondary history-approve-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;">Approve</button>' +
                   ' <button type="button" class="secondary history-reject-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;color:#8a2d1f;border-color:#c1493a;">Reject</button>' : '') +
+        (canRequestEdit ? ' <button type="button" class="secondary history-request-edit-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;">Request edit</button>' : '') +
       '</td>' +
     '</tr>';
     if(status === STATUS_REJECTED && v[MC.rejectReason]){
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
         '<div style="background:#fdecea;border:1px solid #e2a49a;color:#8a2d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
         '<strong>Rejected'+(v[MC.rejectedBy]?(' by '+escapeHtml(v[MC.rejectedBy])):'')+':</strong> '+escapeHtml(v[MC.rejectReason]) +
+        '</div></td></tr>';
+    }
+    // A resolved change request's rejection note — status is back to
+    // Approved by the time this shows, so it doesn't collide with the block
+    // above (which only fires for a fully Rejected deal).
+    if(status === STATUS_APPROVED && v[MC.rejectReason]){
+      html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
+        '<div style="background:#fdecea;border:1px solid #e2a49a;color:#8a2d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
+        '<strong>Change request rejected'+(v[MC.rejectedBy]?(' by '+escapeHtml(v[MC.rejectedBy])):'')+':</strong> '+escapeHtml(v[MC.rejectReason]) +
+        '</div></td></tr>';
+    }
+    if(status === STATUS_PENDING_CHANGE_3){
+      const rows = g.rows.map((r, idx)=>{
+        const rv = r.values[0];
+        const lines = [];
+        if((rv[MC.matching]||'') !== (rv[MC.pendingMatching]||'')){
+          lines.push('Matching: <s>'+escapeHtml(matchingDisplayLabel(rv[MC.matching]))+'</s> → <strong>'+escapeHtml(matchingDisplayLabel(rv[MC.pendingMatching]))+'</strong>');
+        }
+        if((rv[MC.buyerSeller]||'') !== (rv[MC.pendingBuyerSeller]||'')){
+          lines.push('Buyer/Seller: <s>'+escapeHtml(rv[MC.buyerSeller]||'(blank)')+'</s> → <strong>'+escapeHtml(rv[MC.pendingBuyerSeller]||'(blank)')+'</strong>');
+        }
+        if((rv[MC.whichDeal]||'') !== (rv[MC.pendingWhichDeal]||'')){
+          lines.push('Which deal: <s>'+escapeHtml(rv[MC.whichDeal]||'(blank)')+'</s> → <strong>'+escapeHtml(rv[MC.pendingWhichDeal]||'(blank)')+'</strong>');
+        }
+        if(!lines.length) return '';
+        return '<div style="margin-top:'+(idx>0?'6px':'0')+';">'+(g.rows.length>1?'<strong>Product '+(idx+1)+':</strong> ':'')+lines.join(' · ')+'</div>';
+      }).join('');
+      const requestedBy = v[MC.pendingRequestedBy] ? ' by '+escapeHtml(v[MC.pendingRequestedBy]) : '';
+      html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
+        '<div style="background:#f2ecf7;border:1px solid #d3bfe6;color:#4a2d63;border-radius:6px;padding:8px 10px;font-size:12px;">' +
+        '<strong>BD source matching change requested'+requestedBy+':</strong>' + rows +
         '</div></td></tr>';
     }
     if(v[MC.description] && status === STATUS_PENDING_1){
@@ -2216,13 +2444,91 @@ document.getElementById('reject-modal-submit').addEventListener('click', async (
   errEl.style.display = 'none';
   btn.disabled = true;
   try{
-    await rejectDeal(dealId, reason);
+    if(submittedDealStatus(dealId) === STATUS_PENDING_CHANGE_3){
+      await rejectBdMatchChange(dealId, reason);
+    }else{
+      await rejectDeal(dealId, reason);
+    }
     closeRejectModal();
   }catch(err){
     errEl.textContent = err.message;
     errEl.style.display = 'block';
   }finally{
     btn.disabled = false;
+  }
+});
+let editRequestModalDealId = null;
+// Populates one editable block per product on the deal, prefilled from its
+// current (live, already-Approved) Matching/Buyer-Seller/Which deal values.
+// Deliberately only these three fields — the rest of an Approved deal's
+// data stays locked; this is BD source matching only.
+function openEditRequestModal(dealId){
+  editRequestModalDealId = dealId;
+  document.getElementById('edit-request-modal-dealid').textContent = friendlyDealId(dealId);
+  document.getElementById('edit-request-modal-error').style.display = 'none';
+  const group = logRowsCache
+    .filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId)
+    .sort((a,b)=> a.index - b.index);
+  const fieldsEl = document.getElementById('edit-request-modal-fields');
+  fieldsEl.innerHTML = group.map((r, idx)=>{
+    const v = r.values[0];
+    const matchOptions = MATCHING.map(m =>
+      '<option value="'+escapeHtml(m)+'"'+(m===v[MC.matching]?' selected':'')+'>'+escapeHtml(MATCHING_DISPLAY_NAMES[m]||m)+'</option>'
+    ).join('');
+    const label = group.length > 1 ? 'Product ' + (idx+1) : 'Product';
+    return '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;">' +
+      '<p style="margin:0;font-size:13px;font-weight:600;">'+escapeHtml(label)+'</p>' +
+      '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Matching</label>' +
+        '<select class="edit-request-matching" data-idx="'+idx+'">'+matchOptions+'</select></div>' +
+      '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Buyer/Seller</label>' +
+        '<input type="text" class="edit-request-buyerseller" data-idx="'+idx+'" value="'+escapeHtml(v[MC.buyerSeller]||'')+'"/></div>' +
+      '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Which deal</label>' +
+        '<input type="text" class="edit-request-whichdeal" data-idx="'+idx+'" value="'+escapeHtml(v[MC.whichDeal]||'')+'"/></div>' +
+      '</div>';
+  }).join('');
+  document.getElementById('edit-request-modal-overlay').style.display = 'flex';
+}
+function closeEditRequestModal(){
+  document.getElementById('edit-request-modal-overlay').style.display = 'none';
+  document.getElementById('edit-request-modal-fields').innerHTML = '';
+  editRequestModalDealId = null;
+}
+document.getElementById('edit-request-modal-cancel').addEventListener('click', closeEditRequestModal);
+document.getElementById('edit-request-modal-overlay').addEventListener('click', (e)=>{
+  if(e.target.id === 'edit-request-modal-overlay') closeEditRequestModal();
+});
+document.getElementById('edit-request-modal-submit').addEventListener('click', async ()=>{
+  const dealId = editRequestModalDealId;
+  const errEl = document.getElementById('edit-request-modal-error');
+  const btn = document.getElementById('edit-request-modal-submit');
+  errEl.style.display = 'none';
+  const edits = [];
+  document.querySelectorAll('#edit-request-modal-fields .edit-request-matching').forEach(sel=>{
+    const idx = parseInt(sel.getAttribute('data-idx'), 10);
+    edits[idx] = edits[idx] || {};
+    edits[idx].matching = sel.value;
+  });
+  document.querySelectorAll('#edit-request-modal-fields .edit-request-buyerseller').forEach(inp=>{
+    const idx = parseInt(inp.getAttribute('data-idx'), 10);
+    edits[idx] = edits[idx] || {};
+    edits[idx].buyerSeller = inp.value;
+  });
+  document.querySelectorAll('#edit-request-modal-fields .edit-request-whichdeal').forEach(inp=>{
+    const idx = parseInt(inp.getAttribute('data-idx'), 10);
+    edits[idx] = edits[idx] || {};
+    edits[idx].whichDeal = inp.value;
+  });
+  btn.disabled = true;
+  btn.textContent = 'Submitting…';
+  try{
+    await requestBdMatchChange(dealId, edits);
+    closeEditRequestModal();
+  }catch(err){
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
+  }finally{
+    btn.disabled = false;
+    btn.textContent = 'Submit for Level 3 approval';
   }
 });
 document.addEventListener('click', (e)=>{
@@ -2238,8 +2544,18 @@ document.addEventListener('click', (e)=>{
   const approveBtn = e.target.closest('.history-approve-btn');
   if(approveBtn){
     const dealId = approveBtn.getAttribute('data-dealid');
-    if(submittedDealStatus(dealId) === STATUS_PENDING_2){
+    const dealStatus = submittedDealStatus(dealId);
+    if(dealStatus === STATUS_PENDING_2){
       openApproveModal(dealId);
+      return;
+    }
+    if(dealStatus === STATUS_PENDING_CHANGE_3){
+      if(confirm('Approve this BD source matching change for Deal ID ' + friendlyDealId(dealId) + '? The new values will be applied immediately and copied into the "' + APPROVED_LIST_NAME + '" list.')){
+        approveBtn.disabled = true;
+        approveBdMatchChange(dealId)
+          .catch(err=>{ console.error('Change approval failed', err); alert('Change approval failed: ' + err.message); })
+          .finally(()=>{ approveBtn.disabled = false; });
+      }
       return;
     }
     const confirmLabel = isPendingDealId(dealId) ? 'this agreement' : 'Deal ID ' + friendlyDealId(dealId);
@@ -2252,6 +2568,11 @@ document.addEventListener('click', (e)=>{
   const rejectBtn = e.target.closest('.history-reject-btn');
   if(rejectBtn){
     openRejectModal(rejectBtn.getAttribute('data-dealid'));
+    return;
+  }
+  const requestEditBtn = e.target.closest('.history-request-edit-btn');
+  if(requestEditBtn){
+    openEditRequestModal(requestEditBtn.getAttribute('data-dealid'));
   }
 });
 
