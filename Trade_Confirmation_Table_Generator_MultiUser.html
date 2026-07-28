@@ -376,7 +376,7 @@
     <span>Signed in as <strong id="user-email-label"></strong><span id="user-role-label"></span></span>
     <div class="right">
       <span id="draft-status"></span>
-      <button type="button" id="new-confirmation-btn" class="secondary">New Agreement</button>
+      <button type="button" id="new-confirmation-btn" class="secondary">Reset data</button>
       <button type="button" id="signout-btn" class="secondary">Sign out</button>
     </div>
   </div>
@@ -1620,7 +1620,7 @@ async function loadDraftAndHistory(){
     draftRowIndex = mine ? mine.index : null;
     if(mine){
       try{ applyDraftData(JSON.parse(mine.values[0][1])); setDraftStatus('Draft loaded'); }
-      catch(e){ console.error('Draft could not be read', e); setDraftStatus('Draft retrieve error, please press New Agreement to start.'); }
+      catch(e){ console.error('Draft could not be read', e); setDraftStatus('Draft retrieve error, please press Reset data to start.'); }
     }else{
       setDraftStatus('New draft — Deal ID is assigned once Level 1 approves your saved agreement.');
     }
@@ -1691,7 +1691,7 @@ function lockSubmittedForm(dealId){
     ' has been submitted (status: ' + escapeHtml(status || STATUS_PENDING_1) +
     ') and can no longer be edited — it is locked permanently, even if it\'s rejected.</strong> ' +
     (isPendingDealId(dealId) ? 'A Deal ID will be assigned once Level 1 approves, and you\'ll get an email then. ' : '') +
-    'To submit a new agreement, use "New Agreement" above — it will get its own Deal ID.';
+    'To start a new agreement, use "Reset data" above — it will get its own Deal ID.';
   banner.style.display = 'block';
 
   // "Generate table" is gone once locked (nothing left to regenerate), so
@@ -1726,13 +1726,23 @@ document.addEventListener('change', ()=>{
   draftSaveTimer = setTimeout(saveDraft, 1200);
 });
 
-document.getElementById('new-confirmation-btn').addEventListener('click', async ()=>{
-  if(!currentAccount) return;
-  if(!confirm('Start a new agreement? Locked fields are kept; unlocked fields clear. This new agreement will get its own Deal ID once Level 1 approves it. Your saved history is not affected.')) return;
+// Clears the current in-progress draft and reloads to a blank form. Locked
+// fields are kept (they're persisted separately from the draft row) and
+// unlocked fields come back empty because the page starts fresh. Used both
+// by the "Reset data" button (explicit wipe, with confirmation) and
+// automatically right after a successful save (no confirmation needed —
+// nothing is being lost, the just-submitted agreement is safely saved and
+// still visible in Saved agreements).
+async function resetToBlankForm(){
   try{
     if(draftRowIndex !== null) await deleteTableRow(DRAFT_TABLE_NAME, draftRowIndex);
   }catch(err){ console.error('Could not clear draft row', err); }
   location.reload();
+}
+document.getElementById('new-confirmation-btn').addEventListener('click', async ()=>{
+  if(!currentAccount) return;
+  if(!confirm('Reset all data? Locked fields are kept; unlocked fields clear. This starts a fresh agreement with its own Deal ID once Level 1 approves it. Your saved history is not affected.')) return;
+  await resetToBlankForm();
 });
 
 /* ---- Saved agreements (the shared, restructured TradeDealLog table) ----
@@ -1751,7 +1761,7 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
   const rows = await getTableRows(LOG_TABLE_NAME);
   const existingRows = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
   if(existingRows.length){
-    throw new Error((isPendingDealId(dealId) ? 'This agreement' : 'Deal ID ' + dealId) + ' has already been submitted and cannot be resaved. Start a New Agreement instead.');
+    throw new Error((isPendingDealId(dealId) ? 'This agreement' : 'Deal ID ' + dealId) + ' has already been submitted and cannot be resaved. Use Reset data to start a new agreement instead.');
   }
   // fitRowToColumnCount() would otherwise silently truncate each row to
   // however many columns the live table actually has — which for the
@@ -3567,9 +3577,12 @@ document.getElementById('save-agreement-btn').addEventListener('click', async ()
     await loadHistory(); // refresh logRowsCache so dealAlreadySubmitted() sees this deal
     await notifyNextApprover(STATUS_PENDING_1, currentDealDocId, val('h-description'));
 
-    note.textContent = 'Submitted — awaiting Level 1 approval. A Deal ID will be assigned once that approval happens, and you\'ll get an email then.';
+    note.textContent = 'Submitted — awaiting Level 1 approval. A Deal ID will be assigned once that approval happens, and you\'ll get an email then. Starting a new agreement…';
     note.style.display = 'block';
-    lockSubmittedForm(currentDealDocId);
+    // Give the person a moment to read the confirmation, then automatically
+    // move on to a blank agreement — no need to click Reset data unless
+    // they actually want to wipe locked fields too.
+    setTimeout(resetToBlankForm, 1500);
   }catch(err){
     console.error('Save agreement failed', err);
     note.textContent = 'Save failed: ' + err.message;
