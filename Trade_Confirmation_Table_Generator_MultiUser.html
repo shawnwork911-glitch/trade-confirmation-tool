@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Agreement Table Generator</title>
+<title>Commercial Approval Form</title>
 <script src="https://unpkg.com/@azure/msal-browser@3/lib/msal-browser.min.js"></script>
 <style>
   :root{
@@ -95,12 +95,40 @@
     outline:none;
     border-color:var(--border);
   }
+  /* Native <input type=date> renders its on-screen text using the browser's
+     OS/locale settings, which ignores the page's lang attribute in some
+     browsers (notably Chromium) — so the same field can show dd/mm/yyyy for
+     one person and mm/dd/yyyy for another. To force a consistent dd/mm/yyyy
+     everywhere, the native input's own text is hidden (kept only for its
+     calendar-picker button and underlying value) and a span on top displays
+     our own formatted text instead. */
+  .date-field-wrap{position:relative;}
+  .date-field-wrap input.date-native{
+    color:transparent;
+    -webkit-text-fill-color:transparent;
+  }
+  .date-field-wrap .date-display{
+    position:absolute;
+    left:10px;
+    right:28px;
+    top:0;
+    bottom:0;
+    display:flex;
+    align-items:center;
+    pointer-events:none;
+    font-size:14px;
+    color:var(--text);
+    overflow:hidden;
+    white-space:nowrap;
+  }
+  .date-field-wrap .date-display.is-placeholder{color:var(--text-secondary);}
+  .field-locked .date-field-wrap .date-display{color:var(--text-secondary);}
   .trade-count-row{
     display:flex;
     align-items:center;
     gap:12px;
   }
-  select#trade-count{width:90px;}
+  #trade-count{width:90px;}
   .trade-block{
     border:1px solid var(--border);
     border-radius:var(--radius);
@@ -348,7 +376,7 @@
     <span>Signed in as <strong id="user-email-label"></strong><span id="user-role-label"></span></span>
     <div class="right">
       <span id="draft-status"></span>
-      <button type="button" id="new-confirmation-btn" class="secondary">New Agreement</button>
+      <button type="button" id="new-confirmation-btn" class="secondary">Reset data</button>
       <button type="button" id="signout-btn" class="secondary">Sign out</button>
     </div>
   </div>
@@ -356,7 +384,7 @@
   <div id="submitted-lock-banner" style="display:none;background:#fdf3e7;border:1px solid #e8c99a;color:#8a6d1f;border-radius:var(--radius);padding:12px 16px;font-size:13px;line-height:1.5;"></div>
 
   <div>
-    <h1>Agreement Table Generator</h1>
+    <h1>Commercial Approval Form</h1>
     <p class="subtitle" id="page-subtitle">Fill in the details below, generate the Customer version table, then copy and send to your customer.</p>
   </div>
 
@@ -367,25 +395,18 @@
       <p class="card-title">Details</p>
       <button type="button" class="section-lock" data-section="header" title="Lock this whole section">🔓 Lock section</button>
     </div>
-    <p id="lock-note">Click the 🔓 next to any field to lock just that field, or use "Lock section" above to lock every field in Details at once. Locked fields stay filled in and protected the next time you open this file, even when you change the number of trades. While a section is locked, its individual field locks are held in place — unlock the section to edit again.</p>
+    <p id="lock-note">Click the 🔓 next to any field to lock just that field, or use "Lock section" above to lock every field in Details at once. Locked fields stay filled in and protected the next time you open this file, even when you change the number of products. While a section is locked, its individual field locks are held in place — unlock the section to edit again.</p>
     <div id="header-fields" class="grid"></div>
   </div>
 
   <div class="card">
     <div class="card-title-row">
-      <p class="card-title">Trades</p>
+      <p class="card-title">Products</p>
       <button type="button" class="section-lock" data-section="trades" title="Lock this whole section">🔓 Lock section</button>
     </div>
     <div class="trade-count-row">
-      <label style="margin:0;">Number of trades</label>
-      <select id="trade-count">
-        <option value="1" selected>1</option>
-        <option value="2">2</option>
-        <option value="3">3</option>
-        <option value="4">4</option>
-        <option value="5">5</option>
-        <option value="6">6</option>
-      </select>
+      <label style="margin:0;">Number of products</label>
+      <input type="number" id="trade-count" min="1" max="50" step="1" value="1" inputmode="numeric"/>
     </div>
     <div id="trades-container" style="margin-top:16px;"></div>
   </div>
@@ -489,6 +510,7 @@
     <p style="margin:0;font-size:13px;color:var(--text-secondary);">Level 2 approval requires the signed agreement to be attached. Once approved, it becomes viewable to everyone from this deal's row. Max 4 MB.</p>
     <label style="margin:4px 0 0;">Agreement file (required)</label>
     <input type="file" id="approve-modal-file" accept=".pdf,.doc,.docx"/>
+    <div id="approve-modal-transfer-fields" style="display:flex;flex-direction:column;gap:8px;"></div>
     <div id="approve-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
       <button type="button" class="secondary" id="approve-modal-cancel">Cancel</button>
@@ -511,15 +533,15 @@
   </div>
 </div>
 
-<div id="edit-matching-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
-  <div style="width:100%;max-width:700px;max-height:85vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:10px;">
-    <h2 style="margin:0;font-size:16px;">Correct matching info — Deal ID <span id="edit-matching-modal-dealid"></span></h2>
-    <p style="margin:0;font-size:13px;color:var(--text-secondary);">This agreement is already fully Approved. Only the BD source matching fields below can be corrected here — everything else about the agreement stays as approved. Saving sends it back for Level 3 re-approval only (Level 1 and Level 2 sign-offs already stand).</p>
-    <div id="edit-matching-modal-body"></div>
-    <div id="edit-matching-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
+<div id="edit-request-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
+  <div style="width:100%;max-width:640px;max-height:85vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:12px;">
+    <h2 style="margin:0;font-size:16px;">Request BD source matching change — Deal ID <span id="edit-request-modal-dealid"></span></h2>
+    <p style="margin:0;font-size:13px;color:var(--text-secondary);">This deal is already Approved, so any correction here needs a fresh Level 3 sign-off before it takes effect. The current, live values stay in place everywhere until that happens.</p>
+    <div id="edit-request-modal-fields" style="display:flex;flex-direction:column;gap:16px;"></div>
+    <div id="edit-request-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
-      <button type="button" class="secondary" id="edit-matching-modal-cancel">Cancel</button>
-      <button type="button" id="edit-matching-modal-submit">Save &amp; send for Level 3 re-approval</button>
+      <button type="button" class="secondary" id="edit-request-modal-cancel">Cancel</button>
+      <button type="button" id="edit-request-modal-submit">Submit for Level 3 approval</button>
     </div>
   </div>
 </div>
@@ -544,7 +566,7 @@ const SP_FILE_SHARE_URL = "https://saxonrenewables.sharepoint.com/:x:/s/Operatio
 const LOG_TABLE_NAME = "TradeDealLog";        // must match the Excel Table name you create
 // Column layout of the restructured TradeDealLog "main list" table.
 // One physical row per TRADE (a multi-trade agreement produces several rows
-// sharing the same Agreement ID). Create the Excel Table with these 46
+// sharing the same Agreement ID). Create the Excel Table with these 44
 // columns in exactly this order:
 // Sales PIC, Entity, Agreement Date, Agreement ID, Supply/Demand, Company,
 // Broker, Country, Registry, Tech, Match/Open Position, Volume (RECs),
@@ -555,16 +577,15 @@ const LOG_TABLE_NAME = "TradeDealLog";        // must match the Excel Table name
 // Approved By (Level 1), Approved Date (Level 1), Approved By (Level 2),
 // Approved Date (Level 2), Approved By (Level 3), Approved Date (Level 3),
 // Rejected By, Rejected Date, Rejection Comment, Agreement File Name,
-// Agreement File URL, Description, Matching Edit Note, Approved List Item Id
-// ("Approved List Item Id" holds the SharePoint item ID this trade got
-// copied to in the "Approved" list, once Level 3 approves it — used so a
-// later matching-info correction updates that same item instead of adding
-// a duplicate; see addApprovedDealToList.)
+// Agreement File URL, Description, Broker Fee Type, Broker Fee Currency,
+// Broker Fee Price, Pending Matching, Pending Buyer/Seller,
+// Pending Which Deal, Change Requested By, Change Requested Date
 // NOTE: if you're adding this to an existing workbook, add any new column
-// ("Description", "Matching Edit Note", and "Approved List Item Id"
-// included) at the END of the live TradeDealLog Excel Table — don't insert
-// them in the middle, or every existing column index below will point at
-// the wrong data.
+// ("Broker Fee Type"/"Broker Fee Currency"/"Broker Fee Price" included, and
+// now the 5 "Pending ..."/"Change Requested ..." columns used for
+// post-approval BD source matching change requests) at the END of the live
+// TradeDealLog Excel Table — don't insert them in the middle, or every
+// existing column index below will point at the wrong data.
 const MC = {
   salesPic:0, entity:1, agreementDate:2, dealId:3, supplyDemand:4, company:5,
   broker:6, country:7, registry:8, tech:9, matching:10, volume:11,
@@ -575,9 +596,18 @@ const MC = {
   approvedBy1:32, approvedDate1:33, approvedBy2:34, approvedDate2:35,
   approvedBy3:36, approvedDate3:37, rejectedBy:38, rejectedDate:39,
   rejectReason:40, agreementFileName:41, agreementFileUrl:42, description:43,
-  matchingEditNote:44, approvedListItemId:45, rowUid:46
+  brokerFeeType:44, brokerFeeCurrency:45, brokerFeePrice:46,
+  // ---- Post-approval BD source matching change requests ----
+  // Staging area for an edit the original submitter has requested after the
+  // deal already reached Approved. Nothing here touches the live
+  // matching/buyerSeller/whichDeal columns until a Level 3 approver signs
+  // off (see requestBdMatchChange/approveBdMatchChange/rejectBdMatchChange)
+  // — so the currently-approved values stay authoritative and visible
+  // everywhere else in the app while a change is pending.
+  pendingMatching:47, pendingBuyerSeller:48, pendingWhichDeal:49,
+  pendingRequestedBy:50, pendingRequestedDate:51
 };
-const COL_COUNT = 47;
+const COL_COUNT = 52;
 const DRAFT_TABLE_NAME = "TradeDealDrafts";   // must match the Excel Table name you create
 // Small generic key/value settings table. Currently holds one row:
 // key="dealIdStart", value=the lowest 5-digit number the next new Deal ID
@@ -621,27 +651,17 @@ const STATUS_PENDING_2 = "Pending Level 2";
 const STATUS_PENDING_3 = "Pending Level 3";
 const STATUS_APPROVED = "Approved";
 const STATUS_REJECTED = "Rejected";
-// Every trade row in a deal normally shares one status, EXCEPT while a
-// matching-info correction is in flight: resubmitMatchingInfo() only sends
-// the actually-edited trade(s) back to Pending Level 3 and leaves the rest
-// sitting at Approved untouched. dealStatus() picks whichever status is
-// "least finished" across the deal's rows, so the deal is shown/actioned as
-// still needing attention until that correction is resolved one way or
-// another. In the normal (all-rows-match) case this is just that status.
-const STATUS_PRECEDENCE = [STATUS_PENDING_1, STATUS_PENDING_2, STATUS_PENDING_3, STATUS_REJECTED, STATUS_APPROVED];
-function dealStatus(rows){
-  let best = null, bestRank = -1;
-  rows.forEach(r=>{
-    const s = r.values[0][MC.status] || STATUS_PENDING_1;
-    const rank = STATUS_PRECEDENCE.indexOf(s);
-    if(best === null || rank < bestRank){ best = s; bestRank = rank; }
-  });
-  return best || STATUS_PENDING_1;
-}
+// A fully Approved deal's original submitter can request a change to just
+// its BD source matching fields (Matching, Buyer/Seller, Which deal) — this
+// status means that request is sitting in the Level 3 queue. The deal's
+// live matching/buyerSeller/whichDeal values are untouched and stay visible
+// everywhere until a Level 3 approver applies (or rejects) the request; see
+// requestBdMatchChange/approveBdMatchChange/rejectBdMatchChange.
+const STATUS_PENDING_CHANGE_3 = "Pending Change - Level 3";
 
 /* ---- Deal ID is now only assigned once Level 1 approval happens ----
    Before that, a submitted agreement is tracked internally with a temporary
-   placeholder ("PND_<alpha>_<random>") instead of a real Deal ID — nothing
+   placeholder ("PND_<random>") instead of a real Deal ID — nothing
    about the row is a real Deal ID yet, so it must never be shown to anyone
    as if it were one. isPendingDealId()/friendlyDealId() are used everywhere
    a Deal ID would otherwise be displayed. */
@@ -852,10 +872,10 @@ function applyRoleUi(){
 /* Which pending status (if any) the current user's role is allowed to act
    on. Superadmin can act on any pending stage. */
 function actionableStatusesForRole(role){
-  if(role === 'superadmin') return [STATUS_PENDING_1, STATUS_PENDING_2, STATUS_PENDING_3];
+  if(role === 'superadmin') return [STATUS_PENDING_1, STATUS_PENDING_2, STATUS_PENDING_3, STATUS_PENDING_CHANGE_3];
   if(role === 'admin1') return [STATUS_PENDING_1];
   if(role === 'admin2') return [STATUS_PENDING_2];
-  if(role === 'admin3') return [STATUS_PENDING_3];
+  if(role === 'admin3') return [STATUS_PENDING_3, STATUS_PENDING_CHANGE_3];
   return [];
 }
 function canActOnStatus(status){
@@ -906,6 +926,7 @@ const APPROVER_ROLE_FOR_STATUS = {};
 APPROVER_ROLE_FOR_STATUS[STATUS_PENDING_1] = 'admin1';
 APPROVER_ROLE_FOR_STATUS[STATUS_PENDING_2] = 'admin2';
 APPROVER_ROLE_FOR_STATUS[STATUS_PENDING_3] = 'admin3';
+APPROVER_ROLE_FOR_STATUS[STATUS_PENDING_CHANGE_3] = 'admin3';
 function emailsForRole(role){
   const seen = new Set();
   const emails = [];
@@ -940,9 +961,10 @@ async function sendMailGraph(toEmails, subject, htmlBody){
 }
 // status = the deal's status *after* this submit/approve just happened —
 // looks up which role is now responsible and emails everyone holding it.
-// changeSummary is optional — used when a deal is sent back to Level 3 with
-// only its matching info corrected, so the approver sees exactly what
-// changed without having to compare the whole agreement by eye.
+// changeSummary is optional — used when a fully Approved deal is sent back
+// to Level 3 with only a BD source matching change requested (see
+// requestBdMatchChange), so the approver sees exactly what's being asked to
+// change without having to open the app and compare fields by eye.
 async function notifyNextApprover(status, dealId, description, changeSummary){
   const role = APPROVER_ROLE_FOR_STATUS[status];
   if(!role) return; // e.g. Approved — no next approver to notify
@@ -957,7 +979,7 @@ async function notifyNextApprover(status, dealId, description, changeSummary){
   const label = isPendingDealId(dealId) ? 'An agreement' : 'Deal ID <strong>' + escapeHtml(displayId) + '</strong>';
   const descBlock = (description && description.trim()) ? '<p><strong>Description:</strong> ' + escapeHtml(description) + '</p>' : '';
   const changeBlock = (changeSummary && changeSummary.trim())
-    ? '<p><strong>What changed (matching info correction):</strong><br>' + escapeHtml(changeSummary).replace(/\n/g,'<br>') + '</p>'
+    ? '<p><strong>What changed (BD source matching change request):</strong><br>' + escapeHtml(changeSummary).replace(/\n/g,'<br>') + '</p>'
     : '';
   const html = '<p>' + label + ' is waiting on your ' + escapeHtml(levelLabel) + ' approval.</p>' +
     descBlock +
@@ -998,27 +1020,29 @@ async function notifySubmitter(status, dealId, submitterEmail, reason){
   }
 }
 
-// Emails the submitter when a matching-info correction (resubmitMatchingInfo)
-// is rejected at Level 3 on an otherwise-Approved deal. Distinct from
-// notifySubmitter, which is for a whole deal being rejected/locked — here
-// the deal itself is untouched and stays Approved; only the correction
-// didn't go through.
-async function notifyCorrectionRejected(dealId, submitterEmail, reason){
+// Emails the original submitter once their post-approval BD source matching
+// change request is resolved — either applied (Level 3 approved it) or
+// rejected. Separate from notifySubmitter, which only covers the original
+// 3-level approval chain.
+async function notifyChangeSubmitter(dealId, submitterEmail, outcome, reason){
   const email = (submitterEmail || '').trim();
   if(!email){
-    console.warn('No submitter email on file — skipping correction-rejected notification for Deal ID ' + dealId);
+    console.warn('No submitter email on file — skipping change-outcome notification for Deal ID ' + dealId);
     return;
   }
   const link = dealDeepLink(dealId);
   const displayId = friendlyDealId(dealId);
-  const label = isPendingDealId(dealId) ? 'Your agreement (' + escapeHtml(displayId) + ')' : 'Deal ID <strong>' + escapeHtml(displayId) + '</strong>';
-  const html = '<p>' + label + ' — your matching info correction was rejected at Level 3. The affected trade\'s prior approval stands unchanged; nothing else about the deal was touched.</p>' +
-    (reason ? '<p><strong>Reason:</strong> ' + escapeHtml(reason) + '</p>' : '') +
+  const label = 'Deal ID <strong>' + escapeHtml(displayId) + '</strong>';
+  const applied = outcome === 'applied';
+  const subject = (applied ? 'Change approved — ' : 'Change rejected — ') + displayId;
+  const html = '<p>Your requested BD source matching change for ' + label + ' has been ' +
+      (applied ? 'approved and applied.' : 'rejected.') + '</p>' +
+    (!applied && reason ? '<p><strong>Reason:</strong> ' + escapeHtml(reason) + '</p>' : '') +
     '<p><a href="' + link + '">View it in the Trade Confirmation app</a></p>';
   try{
-    await sendMailGraph([email], 'Correction rejected — ' + (isPendingDealId(dealId) ? 'agreement' : displayId), html);
+    await sendMailGraph([email], subject, html);
   }catch(err){
-    console.error('Correction-rejected notification email failed', err);
+    console.error('Change-outcome notification email failed', err);
   }
 }
 
@@ -1154,7 +1178,7 @@ async function graphFetch(path, options){
     // Excel sessions expire after ~5 min idle (or a longer hard cap) — if a
     // workbook call reports the session is gone, get a fresh one and retry
     // rather than surfacing an error the person can't do anything about.
-    const sessionExpired = isWorkbookCall && /InvalidSession|SessionNotFound/i.test(text);
+    const sessionExpired = isWorkbookCall && /InvalidSessionError|SessionNotFound/i.test(text);
     if(sessionExpired && !isLastAttempt){
       await createWorkbookSession();
       continue;
@@ -1289,30 +1313,6 @@ function patchDealIdInGeneratedHtml(html, dealId){
 // depending on how Excel chose to store it) — but this one always outputs
 // DD-MM-YYYY (dashes, 4-digit year), which is what the Approved list's
 // "Delivery Date" column expects.
-// Values read back from the log for a date-like field can be an Excel
-// serial number, an ISO "YYYY-MM-DD"(-ish) string, or a "DD-MM-YYYY"
-// display string (same ambiguity as formatStoredDate/formatDeliveryDateDMY
-// above) — but a native <input type="date"> will only accept an exact
-// "YYYY-MM-DD" value and silently blanks itself on anything else. This
-// normalizes any of those stored shapes into that exact format so the
-// "Edit matching info" modal's delivery date field pre-fills correctly.
-function toDateInputValue(v){
-  if(v === '' || v === null || v === undefined) return '';
-  const str = String(v).trim();
-  if(/^\d{4}-\d{2}-\d{2}/.test(str)) return str.slice(0,10);
-  if(/^-?\d+(\.\d+)?$/.test(str)){
-    const ms = Math.round((Number(str) - 25569) * 86400 * 1000); // Excel serial date epoch -> Unix epoch
-    const d = new Date(ms);
-    if(isNaN(d.getTime())) return '';
-    const dd = String(d.getUTCDate()).padStart(2,'0');
-    const mm = String(d.getUTCMonth()+1).padStart(2,'0');
-    const yyyy = d.getUTCFullYear();
-    return yyyy+'-'+mm+'-'+dd;
-  }
-  const m = str.match(/^(\d{2})[-\/](\d{2})[-\/](\d{4})$/); // DD-MM-YYYY or DD/MM/YYYY
-  if(m) return m[3]+'-'+m[2]+'-'+m[1];
-  return '';
-}
 function formatDeliveryDateDMY(v){
   if(v === '' || v === null || v === undefined) return '';
   const str = String(v).trim();
@@ -1429,15 +1429,7 @@ async function addApprovedDealToList(values){
         'Delivery Date': values[MC.deliveryDateM],
         'Status': values[MC.status],
         'Submitted By': values[MC.submittedBy],
-        'Submitted Date': values[MC.submittedDate],
-        // Row Uid: the same stable UID already stamped on this row in
-        // TradeDealLog (see MC.rowUid / genRowUid). Sending it here is what
-        // lets the "Approved list with matched" flow match this list item
-        // back to its one exact row in the master file's SingleTrade table
-        // (via the empty "ID" column there) instead of the old 13-field
-        // match. Requires a "Row Uid" text column on this list — same
-        // pattern as the TradeDealLog fix.
-        'Row Uid': values[MC.rowUid]
+        'Submitted Date': values[MC.submittedDate]
         // Agreement File: no matching column on this list — intentionally
         // left out rather than sent-and-skipped. Add a line here (with the
         // exact display name) if a column for it is ever created.
@@ -1457,21 +1449,8 @@ async function addApprovedDealToList(values){
         console.warn('"' + APPROVED_LIST_NAME + '" list has no column matching these labels — skipped: ' + skipped.join(', '));
     }
 
-    // Always create a brand-new "Approved" list item for every approval —
-    // including a matching-info correction being re-approved at Level 3.
-    // Deliberately NOT patching a prior item by its stored
-    // "Approved List Item Id" here: that used to make a correction
-    // overwrite the earlier "Approved" list row, which erased the history
-    // of what the deal looked like before. Every approval event (original
-    // or corrected) now gets its own separate, permanent list item —
-    // "Row Uid" (below) still carries the same stable value across all of
-    // them, which is what lets the "Approved list with matched" Power
-    // Automate flow keep matching them to the one right row in the Master
-    // Folder file and overwrite it there — the Master Folder file is
-    // meant to always reflect just the latest version; this list, like
-    // TradeDealLog, is meant to keep every version.
     try{
-        const created = await graphFetch(
+        await graphFetch(
             "/sites/" + siteId +
             "/lists/" + approvedListId +
             "/items",
@@ -1480,7 +1459,6 @@ async function addApprovedDealToList(values){
             body:JSON.stringify({ fields })
         }
     );
-        return created && created.id;
     }catch(err){
         // Annotate with exactly what was sent so a failure here is diagnosable
         // from the error alone, without needing another round of screenshots —
@@ -1514,10 +1492,20 @@ async function addTableRow(tableName, values){
     body: JSON.stringify({ values: [fitRowToColumnCount(values, count)] })
   });
 }
-function genRowUid(){
-  return (window.crypto && crypto.randomUUID)
-    ? crypto.randomUUID()
-    : (Date.now().toString(36) + Math.random().toString(36).slice(2,10) + Math.random().toString(36).slice(2,10));
+// Writes several rows in ONE Graph call instead of one call per row (rows/add
+// accepts a 2-D array natively). Used by saveConfirmationToHistory so an
+// N-product deal is a single all-or-nothing write instead of N sequential
+// awaited calls — removes the "partially-written deal" failure mode entirely
+// rather than just retrying around it: if this call throws, nothing at all
+// was written for the deal, so there's no partial-row cleanup and the Deal ID
+// is free to be resubmitted immediately.
+async function addTableRows(tableName, rowsArray){
+  if(!rowsArray.length) return;
+  const count = await getTableColumnCount(tableName);
+  return graphFetch(workbookTablePath(tableName) + '/rows/add', {
+    method: 'POST',
+    body: JSON.stringify({ values: rowsArray.map(v => fitRowToColumnCount(v, count)) })
+  });
 }
 async function updateTableRow(tableName, rowIndex, values){
   const count = await getTableColumnCount(tableName);
@@ -1529,32 +1517,6 @@ async function updateTableRow(tableName, rowIndex, values){
 }
 async function deleteTableRow(tableName, rowIndex){
   return graphFetch(workbookTablePath(tableName) + '/rows/itemAt(index=' + rowIndex + ')', { method: 'DELETE' });
-}
-/* Row position in the shared Excel table (row.index) is NOT a stable
-   identifier — it shifts whenever ANY user adds or deletes ANY row
-   anywhere in the table, including concurrently with this session's own
-   in-flight edit. Caching an index from an earlier fetch and reusing it
-   for a write later is what let one person's "Edit matching info" save
-   land on a completely different deal's row.
-   The fix: every LOG_TABLE_NAME row gets a permanent rowUid at creation
-   time (see MC.rowUid), and any function that needs to WRITE to a
-   specific row (not just read it) re-resolves that row's CURRENT index
-   via this helper immediately before the write — never reusing an index
-   captured earlier in the same flow. Rows created before this rowUid
-   column existed won't have one; callers fall back to whatever index
-   they already have for those, since there's no better identifier
-   available for legacy rows. */
-async function resolveLogRowIndexByUid(uid, fallbackIndex){
-  if(!uid){
-    if(fallbackIndex == null) throw new Error('Could not identify this row to update (no rowUid and no fallback index) — reload the page and try again.');
-    return fallbackIndex;
-  }
-  const rows = await getTableRows(LOG_TABLE_NAME);
-  const row = rows.find(r => String(r.values[0][MC.rowUid] || '') === uid);
-  if(!row){
-    throw new Error('Could not find this row anymore — it may have been changed by someone else. Reload the page and try again.');
-  }
-  return row.index;
 }
 
 /* ---- Level 2 approval: agreement file upload ----
@@ -1589,18 +1551,17 @@ async function uploadAgreementFile(dealId, file){
    A Deal ID is a promise about a real, reviewed agreement — so it's no
    longer handed out the moment someone clicks "Save agreement". Instead:
      1. Save agreement gives the submission a temporary placeholder
-        ("PND_<alpha>_<random>") purely so this app can track/lock the row —
+        ("PND_<random>") purely so this app can track/lock the row —
         it is never shown to anyone as a Deal ID.
      2. Only once a Level 1 approver actually approves does assignFormalDealId()
         run (in the *approver's* session) and claim the real 5-digit number,
         overwriting the placeholder in every row of the agreement. The
         submitter is emailed once this happens (see notifyDealIdAssigned). */
 function assignPendingDealId(){
-  const alpha = val('h-dealid-alpha').replace(/[^a-zA-Z]/g,'').slice(0,3).toUpperCase();
   const rand = (window.crypto && crypto.randomUUID)
     ? crypto.randomUUID().replace(/-/g,'').slice(0,10).toUpperCase()
     : (Date.now().toString(36) + Math.random().toString(36).slice(2,8)).toUpperCase();
-  const placeholder = 'PND_' + alpha + '_' + rand;
+  const placeholder = 'PND_' + rand;
   currentDealDocId = placeholder;
   return placeholder;
 }
@@ -1613,12 +1574,8 @@ function assignPendingDealId(){
 // row per trade), which becomes the digit inserted into the ID, exactly like
 // opsDealId() used to read live off the trade-count dropdown — except this
 // runs in the approver's session, so it's derived from the stored rows
-// instead. The alpha letters were captured into the placeholder itself back
-// when the submitter saved, so a manual override of that field still
-// survives all the way through to the real Deal ID.
+// instead.
 async function assignFormalDealId(placeholderId, tradeCount){
-  const alphaMatch = /^PND_([A-Z]{0,3})_/.exec(placeholderId || '');
-  const alpha = alphaMatch ? alphaMatch[1] : '';
   const scan = async () => {
     const rows = await getTableRows(LOG_TABLE_NAME);
     let maxNum = 0;
@@ -1645,7 +1602,7 @@ async function assignFormalDealId(placeholderId, tradeCount){
     candidate += 1;
     padded = String(candidate).padStart(5,'0');
   }
-  return padded + (parseInt(tradeCount,10) || '') + alpha;
+  return padded + '-' + (parseInt(tradeCount,10) || '');
 }
 
 /* ---- Per-user draft (autosaves the in-progress form into the Drafts table) ---- */
@@ -1690,29 +1647,26 @@ function applyDraftData(data){
   suppressAutosave = true;
   document.getElementById('trade-count').value = data.tradeCount || '1';
   renderTrades();
-  // Tech tick boxes default to SLR checked on a fresh render (unlike other
-  // checkboxes, which default unchecked) — clear them first so restoring a
-  // draft ends up with exactly the saved selection, not SLR-plus-whatever
-  // was saved.
-  document.querySelectorAll('.tech-checkbox').forEach(cb=>{ cb.checked = false; });
   Object.keys(data.allValues || {}).forEach(id=>{
     const el = document.getElementById(id);
     if(el) el.value = data.allValues[id];
   });
+  refreshAllDateDisplays();
   (data.checkedIds || []).forEach(id=>{
     const el = document.getElementById(id);
     if(el) el.checked = true;
   });
+  updateBrokerUi();
+  updateBrokerFeeUi();
   const n = parseInt(document.getElementById('trade-count').value, 10);
   for(let i=1;i<=n;i++){
     updateDealField(i);
     const dealEl = document.getElementById('t'+i+'-m-deal');
     if(dealEl && data.allValues && data.allValues['t'+i+'-m-deal'] !== undefined) dealEl.value = data.allValues['t'+i+'-m-deal'];
     handleMatchingChange(i);
-    updateTechExclusivity(i);
+    syncTechCheckboxesFromHidden(i);
   }
-  updateBuyerSellerFieldLabel();
-  updateTransferAccountLabels();
+  refreshRoleDependentUi();
   currentDealDocId = data.dealId || val('h-dealid-num') || null;
   currentSubmittedDate = data.submittedDate || null;
   suppressAutosave = false;
@@ -1732,7 +1686,7 @@ async function loadDraftAndHistory(){
     draftRowIndex = mine ? mine.index : null;
     if(mine){
       try{ applyDraftData(JSON.parse(mine.values[0][1])); setDraftStatus('Draft loaded'); }
-      catch(e){ console.error('Draft could not be read', e); setDraftStatus('Draft retrieve error, please press New Agreement to start.'); }
+      catch(e){ console.error('Draft could not be read', e); setDraftStatus('Draft retrieve error, please press Reset data to start.'); }
     }else{
       setDraftStatus('New draft — Deal ID is assigned once Level 1 approves your saved agreement.');
     }
@@ -1774,10 +1728,9 @@ function dealAlreadySubmitted(dealId){
   return myRowsBySubmissionRef().length > 0;
 }
 function submittedDealStatus(dealId){
-  const dealRows = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
-  if(dealRows.length) return dealStatus(dealRows);
-  const mine = myRowsBySubmissionRef();
-  return mine.length ? (mine[0].values[0][MC.status] || STATUS_PENDING_1) : null;
+  let row = logRowsCache.find(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  if(!row) row = myRowsBySubmissionRef()[0];
+  return row ? (row.values[0][MC.status] || STATUS_PENDING_1) : null;
 }
 function checkSubmittedLock(){
   // Resync currentDealDocId if Level 1 has since assigned the real Deal ID
@@ -1804,7 +1757,7 @@ function lockSubmittedForm(dealId){
     ' has been submitted (status: ' + escapeHtml(status || STATUS_PENDING_1) +
     ') and can no longer be edited — it is locked permanently, even if it\'s rejected.</strong> ' +
     (isPendingDealId(dealId) ? 'A Deal ID will be assigned once Level 1 approves, and you\'ll get an email then. ' : '') +
-    'To submit a new agreement, use "New Agreement" above — it will get its own Deal ID.';
+    'To start a new agreement, use "Reset data" above — it will get its own Deal ID.';
   banner.style.display = 'block';
 
   // "Generate table" is gone once locked (nothing left to regenerate), so
@@ -1839,13 +1792,23 @@ document.addEventListener('change', ()=>{
   draftSaveTimer = setTimeout(saveDraft, 1200);
 });
 
-document.getElementById('new-confirmation-btn').addEventListener('click', async ()=>{
-  if(!currentAccount) return;
-  if(!confirm('Start a new agreement? Locked fields are kept; unlocked fields clear. This new agreement will get its own Deal ID once Level 1 approves it. Your saved history is not affected.')) return;
+// Clears the current in-progress draft and reloads to a blank form. Locked
+// fields are kept (they're persisted separately from the draft row) and
+// unlocked fields come back empty because the page starts fresh. Used both
+// by the "Reset data" button (explicit wipe, with confirmation) and
+// automatically right after a successful save (no confirmation needed —
+// nothing is being lost, the just-submitted agreement is safely saved and
+// still visible in Saved agreements).
+async function resetToBlankForm(){
   try{
     if(draftRowIndex !== null) await deleteTableRow(DRAFT_TABLE_NAME, draftRowIndex);
   }catch(err){ console.error('Could not clear draft row', err); }
   location.reload();
+}
+document.getElementById('new-confirmation-btn').addEventListener('click', async ()=>{
+  if(!currentAccount) return;
+  if(!confirm('Reset all data? Locked fields are kept; unlocked fields clear. This starts a fresh agreement with its own Deal ID once Level 1 approves it. Your saved history is not affected.')) return;
+  await resetToBlankForm();
 });
 
 /* ---- Saved agreements (the shared, restructured TradeDealLog table) ----
@@ -1864,10 +1827,19 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
   const rows = await getTableRows(LOG_TABLE_NAME);
   const existingRows = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
   if(existingRows.length){
-    throw new Error((isPendingDealId(dealId) ? 'This agreement' : 'Deal ID ' + dealId) + ' has already been submitted and cannot be resaved. Start a New Agreement instead.');
+    throw new Error((isPendingDealId(dealId) ? 'This agreement' : 'Deal ID ' + dealId) + ' has already been submitted and cannot be resaved. Use Reset data to start a new agreement instead.');
+  }
+  // fitRowToColumnCount() would otherwise silently truncate each row to
+  // however many columns the live table actually has — which for the
+  // 3 new Broker Fee columns means the data would just quietly vanish on
+  // save instead of failing loudly. Fail loudly instead.
+  const liveColumnCount = await getTableColumnCount(LOG_TABLE_NAME);
+  if(liveColumnCount < COL_COUNT){
+    throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing the "Broker Fee Type", "Broker Fee Currency" and "Broker Fee Price" columns. Ask an admin to add those three columns at the end of the table, then try again.');
   }
   const nowIso = submittedDateIso || new Date().toISOString();
   const tradeCount = parseInt(document.getElementById('trade-count').value, 10) || 1;
+  const rowsToWrite = [];
   for(let n = 1; n <= tradeCount; n++){
     const matching = val('t'+n+'-m-matching');
     const matchingActive = matching && matching !== 'Open Position';
@@ -1878,7 +1850,7 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
     row[MC.dealId] = dealId;
     row[MC.supplyDemand] = val('h-order');
     row[MC.company] = val('h-buyer');
-    row[MC.broker] = val('t'+n+'-broker');
+    row[MC.broker] = val('h-broker');
     row[MC.country] = val('t'+n+'-country');
     row[MC.registry] = val('t'+n+'-registry');
     row[MC.tech] = val('t'+n+'-tech');
@@ -1914,9 +1886,12 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
     row[MC.rejectedDate] = '';
     row[MC.rejectReason] = '';
     row[MC.description] = val('h-description');
-    row[MC.rowUid] = genRowUid();
-    await addTableRow(LOG_TABLE_NAME, row);
+    row[MC.brokerFeeType] = brokerFeeTypeValue();
+    row[MC.brokerFeeCurrency] = brokerFeeTypeValue() ? val('h-broker-fee-currency') : '';
+    row[MC.brokerFeePrice] = brokerFeeTypeValue() ? val('h-broker-fee-price') : '';
+    rowsToWrite.push(row);
   }
+  await addTableRows(LOG_TABLE_NAME, rowsToWrite);
   await loadHistory();
 }
 /* Advances a deal one step through the approval chain, writing the
@@ -1924,21 +1899,41 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
    to. Every role — including superadmin — only ever advances one level per
    click; superadmin's only difference is which levels canActOnStatus() lets
    them act on (any pending level, vs. admin1/2/3's own single level). */
-async function approveDeal(dealId, file){
+async function approveDeal(dealId, file, transferOverrides){
   if(!dealId) return;
   const rows = await getTableRows(LOG_TABLE_NAME);
-  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
   if(!matching.length) return;
-  const currentStatus = dealStatus(matching);
+  const currentStatus = matching[0].values[0][MC.status];
   if(!canActOnStatus(currentStatus)) throw new Error('You are not able to approve this deal at its current stage.');
   const nowIso = new Date().toISOString();
   let nextStatus, byCol, dateCol;
   if(currentStatus === STATUS_PENDING_1){ nextStatus = STATUS_PENDING_2; byCol = MC.approvedBy1; dateCol = MC.approvedDate1; }
   else if(currentStatus === STATUS_PENDING_2){
     if(!file) throw new Error('Please attach the signed agreement before approving at Level 2.');
+    // Apply whatever was typed into the modal's Receiving Account inputs
+    // before checking for gaps — this is the only place left to fill that
+    // field in once a deal is submitted (the whole form locks permanently),
+    // so a value typed here both satisfies the check below and gets saved.
+    if(transferOverrides){
+      matching.forEach((r, idx)=>{
+        const override = transferOverrides[idx];
+        if(override !== undefined && override !== null && String(override).trim() !== ''){
+          r.values[0][MC.tigrsIrecName] = override;
+        }
+      });
+    }
+    const missingTransferTrades = [];
+    matching.forEach((r, idx)=>{
+      if(!String(r.values[0][MC.tigrsIrecName] || '').trim()) missingTransferTrades.push(idx + 1);
+    });
+    if(missingTransferTrades.length){
+      const dealRole = roleFromOrderType(matching[0].values[0][MC.supplyDemand]);
+      throw new Error('Please fill in the ' + transferAccountLabel(dealRole) + ' for Product ' + missingTransferTrades.join(', ') + ' before approving at Level 2.');
+    }
     const liveColumnCount = await getTableColumnCount(LOG_TABLE_NAME);
     if(liveColumnCount < COL_COUNT){
-      throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing one or more columns this app expects (at minimum "Agreement File Name" and "Agreement File URL" needed to save the attachment, and now also "Matching Edit Note" and "Row Uid"). Ask an admin to add the missing column(s) at the end of the table, then try again.');
+      throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing the "Agreement File Name" and "Agreement File URL" columns needed to save the attachment. Ask an admin to add those two columns at the end of the table, then try again.');
     }
     nextStatus = STATUS_PENDING_3; byCol = MC.approvedBy2; dateCol = MC.approvedDate2;
   }
@@ -1963,13 +1958,7 @@ async function approveDeal(dealId, file){
   let tradeNum = 0;
   for(const r of matching){
     tradeNum++;
-    const rowStatus = r.values[0][MC.status] || STATUS_PENDING_1;
-    // A partial matching-info correction can leave some trades in this deal
-    // already at Approved while only the corrected trade(s) sit at
-    // currentStatus — only advance the ones actually waiting at this stage.
-    if(rowStatus !== currentStatus) continue;
     const values = r.values[0].slice();
-    if(!values[MC.rowUid]) values[MC.rowUid] = genRowUid(); // backfill legacy rows as they're touched
     if(assignedDealId){
       values[MC.dealId] = assignedDealId;
       if(values[MC.generatedHtml]) values[MC.generatedHtml] = patchDealIdInGeneratedHtml(values[MC.generatedHtml], assignedDealId);
@@ -1981,7 +1970,7 @@ async function approveDeal(dealId, file){
       values[MC.agreementFileName] = agreementInfo.name;
       values[MC.agreementFileUrl] = agreementInfo.webUrl;
     }
-    await updateTableRow(LOG_TABLE_NAME, await resolveLogRowIndexByUid(r.values[0][MC.rowUid], r.index), values);
+    await updateTableRow(LOG_TABLE_NAME, r.index, values);
     // Final sign-off (Pending Level 3 -> Approved): also copy this row into
     // the standalone "Approved" SharePoint list. Best-effort — if the write
     // fails (e.g. the list is missing a column the app expects), the row
@@ -1994,17 +1983,10 @@ async function approveDeal(dealId, file){
     // trade, and each write can fail independently of the others.
     if(nextStatus === STATUS_APPROVED){
       try{
-        const itemId = await addApprovedDealToList(values);
-        // Save the item id back onto the log row (only if it's new/changed)
-        // so a future correction on this same trade can update this exact
-        // "Approved" list item instead of creating a duplicate.
-        if(itemId && values[MC.approvedListItemId] !== itemId){
-          values[MC.approvedListItemId] = itemId;
-          await updateTableRow(LOG_TABLE_NAME, await resolveLogRowIndexByUid(r.values[0][MC.rowUid], r.index), values);
-        }
+        await addApprovedDealToList(values);
       }catch(err){
-        console.error('Could not copy Trade ' + tradeNum + ' into the "Approved" list — check that its column internal names match what this app sends (see the fields{} object in addApprovedDealToList).', err);
-        approvedListErrors.push('Trade ' + tradeNum + ': ' + err.message);
+        console.error('Could not copy Product ' + tradeNum + ' into the "Approved" list — check that its column internal names match what this app sends (see the fields{} object in addApprovedDealToList).', err);
+        approvedListErrors.push('Product ' + tradeNum + ': ' + err.message);
       }
     }
   }
@@ -2041,141 +2023,173 @@ async function rejectDeal(dealId, reason){
   const rows = await getTableRows(LOG_TABLE_NAME);
   const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
   if(!matching.length) return;
-  const currentStatus = dealStatus(matching);
+  const currentStatus = matching[0].values[0][MC.status];
   if(!canActOnStatus(currentStatus)) throw new Error('You are not able to reject this deal at its current stage.');
   const nowIso = new Date().toISOString();
-  // If the deal already has other trades sitting at Approved, this
-  // "Pending Level 3" is only a matching-info correction on top of an
-  // otherwise-approved agreement (see resubmitMatchingInfo) — rejecting it
-  // should undo just the correction, not blow away the whole deal's
-  // approval and lock it permanently.
-  const isPartialCorrection = currentStatus === STATUS_PENDING_3 &&
-    matching.some(r => (r.values[0][MC.status] || '') === STATUS_APPROVED);
   for(const r of matching){
-    const rowStatus = r.values[0][MC.status] || STATUS_PENDING_1;
-    if(rowStatus !== currentStatus) continue; // e.g. trades an in-flight correction left at Approved
     const values = r.values[0].slice();
-    if(!values[MC.rowUid]) values[MC.rowUid] = genRowUid(); // backfill legacy rows as they're touched
-    if(isPartialCorrection){
-      // Revert — this trade's prior Level 3 sign-off (never cleared by
-      // resubmitMatchingInfo) still stands, so it just goes back to normal.
-      values[MC.status] = STATUS_APPROVED;
-      values[MC.matchingEditNote] = 'Correction rejected by ' + currentAccount.username + ': ' + trimmedReason;
-    } else {
-      values[MC.status] = STATUS_REJECTED;
-      values[MC.rejectedBy] = currentAccount.username;
-      values[MC.rejectedDate] = nowIso;
-      values[MC.rejectReason] = trimmedReason;
-    }
-    await updateTableRow(LOG_TABLE_NAME, await resolveLogRowIndexByUid(r.values[0][MC.rowUid], r.index), values);
+    values[MC.status] = STATUS_REJECTED;
+    values[MC.rejectedBy] = currentAccount.username;
+    values[MC.rejectedDate] = nowIso;
+    values[MC.rejectReason] = trimmedReason;
+    await updateTableRow(LOG_TABLE_NAME, r.index, values);
   }
-  if(isPartialCorrection){
-    await notifyCorrectionRejected(dealId, matching[0].values[0][MC.submittedBy], trimmedReason);
-  } else {
-    await notifySubmitter(STATUS_REJECTED, dealId, matching[0].values[0][MC.submittedBy], trimmedReason);
-  }
+  await notifySubmitter(STATUS_REJECTED, dealId, matching[0].values[0][MC.submittedBy], trimmedReason);
   await loadHistory();
 }
-// Builds a plain-English "what changed" line for one trade row, comparing
-// its old matching-related values against the edited ones. Returns '' if
-// nothing in this row actually changed.
-function describeMatchingChange(oldV, edit){
-  const parts = [];
-  const was = (label, oldVal, newVal) => {
-    const o = String(oldVal==null?'':oldVal).trim(), n = String(newVal==null?'':newVal).trim();
-    if(o !== n) parts.push(label + ': "' + (o || '—') + '" → "' + (n || '—') + '"');
-  };
-  was('Matching', oldV[MC.matching], edit.matching);
-  was('Buyer/Seller name', oldV[MC.buyerSeller], edit.buyerSeller);
-  was('No of RECs', oldV[MC.noOfRecs], edit.noOfRecs);
-  was('From which deal', oldV[MC.whichDeal], edit.whichDeal);
-  was('Delivery date', oldV[MC.deliveryDateM], edit.deliveryDateM);
-  return parts.join('; ');
-}
-/* Lets the original submitter correct ONLY the BD source matching fields
-   (5. Matching, and — when active — 1. Buyer/Seller name, 2. No of RECs,
-   3. From which deal, 4. Delivery date) on a deal that has already reached
-   full Approved status. Everything else about the agreement is untouched.
-   Rather than restarting the whole 3-level chain, this sends the deal back
-   to "Pending Level 3" only — Level 1 and Level 2 sign-offs already stand
-   and are left as-is. edits is keyed by row index (r.index), one entry per
-   trade row belonging to this deal. A plain-English summary of exactly what
-   changed (per trade) is written into the Matching Edit Note column, and
-   included in the Level 3 approver's email, so the approver can see what's
-   different without having to compare the whole agreement by eye. */
-async function resubmitMatchingInfo(dealId, edits){
+/* ---- Post-approval BD source matching change requests ----
+   Only the original submitter, and only once a deal is fully Approved, can
+   ask to correct its Matching / Buyer-Seller / Which deal fields (see the
+   "Request edit" button on "My saved confirmations"). The new values are
+   staged in the pending* columns and the deal's Status moves to
+   "Pending Change - Level 3" — exactly like a normal pending stage, it shows
+   up in the Level 3/Superadmin Approval queue — while the live
+   matching/buyerSeller/whichDeal columns (and everything already written to
+   the "Approved" SharePoint list) are left untouched until that approval
+   happens. edits is an array of {matching, buyerSeller, whichDeal}, one per
+   product row, in the same order as the deal's rows sorted by index. */
+async function requestBdMatchChange(dealId, edits){
   if(!dealId) return;
   const rows = await getTableRows(LOG_TABLE_NAME);
-  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
   if(!matching.length) throw new Error('Could not find this deal.');
   const currentStatus = matching[0].values[0][MC.status];
-  if(currentStatus !== STATUS_APPROVED){
-    throw new Error('This deal is no longer Approved (its status has changed) — reload the page and try again.');
-  }
+  if(currentStatus !== STATUS_APPROVED) throw new Error('You can only request a change to a fully Approved deal.');
   const myEmail = (currentAccount.username || '').toLowerCase();
-  if(String(matching[0].values[0][MC.submittedBy] || '').toLowerCase() !== myEmail){
-    throw new Error('Only the original submitter can correct this agreement\'s matching info.');
+  if((matching[0].values[0][MC.submittedBy] || '').toLowerCase() !== myEmail){
+    throw new Error('Only the original submitter can request a change to this deal.');
+  }
+  const liveColumnCount = await getTableColumnCount(LOG_TABLE_NAME);
+  if(liveColumnCount < COL_COUNT){
+    throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing the "Pending Matching", "Pending Buyer/Seller", "Pending Which Deal", "Change Requested By" and "Change Requested Date" columns. Ask an admin to add those five columns at the end of the table, then try again.');
+  }
+  // Build the per-product diff up front, using the same wording the
+  // in-app Approval queue shows (see the STATUS_PENDING_CHANGE_3 block in
+  // renderHistoryTable) — and use it to detect a request that doesn't
+  // actually change anything. If every product's edit is identical to its
+  // current live value, there's nothing to send for approval: skip the
+  // write and the email entirely rather than locking the deal into
+  // "Pending Change - Level 3" and paging Level 3 for a no-op.
+  const changeLines = [];
+  let anyChange = false;
+  for(let i = 0; i < matching.length; i++){
+    const rv = matching[i].values[0];
+    const edit = edits[i] || {};
+    const lines = [];
+    if((rv[MC.matching]||'') !== (edit.matching||'')){
+      lines.push('Matching: ' + matchingDisplayLabel(rv[MC.matching]) + ' \u2192 ' + matchingDisplayLabel(edit.matching));
+    }
+    if((rv[MC.buyerSeller]||'') !== (edit.buyerSeller||'')){
+      lines.push('Buyer/Seller: ' + (rv[MC.buyerSeller]||'(blank)') + ' \u2192 ' + (edit.buyerSeller||'(blank)'));
+    }
+    if((rv[MC.whichDeal]||'') !== (edit.whichDeal||'')){
+      lines.push('Which deal: ' + (rv[MC.whichDeal]||'(blank)') + ' \u2192 ' + (edit.whichDeal||'(blank)'));
+    }
+    if(lines.length){
+      anyChange = true;
+      changeLines.push((matching.length > 1 ? 'Product ' + (i+1) + ' \u2014 ' : '') + lines.join(', '));
+    }
+  }
+  if(!anyChange){
+    throw new Error('No changes were made — nothing to submit for re-approval.');
   }
   const nowIso = new Date().toISOString();
-  const changeLines = []; // one entry per trade that actually changed, for the email
+  for(let i = 0; i < matching.length; i++){
+    const r = matching[i];
+    const edit = edits[i] || {};
+    const values = r.values[0].slice();
+    values[MC.pendingMatching] = edit.matching || '';
+    values[MC.pendingBuyerSeller] = edit.buyerSeller || '';
+    values[MC.pendingWhichDeal] = edit.whichDeal || '';
+    values[MC.pendingRequestedBy] = currentAccount.username;
+    values[MC.pendingRequestedDate] = nowIso;
+    values[MC.status] = STATUS_PENDING_CHANGE_3;
+    // Clear out any note from a previous, already-resolved change request
+    // so it doesn't linger next to this new one.
+    values[MC.rejectedBy] = '';
+    values[MC.rejectedDate] = '';
+    values[MC.rejectReason] = '';
+    await updateTableRow(LOG_TABLE_NAME, r.index, values);
+  }
+  await notifyNextApprover(STATUS_PENDING_CHANGE_3, dealId, matching[0].values[0][MC.description], changeLines.join('\n'));
+  await loadHistory();
+}
+// Applies a pending BD source matching change: copies pendingMatching/
+// pendingBuyerSeller/pendingWhichDeal into the live columns, clears the
+// staging columns, puts Status back to Approved, and — same as the original
+// final sign-off — appends a fresh row to the "Approved" SharePoint list
+// (APPROVED_LIST_NAME) for each product so that list keeps a full history of
+// every change ever made, all still tagged with the same Agreement ID /
+// Deal ID (the UID that ties every one of these rows back to the product).
+async function approveBdMatchChange(dealId){
+  if(!dealId) return;
+  const rows = await getTableRows(LOG_TABLE_NAME);
+  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
+  if(!matching.length) return;
+  const currentStatus = matching[0].values[0][MC.status];
+  if(currentStatus !== STATUS_PENDING_CHANGE_3) throw new Error('This deal is not awaiting a change approval.');
+  if(!canActOnStatus(STATUS_PENDING_CHANGE_3)) throw new Error('You are not able to approve this change.');
+  const nowIso = new Date().toISOString();
+  const submitterEmail = matching[0].values[0][MC.submittedBy];
+  const approvedListErrors = [];
   let tradeNum = 0;
   for(const r of matching){
-    const oldV = r.values[0];
-    // Prefer the row's stable UID as the lookup key; only fall back to
-    // position-within-deal for legacy rows that predate the rowUid column.
-    const editKey = oldV[MC.rowUid] || ('pos:' + tradeNum);
     tradeNum++;
-    const edit = edits[editKey];
-    if(!edit) continue;
-    const changeText = describeMatchingChange(oldV, edit);
-    // Nothing actually changed on this trade — skip it entirely. Its row is
-    // left exactly as-is: no write, no status change, no cleared L3 sign-off.
-    // This is what lets a deal with several trades go back for re-approval
-    // on just the one trade that was corrected, instead of the whole
-    // agreement.
-    if(!changeText) continue;
-    const values = oldV.slice();
-    if(!values[MC.rowUid]) values[MC.rowUid] = genRowUid(); // backfill legacy rows as they're touched
-    values[MC.matching] = edit.matching;
-    values[MC.buyerSeller] = edit.buyerSeller;
-    values[MC.noOfRecs] = edit.noOfRecs;
-    values[MC.whichDeal] = edit.whichDeal;
-    values[MC.deliveryDateM] = edit.deliveryDateM;
-    values[MC.status] = STATUS_PENDING_3;
-    // Level 3 needs to sign off again on the corrected info. Deliberately
-    // NOT clearing approvedBy3/approvedDate3 here (unlike before) — they're
-    // kept as a fallback so that if this correction is later rejected,
-    // rejectDeal() can revert this trade straight back to its prior
-    // Approved sign-off instead of nuking the whole deal.
-    values[MC.matchingEditNote] = 'Trade ' + tradeNum + ' — ' + changeText;
-    changeLines.push('Trade ' + tradeNum + ': ' + changeText);
-    // Preserve full history: before overwriting the active row with the
-    // correction, permanently archive exactly what it looked like right
-    // before this edit as a brand-new row appended at the end of the
-    // table. It's tagged with a distinct Deal ID (a " (superseded ...)"
-    // suffix) so it's never picked up by the `rows.filter(dealId === ...)`
-    // lookups used everywhere else in the app (approve/reject/history/
-    // matching), and given a fresh rowUid so it can never be confused with
-    // the live row by resolveLogRowIndexByUid. The live row below keeps
-    // its original rowUid — that's what stays constant across edits and is
-    // what lets the Master Folder file's row still get found and
-    // overwritten in place; TradeDealLog itself, like this, never loses a
-    // version.
-    const archived = oldV.slice();
-    archived[MC.dealId] = String(oldV[MC.dealId] || '') + ' (superseded ' + nowIso + ')';
-    archived[MC.rowUid] = genRowUid();
-    archived[MC.matchingEditNote] = 'Superseded by a matching-info correction — see the current "' + dealId + '" row for the latest version.';
-    await addTableRow(LOG_TABLE_NAME, archived);
-    await updateTableRow(LOG_TABLE_NAME, await resolveLogRowIndexByUid(oldV[MC.rowUid], r.index), values);
+    const values = r.values[0].slice();
+    values[MC.matching] = values[MC.pendingMatching];
+    values[MC.buyerSeller] = values[MC.pendingBuyerSeller];
+    values[MC.whichDeal] = values[MC.pendingWhichDeal];
+    values[MC.pendingMatching] = '';
+    values[MC.pendingBuyerSeller] = '';
+    values[MC.pendingWhichDeal] = '';
+    values[MC.pendingRequestedBy] = '';
+    values[MC.pendingRequestedDate] = '';
+    values[MC.status] = STATUS_APPROVED;
+    values[MC.approvedBy3] = currentAccount.username;
+    values[MC.approvedDate3] = nowIso;
+    await updateTableRow(LOG_TABLE_NAME, r.index, values);
+    try{
+      await addApprovedDealToList(values);
+    }catch(err){
+      console.error('Could not copy Product ' + tradeNum + '\'s change into the "' + APPROVED_LIST_NAME + '" list — check that its column internal names match what this app sends (see the fields{} object in addApprovedDealToList).', err);
+      approvedListErrors.push('Product ' + tradeNum + ': ' + err.message);
+    }
   }
-  if(!changeLines.length){
-    // Nothing changed on any trade — nothing was written, nothing to send
-    // back for re-approval.
-    await loadHistory();
-    return;
+  await notifyChangeSubmitter(dealId, submitterEmail, 'applied');
+  await loadHistory();
+  if(approvedListErrors.length){
+    alert('The change was approved and applied, but couldn\'t be copied into the "' + APPROVED_LIST_NAME + '" list for:\n' + approvedListErrors.join('\n'));
   }
-  const changeSummary = changeLines.join('\n');
-  await notifyNextApprover(STATUS_PENDING_3, dealId, matching[0].values[0][MC.description], changeSummary);
+}
+// Rejects a pending BD source matching change: discards the staged pending*
+// values (the live, already-Approved data was never touched) and puts
+// Status back to Approved with a comment the submitter can see.
+async function rejectBdMatchChange(dealId, reason){
+  if(!dealId) return;
+  const trimmedReason = (reason || '').trim();
+  if(!trimmedReason) throw new Error('A comment is required so the submitter knows why this change was rejected.');
+  const rows = await getTableRows(LOG_TABLE_NAME);
+  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  if(!matching.length) return;
+  const currentStatus = matching[0].values[0][MC.status];
+  if(currentStatus !== STATUS_PENDING_CHANGE_3) throw new Error('This deal is not awaiting a change approval.');
+  if(!canActOnStatus(STATUS_PENDING_CHANGE_3)) throw new Error('You are not able to reject this change.');
+  const nowIso = new Date().toISOString();
+  const submitterEmail = matching[0].values[0][MC.submittedBy];
+  for(const r of matching){
+    const values = r.values[0].slice();
+    values[MC.status] = STATUS_APPROVED;
+    values[MC.pendingMatching] = '';
+    values[MC.pendingBuyerSeller] = '';
+    values[MC.pendingWhichDeal] = '';
+    values[MC.pendingRequestedBy] = '';
+    values[MC.pendingRequestedDate] = '';
+    values[MC.rejectedBy] = currentAccount.username;
+    values[MC.rejectedDate] = nowIso;
+    values[MC.rejectReason] = trimmedReason;
+    await updateTableRow(LOG_TABLE_NAME, r.index, values);
+  }
+  await notifyChangeSubmitter(dealId, submitterEmail, 'rejected', trimmedReason);
   await loadHistory();
 }
 function groupByDealId(rows){
@@ -2198,14 +2212,14 @@ async function loadHistory(){
     const mineGroups = groupByDealId(
       rows.filter(r => (String(r.values[0][MC.submittedBy] || '')).toLowerCase() === myEmail)
     ).sort((a,b)=> String(b.rows[0].values[0][MC.submittedDate]||'').localeCompare(String(a.rows[0].values[0][MC.submittedDate]||'')));
-    renderHistoryTable(listEl, mineGroups, {showOwner:false, showActions:false, allowEditMatching:true});
+    renderHistoryTable(listEl, mineGroups, {showOwner:false, showActions:false, showRequestEdit:true});
 
     if(isAdmin){
       const allGroups = groupByDealId(rows)
         .sort((a,b)=> String(b.rows[0].values[0][MC.submittedDate]||'').localeCompare(String(a.rows[0].values[0][MC.submittedDate]||'')));
 
       const queueEl = document.getElementById('approval-queue-list');
-      const queueGroups = allGroups.filter(g => canActOnStatus(dealStatus(g.rows)));
+      const queueGroups = allGroups.filter(g => canActOnStatus(g.rows[0].values[0][MC.status] || STATUS_PENDING_1));
       renderHistoryTable(queueEl, queueGroups, {showOwner:true, showActions:true, emptyText:'Nothing waiting on your approval right now.'});
 
       const adminListEl = document.getElementById('admin-history-list');
@@ -2218,8 +2232,19 @@ async function loadHistory(){
 }
 function statusBadge(status){
   const s = status || STATUS_PENDING_1;
-  const color = s === STATUS_APPROVED ? '#1f7a4d' : (s === STATUS_REJECTED ? '#8a2d1f' : '#8a6d1f');
+  const color = s === STATUS_APPROVED ? '#1f7a4d'
+    : s === STATUS_REJECTED ? '#8a2d1f'
+    : s === STATUS_PENDING_CHANGE_3 ? '#7a4d9f'
+    : '#8a6d1f';
   return '<span style="font-weight:600;color:'+color+';">'+escapeHtml(s)+'</span>';
+}
+// MATCHING_DISPLAY_NAMES-aware label for the Matching dropdown's stored
+// value — same lookup the generated table itself uses, kept here so the
+// change-request diff (below) shows the same wording a BD would recognise.
+function matchingDisplayLabel(code){
+  const raw = String(code||'').trim();
+  if(!raw) return '(blank)';
+  return MATCHING_DISPLAY_NAMES[raw] || raw;
 }
 // Short "L1 ✓ · L2 ✓ · L3 ✓" trail of whoever has signed off so far — the
 // email address itself is only shown as a hover tooltip (title attribute),
@@ -2235,7 +2260,7 @@ function renderHistoryTable(el, groups, opts){
   opts = opts || {};
   const showOwner = !!opts.showOwner;
   const showActions = !!opts.showActions;
-  const allowEditMatching = !!opts.allowEditMatching;
+  const showRequestEdit = !!opts.showRequestEdit;
   const colCount = showOwner ? 7 : 6;
   if(!groups.length){
     el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">'+escapeHtml(opts.emptyText || 'No saved confirmations yet.')+'</p>';
@@ -2245,25 +2270,19 @@ function renderHistoryTable(el, groups, opts){
     '<th style="text-align:left;padding:6px;">Deal ID</th>' +
     '<th style="text-align:left;padding:6px;">Agreement Date</th>' +
     '<th style="text-align:left;padding:6px;">Counterparty</th>' +
-    '<th style="text-align:left;padding:6px;">Trades</th>' +
+    '<th style="text-align:left;padding:6px;">Products</th>' +
     '<th style="text-align:left;padding:6px;">Status</th>' +
     '<th style="padding:6px;"></th></tr>';
   groups.forEach(g=>{
     const v = g.rows[0].values[0];
-    const status = dealStatus(g.rows);
+    const status = v[MC.status] || STATUS_PENDING_1;
     const canAct = showActions && canActOnStatus(status);
-    // Header-level display fields (date, counterparty, etc.) are shared
-    // across every trade row, so v (row 0) is fine for those. But the L1/L2/L3
-    // trail is per-row, and during a partial correction row 0 might still be
-    // showing an old checkmark that doesn't match the deal's overall status
-    // — use whichever row is actually sitting at that status instead.
-    const statusRow = (g.rows.find(r => (r.values[0][MC.status] || STATUS_PENDING_1) === status) || g.rows[0]).values[0];
-    const trail = approvalTrailText(statusRow);
+    const trail = approvalTrailText(v);
     const agreementUrl = v[MC.agreementFileUrl];
     const agreementLink = agreementUrl
       ? '<div style="font-size:11px;margin-top:2px;"><a href="'+escapeHtml(agreementUrl)+'" target="_blank" rel="noopener">📄 View agreement</a></div>'
       : '';
-    const canEditMatching = allowEditMatching && status === STATUS_APPROVED;
+    const canRequestEdit = showRequestEdit && status === STATUS_APPROVED;
     html += '<tr style="border-top:1px solid var(--border);">' +
       (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[MC.salesPic]||'')+'</td>' : '') +
       '<td style="padding:6px;">'+(isPendingDealId(v[MC.dealId]) ? '-' : escapeHtml(friendlyDealId(v[MC.dealId])))+'</td>' +
@@ -2278,7 +2297,7 @@ function renderHistoryTable(el, groups, opts){
         '<button type="button" class="secondary history-view-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;">View</button>' +
         (canAct ? ' <button type="button" class="secondary history-approve-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;">Approve</button>' +
                   ' <button type="button" class="secondary history-reject-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;color:#8a2d1f;border-color:#c1493a;">Reject</button>' : '') +
-        (canEditMatching ? ' <button type="button" class="secondary history-editmatch-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;">Edit matching info</button>' : '') +
+        (canRequestEdit ? ' <button type="button" class="secondary history-request-edit-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;">Request edit</button>' : '') +
       '</td>' +
     '</tr>';
     if(status === STATUS_REJECTED && v[MC.rejectReason]){
@@ -2287,32 +2306,41 @@ function renderHistoryTable(el, groups, opts){
         '<strong>Rejected'+(v[MC.rejectedBy]?(' by '+escapeHtml(v[MC.rejectedBy])):'')+':</strong> '+escapeHtml(v[MC.rejectReason]) +
         '</div></td></tr>';
     }
+    // A resolved change request's rejection note — status is back to
+    // Approved by the time this shows, so it doesn't collide with the block
+    // above (which only fires for a fully Rejected deal).
+    if(status === STATUS_APPROVED && v[MC.rejectReason]){
+      html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
+        '<div style="background:#fdecea;border:1px solid #e2a49a;color:#8a2d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
+        '<strong>Change request rejected'+(v[MC.rejectedBy]?(' by '+escapeHtml(v[MC.rejectedBy])):'')+':</strong> '+escapeHtml(v[MC.rejectReason]) +
+        '</div></td></tr>';
+    }
+    if(status === STATUS_PENDING_CHANGE_3){
+      const rows = g.rows.map((r, idx)=>{
+        const rv = r.values[0];
+        const lines = [];
+        if((rv[MC.matching]||'') !== (rv[MC.pendingMatching]||'')){
+          lines.push('Matching: <s>'+escapeHtml(matchingDisplayLabel(rv[MC.matching]))+'</s> → <strong>'+escapeHtml(matchingDisplayLabel(rv[MC.pendingMatching]))+'</strong>');
+        }
+        if((rv[MC.buyerSeller]||'') !== (rv[MC.pendingBuyerSeller]||'')){
+          lines.push('Buyer/Seller: <s>'+escapeHtml(rv[MC.buyerSeller]||'(blank)')+'</s> → <strong>'+escapeHtml(rv[MC.pendingBuyerSeller]||'(blank)')+'</strong>');
+        }
+        if((rv[MC.whichDeal]||'') !== (rv[MC.pendingWhichDeal]||'')){
+          lines.push('Which deal: <s>'+escapeHtml(rv[MC.whichDeal]||'(blank)')+'</s> → <strong>'+escapeHtml(rv[MC.pendingWhichDeal]||'(blank)')+'</strong>');
+        }
+        if(!lines.length) return '';
+        return '<div style="margin-top:'+(idx>0?'6px':'0')+';">'+(g.rows.length>1?'<strong>Product '+(idx+1)+':</strong> ':'')+lines.join(' · ')+'</div>';
+      }).join('');
+      const requestedBy = v[MC.pendingRequestedBy] ? ' by '+escapeHtml(v[MC.pendingRequestedBy]) : '';
+      html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
+        '<div style="background:#f2ecf7;border:1px solid #d3bfe6;color:#4a2d63;border-radius:6px;padding:8px 10px;font-size:12px;">' +
+        '<strong>BD source matching change requested'+requestedBy+':</strong>' + rows +
+        '</div></td></tr>';
+    }
     if(v[MC.description] && status === STATUS_PENDING_1){
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
         '<div style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:12px;font-weight:bold;color:var(--text);">' +
-        '<strong style="color:var(--text);">Content for Level 1 approval:</strong> '+escapeHtml(v[MC.description]) +
-        '</div></td></tr>';
-    }
-    // Matching Edit Note is stored per-trade row, so gather it across every
-    // row in this deal (not just the first) — otherwise a change on Trade 2
-    // wouldn't show if Trade 1's note is blank.
-    const matchingNotes = g.rows
-      .map(r => (r.values[0][MC.matchingEditNote] || '').trim())
-      .filter(Boolean);
-    if(matchingNotes.length && status === STATUS_PENDING_3){
-      html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
-        '<div style="background:#fdf3e7;border:1px solid #e8c99a;color:#8a6d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
-        '<strong>What changed (matching info correction):</strong><br>'+matchingNotes.map(n=>escapeHtml(n)).join('<br>') +
-        '</div></td></tr>';
-    }
-    // A rejected correction reverts its trade to Approved (see rejectDeal),
-    // so this can't rely on status === Pending Level 3 to surface — check
-    // for the note directly instead.
-    const rejectedCorrectionNotes = matchingNotes.filter(n => n.indexOf('Correction rejected by ') === 0);
-    if(rejectedCorrectionNotes.length && status === STATUS_APPROVED){
-      html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
-        '<div style="background:#fdecea;border:1px solid #e2a49a;color:#8a2d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
-        rejectedCorrectionNotes.map(n=>escapeHtml(n)).join('<br>') +
+        '<strong style="color:var(--text);">Commercial Justification:</strong> '+escapeHtml(v[MC.description]) +
         '</div></td></tr>';
     }
   });
@@ -2374,10 +2402,27 @@ function openApproveModal(dealId){
   document.getElementById('approve-modal-dealid').textContent = friendlyDealId(dealId);
   document.getElementById('approve-modal-file').value = '';
   document.getElementById('approve-modal-error').style.display = 'none';
+  // The whole form is locked forever once submitted (see lockSubmittedForm),
+  // so this modal is the only remaining place anyone can fill in a missing
+  // Buyer/Seller Receiving Account before Level 2 approval — one input per
+  // trade/product on the deal, prefilled with whatever's already saved.
+  const group = logRowsCache
+    .filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId)
+    .sort((a,b)=> a.index - b.index);
+  const role = group.length ? roleFromOrderType(group[0].values[0][MC.supplyDemand]) : 'Buyer';
+  const label = transferAccountLabel(role);
+  const fieldsEl = document.getElementById('approve-modal-transfer-fields');
+  fieldsEl.innerHTML = group.map((r, idx)=>{
+    const existing = escapeHtml(String(r.values[0][MC.tigrsIrecName] || ''));
+    const productLabel = group.length > 1 ? label + ' — Product ' + (idx+1) : label;
+    return '<div><label style="margin:0 0 4px;display:block;font-size:13px;">' + escapeHtml(productLabel) + '</label>' +
+      '<input type="text" class="approve-modal-transfer-input" data-idx="' + idx + '" value="' + existing + '"/></div>';
+  }).join('');
   document.getElementById('approve-modal-overlay').style.display = 'flex';
 }
 function closeApproveModal(){
   document.getElementById('approve-modal-overlay').style.display = 'none';
+  document.getElementById('approve-modal-transfer-fields').innerHTML = '';
   approveModalDealId = null;
 }
 document.getElementById('approve-modal-cancel').addEventListener('click', closeApproveModal);
@@ -2395,10 +2440,14 @@ document.getElementById('approve-modal-submit').addEventListener('click', async 
     errEl.style.display = 'block';
     return;
   }
+  const transferOverrides = [];
+  document.querySelectorAll('.approve-modal-transfer-input').forEach(input=>{
+    transferOverrides[parseInt(input.getAttribute('data-idx'), 10)] = input.value;
+  });
   btn.disabled = true;
   btn.textContent = 'Uploading…';
   try{
-    await approveDeal(dealId, file);
+    await approveDeal(dealId, file, transferOverrides);
     closeApproveModal();
   }catch(err){
     errEl.textContent = err.message;
@@ -2433,7 +2482,11 @@ document.getElementById('reject-modal-submit').addEventListener('click', async (
   errEl.style.display = 'none';
   btn.disabled = true;
   try{
-    await rejectDeal(dealId, reason);
+    if(submittedDealStatus(dealId) === STATUS_PENDING_CHANGE_3){
+      await rejectBdMatchChange(dealId, reason);
+    }else{
+      await rejectDeal(dealId, reason);
+    }
     closeRejectModal();
   }catch(err){
     errEl.textContent = err.message;
@@ -2442,151 +2495,141 @@ document.getElementById('reject-modal-submit').addEventListener('click', async (
     btn.disabled = false;
   }
 });
-/* ---- "Edit matching info" modal — corrects an Approved deal's BD source
-   matching fields only, then sends it back for Level 3 re-approval. Built
-   dynamically (one block per trade row) rather than reusing the main form's
-   tradeBlockHtml, since only the matching fields are editable here. ---- */
-let editMatchingDealId = null;
-// Stored "From which deal" is just the plain final value — own/proceed
-// checkbox state isn't stored separately — so infer which source (if any)
-// was in play from whether the stored value matches one of those option
-// lists, and pre-select the matching dropdown accordingly.
-function editMatchingDealFieldHtml(rowIndex, storedValue){
+let editRequestModalDealId = null;
+// Builds the "Which deal" field for one product row in the Request-edit
+// modal — a free-text Deal Recap ID box by default, or (mirroring the main
+// form's t{n}-m-own/t{n}-m-proceed tickboxes) a dropdown of Own RECs or
+// Proceed Share options when the matching tickbox for that source is
+// checked. Pre-selects the right tickbox by checking whether the deal's
+// CURRENT live "Which deal" value already matches one of those option
+// lists — same inference editMatchingDealFieldHtml used in the older
+// direct-overwrite version of this flow.
+function editRequestDealFieldHtml(idx, storedValue){
   if(OWN_RECS_OPTIONS.includes(storedValue)){
-    return {own:true, proceed:false, fieldHtml: selectHtml('em-'+rowIndex+'-deal', OWN_RECS_OPTIONS, storedValue)};
+    return {own:true, proceed:false, fieldHtml: '<select class="edit-request-whichdeal" data-idx="'+idx+'">'+
+      OWN_RECS_OPTIONS.map(o=>'<option value="'+escapeHtml(o)+'"'+(o===storedValue?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>'};
   }
   if(PROCEED_SHARE_OPTIONS.includes(storedValue)){
-    return {own:false, proceed:true, fieldHtml: selectHtml('em-'+rowIndex+'-deal', PROCEED_SHARE_OPTIONS, storedValue)};
+    return {own:false, proceed:true, fieldHtml: '<select class="edit-request-whichdeal" data-idx="'+idx+'">'+
+      PROCEED_SHARE_OPTIONS.map(o=>'<option value="'+escapeHtml(o)+'"'+(o===storedValue?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>'};
   }
-  return {own:false, proceed:false, fieldHtml: textHtml('em-'+rowIndex+'-deal','Deal Recap ID', storedValue||'')};
+  return {own:false, proceed:false, fieldHtml: '<input type="text" class="edit-request-whichdeal" data-idx="'+idx+'" placeholder="Deal Recap ID" value="'+escapeHtml(storedValue||'')+'"/>'};
 }
-function editMatchingRowHtml(rowIndex, v, tradeLabel){
-  const matchingVal = v[MC.matching] || 'Open Position';
-  const active = matchingVal && matchingVal !== 'Open Position';
-  const dealField = editMatchingDealFieldHtml(rowIndex, v[MC.whichDeal]||'');
-  return '<div class="trade-block" style="margin-top:10px;">'+
-    '<p class="trade-title">'+escapeHtml(tradeLabel)+'</p>'+
-    '<div class="grid" style="margin-bottom:12px;">'+
-      '<div><label for="em-'+rowIndex+'-matching">5. Matching</label>'+
-        selectHtml('em-'+rowIndex+'-matching', MATCHING, matchingVal)+
-      '</div>'+
-    '</div>'+
-    '<div id="em-'+rowIndex+'-dependent" style="'+(active?'':'display:none;')+'">'+
-      '<div class="grid">'+
-        '<div><label for="em-'+rowIndex+'-name">1. Buyer/Seller name</label>'+textHtml('em-'+rowIndex+'-name','Name',v[MC.buyerSeller]||'')+'</div>'+
-        '<div><label for="em-'+rowIndex+'-recs">2. No of RECs</label>'+textHtml('em-'+rowIndex+'-recs','',v[MC.noOfRecs]||'')+'</div>'+
-        '<div style="grid-column:1 / -1;">'+
-          '<label style="margin-bottom:6px;">Source</label>'+
-          '<div style="display:flex;gap:20px;flex-wrap:wrap;">'+
-            '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
-              '<input type="checkbox" id="em-'+rowIndex+'-own" style="width:auto;margin:0;"'+(dealField.own?' checked':'')+'> Own RECs'+
-            '</label>'+
-            '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
-              '<input type="checkbox" id="em-'+rowIndex+'-proceed" style="width:auto;margin:0;"'+(dealField.proceed?' checked':'')+'> Proceed Share'+
-            '</label>'+
-          '</div>'+
-        '</div>'+
-        '<div><label for="em-'+rowIndex+'-deal">3. From which deal</label><div id="em-'+rowIndex+'-deal-field">'+dealField.fieldHtml+'</div></div>'+
-        '<div><label for="em-'+rowIndex+'-ddate">4. Delivery date</label><input type="date" id="em-'+rowIndex+'-ddate" value="'+escapeHtml(toDateInputValue(v[MC.deliveryDateM]))+'"></div>'+
-      '</div>'+
-    '</div>'+
-  '</div>';
-}
-// Rebuilds the "From which deal" field for a row as a text box (default),
-// or a dropdown of Own RECs / Proceed Share options — mirrors updateDealField
-// for the main form, scoped to the edit-matching modal's row ids.
-function updateEditDealField(rowIndex){
-  const own = document.getElementById('em-'+rowIndex+'-own');
-  const proceed = document.getElementById('em-'+rowIndex+'-proceed');
-  const target = document.getElementById('em-'+rowIndex+'-deal-field');
+// Rebuilds the "Which deal" field for product idx as a text box (default),
+// or a dropdown of Own RECs / Proceed Share options — same pattern as the
+// main form's updateDealField, scoped to this modal's row ids.
+function updateEditRequestDealField(idx){
+  const own = document.getElementById('er-'+idx+'-own');
+  const proceed = document.getElementById('er-'+idx+'-proceed');
+  const target = document.getElementById('er-'+idx+'-deal-field');
   if(!own || !proceed || !target) return;
   if(own.checked){
-    target.innerHTML = selectHtml('em-'+rowIndex+'-deal', OWN_RECS_OPTIONS, OWN_RECS_OPTIONS[0]);
+    target.innerHTML = '<select class="edit-request-whichdeal" data-idx="'+idx+'">'+
+      OWN_RECS_OPTIONS.map((o,i)=>'<option value="'+escapeHtml(o)+'"'+(i===0?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>';
   } else if(proceed.checked){
-    target.innerHTML = selectHtml('em-'+rowIndex+'-deal', PROCEED_SHARE_OPTIONS, PROCEED_SHARE_OPTIONS[0]);
+    target.innerHTML = '<select class="edit-request-whichdeal" data-idx="'+idx+'">'+
+      PROCEED_SHARE_OPTIONS.map((o,i)=>'<option value="'+escapeHtml(o)+'"'+(i===0?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>';
   } else {
-    target.innerHTML = textHtml('em-'+rowIndex+'-deal','Deal Recap ID','');
+    target.innerHTML = '<input type="text" class="edit-request-whichdeal" data-idx="'+idx+'" placeholder="Deal Recap ID"/>';
   }
 }
-// Own RECs / Proceed Share are mutually exclusive within a row.
+// Own RECs / Proceed Share are mutually exclusive within a product row.
 document.addEventListener('change', (e)=>{
-  const m = e.target && e.target.id && e.target.id.match(/^em-(\d+)-(own|proceed)$/);
+  const m = e.target && e.target.id && e.target.id.match(/^er-(\d+)-(own|proceed)$/);
   if(!m) return;
-  const rowIndex = m[1], which = m[2];
+  const idx = m[1], which = m[2];
   if(which === 'own' && e.target.checked){
-    const p = document.getElementById('em-'+rowIndex+'-proceed');
+    const p = document.getElementById('er-'+idx+'-proceed');
     if(p) p.checked = false;
   } else if(which === 'proceed' && e.target.checked){
-    const o = document.getElementById('em-'+rowIndex+'-own');
+    const o = document.getElementById('er-'+idx+'-own');
     if(o) o.checked = false;
   }
-  updateEditDealField(rowIndex);
+  updateEditRequestDealField(idx);
 });
-function openEditMatchingModal(dealId){
-  const rows = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
-  if(!rows.length) return;
-  editMatchingDealId = dealId;
-  document.getElementById('edit-matching-modal-dealid').textContent = friendlyDealId(dealId);
-  document.getElementById('edit-matching-modal-body').innerHTML =
-    rows.map((r,i)=> editMatchingRowHtml(i, r.values[0], 'Trade '+(i+1))).join('');
-  document.getElementById('edit-matching-modal-error').style.display = 'none';
-  document.getElementById('edit-matching-modal-overlay').style.display = 'flex';
+// Populates one editable block per product on the deal, prefilled from its
+// current (live, already-Approved) Matching/Buyer-Seller/Which deal values.
+// Deliberately only these three fields — the rest of an Approved deal's
+// data stays locked; this is BD source matching only.
+function openEditRequestModal(dealId){
+  editRequestModalDealId = dealId;
+  document.getElementById('edit-request-modal-dealid').textContent = friendlyDealId(dealId);
+  document.getElementById('edit-request-modal-error').style.display = 'none';
+  const group = logRowsCache
+    .filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId)
+    .sort((a,b)=> a.index - b.index);
+  const fieldsEl = document.getElementById('edit-request-modal-fields');
+  fieldsEl.innerHTML = group.map((r, idx)=>{
+    const v = r.values[0];
+    const matchOptions = MATCHING.map(m =>
+      '<option value="'+escapeHtml(m)+'"'+(m===v[MC.matching]?' selected':'')+'>'+escapeHtml(MATCHING_DISPLAY_NAMES[m]||m)+'</option>'
+    ).join('');
+    const label = group.length > 1 ? 'Product ' + (idx+1) : 'Product';
+    const dealField = editRequestDealFieldHtml(idx, v[MC.whichDeal]||'');
+    return '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;">' +
+      '<p style="margin:0;font-size:13px;font-weight:600;">'+escapeHtml(label)+'</p>' +
+      '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Matching</label>' +
+        '<select class="edit-request-matching" data-idx="'+idx+'">'+matchOptions+'</select></div>' +
+      '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Buyer/Seller</label>' +
+        '<input type="text" class="edit-request-buyerseller" data-idx="'+idx+'" value="'+escapeHtml(v[MC.buyerSeller]||'')+'"/></div>' +
+      '<div>' +
+        '<label style="margin:0 0 6px;display:block;font-size:12px;">Source</label>' +
+        '<div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:8px;">' +
+          '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">' +
+            '<input type="checkbox" id="er-'+idx+'-own" style="width:auto;margin:0;"'+(dealField.own?' checked':'')+'> Own RECs' +
+          '</label>' +
+          '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">' +
+            '<input type="checkbox" id="er-'+idx+'-proceed" style="width:auto;margin:0;"'+(dealField.proceed?' checked':'')+'> Proceed Share' +
+          '</label>' +
+        '</div>' +
+        '<label style="margin:0 0 4px;display:block;font-size:12px;">Which deal</label>' +
+        '<div id="er-'+idx+'-deal-field">'+dealField.fieldHtml+'</div>' +
+      '</div>' +
+      '</div>';
+  }).join('');
+  document.getElementById('edit-request-modal-overlay').style.display = 'flex';
 }
-function closeEditMatchingModal(){
-  document.getElementById('edit-matching-modal-overlay').style.display = 'none';
-  editMatchingDealId = null;
+function closeEditRequestModal(){
+  document.getElementById('edit-request-modal-overlay').style.display = 'none';
+  document.getElementById('edit-request-modal-fields').innerHTML = '';
+  editRequestModalDealId = null;
 }
-document.getElementById('edit-matching-modal-cancel').addEventListener('click', closeEditMatchingModal);
-document.getElementById('edit-matching-modal-overlay').addEventListener('click', (e)=>{
-  if(e.target.id === 'edit-matching-modal-overlay') closeEditMatchingModal();
+document.getElementById('edit-request-modal-cancel').addEventListener('click', closeEditRequestModal);
+document.getElementById('edit-request-modal-overlay').addEventListener('click', (e)=>{
+  if(e.target.id === 'edit-request-modal-overlay') closeEditRequestModal();
 });
-// Toggle fields 1-4 for a row when its own Matching dropdown changes.
-document.addEventListener('change', (e)=>{
-  const m = e.target && e.target.id && e.target.id.match(/^em-(\d+)-matching$/);
-  if(!m) return;
-  const dependent = document.getElementById('em-'+m[1]+'-dependent');
-  if(!dependent) return;
-  dependent.style.display = (e.target.value === 'Open Position') ? 'none' : 'block';
-});
-document.getElementById('edit-matching-modal-submit').addEventListener('click', async ()=>{
-  const dealId = editMatchingDealId;
-  const errEl = document.getElementById('edit-matching-modal-error');
-  const btn = document.getElementById('edit-matching-modal-submit');
+document.getElementById('edit-request-modal-submit').addEventListener('click', async ()=>{
+  const dealId = editRequestModalDealId;
+  const errEl = document.getElementById('edit-request-modal-error');
+  const btn = document.getElementById('edit-request-modal-submit');
   errEl.style.display = 'none';
-  if(!dealId) return;
-  const rows = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
-  const edits = {};
-  // Keyed by each row's stable rowUid (falling back to position within this
-  // deal's own rows, 0,1,2..., only for legacy rows that predate the rowUid
-  // column). The DOM field ids ('em-0-...', 'em-1-...') still use plain
-  // position since they're just this modal's own render and never persisted
-  // — but the key used to hand edits off to resubmitMatchingInfo must match
-  // row identity, not raw table index, since table index shifts whenever
-  // ANY user adds/removes ANY row anywhere in the shared table.
-  rows.forEach((r,i)=>{
-    const domIndex = i;
-    const editKey = r.values[0][MC.rowUid] || ('pos:' + i);
-    const matchingVal = val('em-'+domIndex+'-matching');
-    const active = matchingVal && matchingVal !== 'Open Position';
-    edits[editKey] = {
-      matching: matchingVal,
-      buyerSeller: active ? val('em-'+domIndex+'-name') : '',
-      noOfRecs: active ? val('em-'+domIndex+'-recs') : '',
-      whichDeal: val('em-'+domIndex+'-deal'),
-      deliveryDateM: val('em-'+domIndex+'-ddate')
-    };
+  const edits = [];
+  document.querySelectorAll('#edit-request-modal-fields .edit-request-matching').forEach(sel=>{
+    const idx = parseInt(sel.getAttribute('data-idx'), 10);
+    edits[idx] = edits[idx] || {};
+    edits[idx].matching = sel.value;
+  });
+  document.querySelectorAll('#edit-request-modal-fields .edit-request-buyerseller').forEach(inp=>{
+    const idx = parseInt(inp.getAttribute('data-idx'), 10);
+    edits[idx] = edits[idx] || {};
+    edits[idx].buyerSeller = inp.value;
+  });
+  document.querySelectorAll('#edit-request-modal-fields .edit-request-whichdeal').forEach(inp=>{
+    const idx = parseInt(inp.getAttribute('data-idx'), 10);
+    edits[idx] = edits[idx] || {};
+    edits[idx].whichDeal = inp.value;
   });
   btn.disabled = true;
-  btn.textContent = 'Saving…';
+  btn.textContent = 'Submitting…';
   try{
-    await resubmitMatchingInfo(dealId, edits);
-    closeEditMatchingModal();
+    await requestBdMatchChange(dealId, edits);
+    closeEditRequestModal();
   }catch(err){
     errEl.textContent = err.message;
     errEl.style.display = 'block';
   }finally{
     btn.disabled = false;
-    btn.textContent = 'Save & send for Level 3 re-approval';
+    btn.textContent = 'Submit for Level 3 approval';
   }
 });
 document.addEventListener('click', (e)=>{
@@ -2602,8 +2645,18 @@ document.addEventListener('click', (e)=>{
   const approveBtn = e.target.closest('.history-approve-btn');
   if(approveBtn){
     const dealId = approveBtn.getAttribute('data-dealid');
-    if(submittedDealStatus(dealId) === STATUS_PENDING_2){
+    const dealStatus = submittedDealStatus(dealId);
+    if(dealStatus === STATUS_PENDING_2){
       openApproveModal(dealId);
+      return;
+    }
+    if(dealStatus === STATUS_PENDING_CHANGE_3){
+      if(confirm('Approve this BD source matching change for Deal ID ' + friendlyDealId(dealId) + '? The new values will be applied immediately and copied into the "' + APPROVED_LIST_NAME + '" list.')){
+        approveBtn.disabled = true;
+        approveBdMatchChange(dealId)
+          .catch(err=>{ console.error('Change approval failed', err); alert('Change approval failed: ' + err.message); })
+          .finally(()=>{ approveBtn.disabled = false; });
+      }
       return;
     }
     const confirmLabel = isPendingDealId(dealId) ? 'this agreement' : 'Deal ID ' + friendlyDealId(dealId);
@@ -2618,15 +2671,15 @@ document.addEventListener('click', (e)=>{
     openRejectModal(rejectBtn.getAttribute('data-dealid'));
     return;
   }
-  const editMatchBtn = e.target.closest('.history-editmatch-btn');
-  if(editMatchBtn){
-    openEditMatchingModal(editMatchBtn.getAttribute('data-dealid'));
+  const requestEditBtn = e.target.closest('.history-request-edit-btn');
+  if(requestEditBtn){
+    openEditRequestModal(requestEditBtn.getAttribute('data-dealid'));
   }
 });
 
 
 const COUNTRIES = ["MY","BN","CN","JP","SA","TH","IN","PH","SG","VN","INDO","AUS","TW"];
-const TECHS = ["SLR","GEO","BIO","HYD","BGS","SHY","LHY","CC","WND","ANY"];
+const TECHS = ["ANY","SLR","GEO","BIO","HYD","BGS","SHY","LHY","CC","WND"];
 
 // Hardcoded code -> full name lookups for the Customer version output (per
 // the reference sheet). Keys are matched case-insensitively; anything not
@@ -2639,28 +2692,35 @@ const COUNTRY_FULLNAMES = {
 const TECH_FULLNAMES = {
   'SLR':'Solar', 'ANY':'Any tech', 'GEO':'Geothermal', 'BIO':'Biomass', 'HYD':'Hydro',
   'BGS':'Biogas', 'SHY':'Small Hydro', 'LHY':'Large Hydro', 'CC':'Carbon Credit',
-  'WND':'Wind',
-  'SLR/WND':'Solar/Wind', 'S/WND':'Solar/Wind', 'SLR/BIO':'Solar/Biomass',
+  'WND':'Wind', 'SLR/WND':'Solar/Wind', 'S/WND':'Solar/Wind', 'SLR/BIO':'Solar/Biomass',
   'SLR/WND/SHY':'Solar/Wind/Small Hydro', 'SLR/WND/LHY':'Solar/Wind/Large Hydro'
 };
 function countryFullName(code){
   const key = String(code||'').trim().toUpperCase();
   return COUNTRY_FULLNAMES[key] || code;
 }
-// Tech values can now be a "/"-joined set of ticked checkboxes (e.g.
-// "SLR/WND"), so resolve each component individually and rejoin, falling
-// back to any pre-existing combo entries in TECH_FULLNAMES first.
 function techFullName(code){
   const raw = String(code||'').trim();
-  if(!raw) return code;
+  if(!raw) return raw;
   const key = raw.toUpperCase();
   if(TECH_FULLNAMES[key]) return TECH_FULLNAMES[key];
-  return key.split('/').map(p=>TECH_FULLNAMES[p] || p).join('/');
+  // No exact match (e.g. a freshly-combined code like "GEO/BIO" that isn't
+  // one of the hardcoded combos above) — map each ticked tech individually
+  // and rejoin, so any combination of tech checkboxes resolves correctly.
+  return raw.split('/').map(part=>{
+    const partKey = part.trim().toUpperCase();
+    return TECH_FULLNAMES[partKey] || part.trim();
+  }).join('/');
 }
 const REGISTRIES = ["IREC","TIGR","GEC","Rehash","JEPX","BCX","Verra","LGC","T-REC","K-REC"];
 const ORDER_TYPES = ["Stock-In (T)","Stock-Out (T)","Stock-Out (R)"];
 const CURRENCIES = ["USD","SGD","MYR"];
 const MATCHING = ["Partially Matched","Open Position","Matched","V-Matched"];
+// Display-only label overrides for the Matching dropdown — the option's
+// value (what gets saved/written to SharePoint) is unaffected.
+const MATCHING_DISPLAY_NAMES = {
+  "V-Matched":"Matched without Agreement"
+};
 const BD_NAMES = ["Addam","Aston U","Colwen Chan","Edmund Lam","Jordan Tan","Reik Ong","Roseanne Png","Sharon Lim","Thao","TM Lim"];
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const YEARS = ["2025","2026","2027","2028","2029","2030"];
@@ -2669,11 +2729,11 @@ const YEARS = ["2025","2026","2027","2028","2029","2030"];
    Ticking "Own RECs" or "Proceed Share" swaps the "From which deal" text
    box for a dropdown of the relevant options, and the generated table fills
    in a short code for that selection rather than the option's display text. */
-const OWN_RECS_OPTIONS = ["TIGR/I-REC MY SLR","TIGR/IREC SG SLR","TIGR MY SLR","TIGR SG SLR","I-REC MY SLR","I-REC SG SLR"];
+const OWN_RECS_OPTIONS = ["TIGR/I-REC MY SLR","TIGR/I-REC SG SLR","TIGR MY SLR","TIGR SG SLR","I-REC MY SLR","I-REC SG SLR"];
 const PROCEED_SHARE_OPTIONS = ["Tadau","IS Energy","Aenergy","PLTM"];
 const OWN_RECS_CODE_MAP = {
   "TIGR/I-REC MY SLR":"OR-TI-MY-SLR",
-  "TIGR/IREC SG SLR":"OR-TI-SG-SLR",
+  "TIGR/I-REC SG SLR":"OR-TI-SG-SLR",
   "TIGR MY SLR":"OR-TIGR-MY-SLR",
   "TIGR SG SLR":"OR-TIGR-SG-SLR",
   "I-REC MY SLR":"OR-IREC-MY-SLR",
@@ -2706,87 +2766,220 @@ function selectHtml(id, options, def){
 function textHtml(id, placeholder, val){
   return '<input type="text" id="'+id+'" placeholder="'+(placeholder||'')+'" value="'+(val||'')+'"/>';
 }
-function dateHtml(id, lang){
-  return '<input type="date" id="'+id+'"'+(lang ? ' lang="'+lang+'"' : '')+'/>';
+function dateHtml(id){
+  return '<div class="date-field-wrap">'+
+    '<input type="date" id="'+id+'" class="date-native"/>'+
+    '<span class="date-display is-placeholder" data-for="'+id+'">dd/mm/yyyy</span>'+
+    '</div>';
 }
+// Keeps a .date-native input's overlay span in sync with its actual (ISO
+// "YYYY-MM-DD") value. Called on every real user interaction (delegated
+// input/change listeners below) and also needs to be called manually after
+// any place that sets a date input's .value via JS, since that doesn't fire
+// input/change events on its own.
+function updateDateDisplay(input){
+  const span = input.parentElement && input.parentElement.querySelector('.date-display');
+  if(!span) return;
+  const v = input.value;
+  let formatted = '';
+  if(v){
+    const [y,m,d] = v.split('-');
+    if(y && m && d) formatted = d+'/'+m+'/'+y;
+  }
+  span.textContent = formatted || 'dd/mm/yyyy';
+  span.classList.toggle('is-placeholder', !formatted);
+}
+function refreshAllDateDisplays(root){
+  (root || document).querySelectorAll('input.date-native').forEach(updateDateDisplay);
+}
+document.addEventListener('input', (e)=>{
+  if(e.target.matches && e.target.matches('input.date-native')) updateDateDisplay(e.target);
+});
+document.addEventListener('change', (e)=>{
+  if(e.target.matches && e.target.matches('input.date-native')) updateDateDisplay(e.target);
+});
 function comboHtml(id, listId, options, def){
   const dl = '<datalist id="'+listId+'">' + options.map(v=>'<option value="'+v+'">').join('') + '</datalist>';
   return '<input type="text" list="'+listId+'" id="'+id+'" value="'+(def||'')+'"/>' + dl;
 }
+// Like selectHtml, but shows a human-readable full name (looked up from
+// fullNameMap) while the option's actual value — what val() reads, and what
+// gets saved to SharePoint — stays the original shortform code. Falls back to
+// showing the code itself if it has no entry in fullNameMap.
+// Tech is a tick-box group (a trade can be more than one tech, e.g. Solar +
+// Wind). The actual value the rest of the app reads/writes (val('tN-tech'),
+// saved to SharePoint, shown in the preview via techFullName) lives in a
+// hidden input with the same id the field always used — so every existing
+// caller keeps working unchanged. The hidden input's value is kept in sync
+// with the ticked boxes as "SLR/WND" (codes joined in TECHS order), which is
+// exactly the short-code format that gets written to SharePoint.
+function techCheckboxesHtml(n, defaultCode){
+  const def = defaultCode || 'SLR';
+  const boxes = TECHS.map(code=>{
+    const checked = code === def ? ' checked' : '';
+    return '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;font-weight:400;">'+
+      '<input type="checkbox" class="tech-checkbox" data-trade="'+n+'" value="'+code+'"'+checked+' style="width:auto;margin:0;"> '+(TECH_FULLNAMES[code]||code)+
+    '</label>';
+  }).join('');
+  return '<input type="hidden" id="t'+n+'-tech" value="'+def+'"/>'+
+    '<div class="tech-checkbox-group" id="t'+n+'-tech-boxes" style="display:flex;flex-wrap:wrap;gap:8px 16px;">'+boxes+'</div>';
+}
+// Recomputes the hidden tN-tech value from whichever boxes are ticked,
+// keeping them in TECHS order (so the code/display order is consistent
+// regardless of tick order) e.g. ticking Wind then Solar still saves SLR/WND.
+function updateTechValue(n){
+  const group = document.getElementById('t'+n+'-tech-boxes');
+  const hidden = document.getElementById('t'+n+'-tech');
+  if(!group || !hidden) return;
+  const checked = Array.from(group.querySelectorAll('input.tech-checkbox:checked')).map(cb=>cb.value);
+  const ordered = TECHS.filter(t=>checked.indexOf(t) !== -1);
+  hidden.value = ordered.join('/');
+}
+// Ticks/unticks the checkboxes to match whatever code (e.g. "SLR/WND") is
+// currently sitting in the hidden field — used after restoring a locked
+// value or a loaded draft, where the hidden field's value is set directly
+// via JS and the checkboxes need to be brought back into sync with it.
+function syncTechCheckboxesFromHidden(n){
+  const hidden = document.getElementById('t'+n+'-tech');
+  const group = document.getElementById('t'+n+'-tech-boxes');
+  if(!hidden || !group) return;
+  const codes = (hidden.value||'').split('/').map(s=>s.trim().toUpperCase()).filter(Boolean);
+  group.querySelectorAll('input.tech-checkbox').forEach(cb=>{
+    cb.checked = codes.indexOf(cb.value.toUpperCase()) !== -1;
+  });
+  applyTechExclusivityUi(n);
+}
+// "Any Tech" can't be combined with specific techs — it means any/unspecified
+// tech, which is a different thing from a defined combination of techs. So
+// ticking Any Tech clears every other tick, and ticking any other tech
+// clears Any Tech, for whichever checkbox the person just changed.
+function enforceTechExclusivity(n, changedCb){
+  const group = document.getElementById('t'+n+'-tech-boxes');
+  if(!group || !changedCb) return;
+  const anyCb = group.querySelector('input.tech-checkbox[value="ANY"]');
+  if(!anyCb) return;
+  if(changedCb === anyCb && anyCb.checked){
+    group.querySelectorAll('input.tech-checkbox').forEach(cb=>{ if(cb !== anyCb) cb.checked = false; });
+  } else if(changedCb !== anyCb && changedCb.checked){
+    anyCb.checked = false;
+  }
+}
+// Greys out whichever side is currently unselectable, so it's visually clear
+// Any Tech and specific techs can't be combined. Left alone while the field
+// is locked (the lock's own disabling already covers that case).
+function applyTechExclusivityUi(n){
+  const group = document.getElementById('t'+n+'-tech-boxes');
+  if(!group) return;
+  const wrap = document.getElementById('t'+n+'-tech-wrap');
+  if(wrap && wrap.classList.contains('field-locked')) return;
+  const anyCb = group.querySelector('input.tech-checkbox[value="ANY"]');
+  if(!anyCb) return;
+  const othersChecked = Array.from(group.querySelectorAll('input.tech-checkbox')).some(cb=>cb!==anyCb && cb.checked);
+  group.querySelectorAll('input.tech-checkbox').forEach(cb=>{
+    cb.disabled = (cb === anyCb) ? othersChecked : anyCb.checked;
+  });
+}
+document.addEventListener('change', (e)=>{
+  const cb = e.target.closest('.tech-checkbox');
+  if(cb){
+    const n = cb.getAttribute('data-trade');
+    enforceTechExclusivity(n, cb);
+    updateTechValue(n);
+    applyTechExclusivityUi(n);
+  }
+});
+function selectWithFullNamesHtml(id, codes, fullNameMap, def){
+  const o = codes.map(code => {
+    const label = fullNameMap[code] || code;
+    return '<option value="'+code+'"'+(code===def?' selected':'')+'>'+label+'</option>';
+  }).join('');
+  return '<select id="'+id+'">'+o+'</select>';
+}
 
 document.getElementById('header-fields').innerHTML =
   headerField('Deal ID',
-    '<div style="display:flex;gap:6px;">'+
-      '<input type="text" id="h-dealid-num" maxlength="5" inputmode="numeric" placeholder="auto-assigned" style="flex:1;" readonly/>'+
-      '<input type="text" id="h-dealid-alpha" maxlength="3" placeholder="Max 3 letters" style="flex:1;"/>'+
-    '</div>',
-    ['h-dealid-num','h-dealid-alpha']) +
-  headerField('Date','<input type="date" id="h-date"/>','h-date') +
+    '<input type="text" id="h-dealid-num" maxlength="5" inputmode="numeric" placeholder="auto-assigned" readonly/>',
+    'h-dealid-num') +
+  headerField('Deal Date', dateHtml('h-date'),'h-date') +
   headerField('Entity', selectHtml('h-entity',['MY','SG'],'MY'),'h-entity') +
   headerField('BD in-charge', selectHtml('h-bd',BD_NAMES,BD_NAMES[0]),'h-bd') +
-  headerField('Buyer or Seller', selectHtml('h-role',['Buyer','Seller'],'Buyer'),'h-role') +
-  headerField('Buyer Name', textHtml('h-buyer','Company name'),'h-buyer') +
   headerField('Order type', selectHtml('h-order',ORDER_TYPES,'Stock-In (T)'),'h-order') +
-  '<div id="h-description-wrap" style="grid-column:1 / -1;"><label for="h-description">Content for Level 1 approval</label>' +
-  '<textarea id="h-description" placeholder="What is the Deal type? Back to Back/Position Opening; Sell to; buy from; target closing price; GP Margin and GP"></textarea></div>';
+  '<div id="h-role-wrap"><label for="h-role">Buyer or Seller</label>'+
+  '<input type="text" id="h-role" value="Seller" readonly/></div>' +
+  headerField('Buyer/Seller Full Name', textHtml('h-buyer','Company name'),'h-buyer') +
+  '<div id="h-broker-yes-wrap" style="grid-column:1 / -1;">'+
+    '<label style="margin-bottom:6px;">Broker</label>'+
+    '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;font-weight:400;">'+
+      '<input type="checkbox" id="h-broker-yes" style="width:auto;margin:0;"> Broker involved'+
+    '</label>'+
+  '</div>'+
+  lockableField('Broker name', textHtml('h-broker','Broker name','NA'),'h-broker') +
+  '<div id="h-broker-fees-wrap" style="display:none;grid-column:1 / -1;">'+
+    '<label style="margin-bottom:6px;">Broker Fees</label>'+
+    '<div id="h-broker-fee-type-wrap" style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:10px;">'+
+      '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
+        '<input type="checkbox" id="h-broker-fee-per-rec" style="width:auto;margin:0;"> Currency + Price/RECs'+
+      '</label>'+
+      '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
+        '<input type="checkbox" id="h-broker-fee-fixed" style="width:auto;margin:0;"> Fixed price'+
+      '</label>'+
+    '</div>'+
+    '<div class="grid" id="h-broker-fee-fields-wrap" style="display:none;">'+
+      lockableField('Currency', selectHtml('h-broker-fee-currency',CURRENCIES,'USD'),'h-broker-fee-currency')+
+      lockableField('Price / RECs', textHtml('h-broker-fee-price','e.g. 0.10'),'h-broker-fee-price')+
+    '</div>'+
+  '</div>'+
+  '<div id="h-description-wrap" style="grid-column:1 / -1;"><label for="h-description">Commercial Justification</label>' +
+  '<textarea id="h-description" placeholder="Briefly describe this agreement, for whoever approves it — not shown to the customer"></textarea></div>';
 
-/* Keeps the "Buyer/Seller" field's on-screen label, "Transfer Account" label, and the generated table's
-   row labels in sync with the Buyer-or-Seller role selector. */
+/* Buyer/Seller is derived automatically from Order type — Stock-In means we're
+   selling, Stock-Out means we're buying — and is no longer a manual selector.
+   This keeps the "Buyer or Seller" field's value, its on-screen label, the
+   "Transfer Account" label, and the generated table's row labels all in sync. */
+function roleFromOrderType(orderType){
+  return (orderType || '').indexOf('Stock-In') === 0 ? 'Seller' : 'Buyer';
+}
 function currentRole(){
-  return val('h-role') === 'Seller' ? 'Seller' : 'Buyer';
+  return roleFromOrderType(val('h-order'));
+}
+function updateRoleField(){
+  const role = currentRole();
+  const roleField = document.getElementById('h-role');
+  if(roleField) roleField.value = role;
 }
 function updateBuyerSellerFieldLabel(){
   const label = document.querySelector('label[for="h-buyer"]');
-  if(label) label.textContent = currentRole() + ' Name';
+  if(label) label.textContent = currentRole() + ' Full Name';
+}
+function transferAccountLabel(role){
+  return role === 'Buyer' ? 'Buyer Receiving Account' : 'Seller Transfer Account';
 }
 function updateTransferAccountLabels(){
   const role = currentRole();
+  const label_text = transferAccountLabel(role);
   const tradeCount = parseInt(document.getElementById('trade-count').value, 10);
   for(let i = 1; i <= tradeCount; i++) {
     const label = document.querySelector(`label[for="t${i}-transfer"]`);
-    if(label) label.textContent = role + ' Transfer Account';
+    if(label) label.textContent = label_text;
   }
 }
+function refreshRoleDependentUi(){
+  updateRoleField();
+  updateBuyerSellerFieldLabel();
+  updateTransferAccountLabels();
+}
 document.addEventListener('change', (e)=>{
-  if(e.target && e.target.id === 'h-role') {
-    updateBuyerSellerFieldLabel();
-    updateTransferAccountLabels();
+  if(e.target && e.target.id === 'h-order') {
+    refreshRoleDependentUi();
   }
 });
-updateBuyerSellerFieldLabel();
+refreshRoleDependentUi();
 
-// Deal ID is split into a compulsory 5-digit box and an optional max-3-letter
-// box; strip anything that doesn't belong as the person types.
+// Deal ID is a 5-digit box; strip anything that doesn't belong as the person types.
 document.addEventListener('input', (e)=>{
   if(e.target && e.target.id === 'h-dealid-num'){
     const cleaned = e.target.value.replace(/[^0-9]/g,'').slice(0,5);
     if(cleaned !== e.target.value) e.target.value = cleaned;
-  }
-  if(e.target && e.target.id === 'h-dealid-alpha'){
-    const cleaned = e.target.value.replace(/[^a-zA-Z]/g,'').slice(0,3).toUpperCase();
-    if(cleaned !== e.target.value) e.target.value = cleaned;
-    // Once the person types their own letters here, stop auto-filling from
-    // the Buyer/Seller name. Clearing it back out resumes auto-fill.
-    dealIdAlphaManuallyEdited = cleaned !== '';
-  }
-});
-
-// Deal ID letters auto-fill from the first 3 letters of the Buyer/Seller
-// Name's first word (skipping common legal-entity suffixes like Sdn/Bhd/Ltd
-// if they happen to lead), like a surname abbreviation — e.g. "Saxon
-// Renewables Energy Sdn Bhd" -> "SAX". The person can still overwrite the
-// letters themselves; once they do, auto-fill stops touching that field.
-let dealIdAlphaManuallyEdited = false;
-const DEAL_ID_SUFFIX_WORDS = new Set(['sdn','bhd','berhad','ltd','limited','pte','pty','llc','inc','incorporated','corp','corporation','co','plc']);
-function initialsFromCompanyName(name){
-  const words = (name||'').split(/\s+/).filter(Boolean).filter(w=>!DEAL_ID_SUFFIX_WORDS.has(w.toLowerCase()));
-  if(!words.length) return '';
-  return words[0].slice(0,3).toUpperCase();
-}
-document.addEventListener('input', (e)=>{
-  if(e.target && e.target.id === 'h-buyer' && !dealIdAlphaManuallyEdited){
-    const alphaField = document.getElementById('h-dealid-alpha');
-    if(alphaField) alphaField.value = initialsFromCompanyName(e.target.value);
   }
 });
 
@@ -2811,26 +3004,15 @@ function applyFieldLockUi(key, locked){
     const el = document.getElementById(id);
     if(el) el.disabled = locked;
   });
-  if(wrap) wrap.classList.toggle('field-locked', locked);
+  if(wrap){
+    wrap.classList.toggle('field-locked', locked);
+    wrap.querySelectorAll('input[type=checkbox]').forEach(cb=>{ cb.disabled = locked; });
+  }
   if(btn){
     btn.textContent = locked ? '🔒' : '🔓';
     btn.classList.toggle('is-locked', locked);
     btn.title = locked ? 'Unlock this field' : 'Lock this field';
   }
-}
-// Ticks the correct Tech checkboxes for trade n to match whatever is
-// currently in its hidden 't{n}-tech' value — needed anywhere that value
-// gets restored programmatically (field lock restore) rather than via the
-// checkboxes' own change handler.
-function syncTechCheckboxesFromHidden(n){
-  const hidden = document.getElementById('t'+n+'-tech');
-  if(!hidden) return;
-  const active = new Set(hidden.value.split('/').map(s=>s.trim()).filter(Boolean));
-  TECHS.forEach(t=>{
-    const cb = document.getElementById('t'+n+'-tech-'+t);
-    if(cb) cb.checked = active.has(t);
-  });
-  updateTechExclusivity(n);
 }
 // Restores saved values/lock state for every lockable field found inside `container`.
 // Safe to call repeatedly (e.g. every time trade blocks are re-rendered).
@@ -2847,9 +3029,12 @@ function initLocksIn(container){
         if(el && saved.values && saved.values[id] !== undefined) el.value = saved.values[id];
       });
       applyFieldLockUi(key, !!saved.locked);
-      const techMatch = key.match(/^t(\d+)-tech$/);
-      if(techMatch) syncTechCheckboxesFromHidden(techMatch[1]);
     }
+  });
+  refreshAllDateDisplays(container);
+  container.querySelectorAll('.tech-checkbox-group').forEach(group=>{
+    const n = group.id.replace(/^t/,'').replace(/-tech-boxes$/,'');
+    syncTechCheckboxesFromHidden(n);
   });
 }
 
@@ -2875,10 +3060,14 @@ document.addEventListener('click', (e)=>{
     writeLockState(state);
     applyFieldLockUi(key, true);
   }
+  const techMatch = key.match(/^t(\d+)-tech$/);
+  if(techMatch) applyTechExclusivityUi(techMatch[1]);
 });
 
 initLocksIn(document.getElementById('header-fields'));
-updateBuyerSellerFieldLabel();
+refreshRoleDependentUi();
+updateBrokerUi();
+updateBrokerFeeUi();
 
 /* ---- Section-level lock/persist (Details / Trades) ----
    Locking a section locks every field inside it in one go, and disables the
@@ -2914,6 +3103,8 @@ function setAllFieldLocksIn(container, locked){
       state[key] = { locked:false, values: state[key] ? state[key].values : {} };
     }
     applyFieldLockUi(key, locked);
+    const techMatch = key.match(/^t(\d+)-tech$/);
+    if(techMatch) applyTechExclusivityUi(techMatch[1]);
   });
   writeLockState(state);
 }
@@ -2963,76 +3154,14 @@ document.addEventListener('click', (e)=>{
 initSectionLock('header');
 
 
-// Tech field: a row of tick boxes (one per TECHS entry) plus a hidden input
-// (id 't{n}-tech') that always holds the "/"-joined string of whichever
-// boxes are ticked, in TECHS order — e.g. ticking SLR and WND produces
-// "SLR/WND". The hidden input is what every other part of the form (val(),
-// validation, table/point-format output, drafts) reads/writes, so the rest
-// of the code needs no changes.
-function techCheckboxesHtml(n){
-  const boxes = TECHS.map(t=>
-    '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
-      '<input type="checkbox" id="t'+n+'-tech-'+t+'" class="tech-checkbox" data-trade="'+n+'" data-tech="'+t+'" style="width:auto;margin:0;"'+(t==='SLR'?' checked':'')+'> '+t+
-    '</label>'
-  ).join('');
-  return '<input type="hidden" id="t'+n+'-tech" value="SLR">'+
-    '<div style="display:flex;gap:14px;flex-wrap:wrap;">'+boxes+'</div>';
-}
-// Recomputes trade n's hidden Tech value from whichever tick boxes are
-// checked, in TECHS order (not click order), so "SLR" + "WND" always
-// renders as "SLR/WND" regardless of which box was ticked first.
-function updateTechField(n){
-  const hidden = document.getElementById('t'+n+'-tech');
-  if(!hidden) return;
-  const checked = TECHS.filter(t=>{
-    const cb = document.getElementById('t'+n+'-tech-'+t);
-    return cb && cb.checked;
-  });
-  hidden.value = checked.join('/');
-}
-// "ANY" means "any technology" and doesn't combine with specific techs, so
-// it's mutually exclusive with the rest: ticking ANY clears and disables
-// every other tech box, and ticking any other tech box clears and disables
-// ANY. Safe to call any time checkbox states change, including after a
-// programmatic restore (draft load, field-lock restore).
-function updateTechExclusivity(n){
-  const anyCb = document.getElementById('t'+n+'-tech-ANY');
-  const otherCbs = TECHS.filter(t=>t!=='ANY').map(t=>document.getElementById('t'+n+'-tech-'+t)).filter(Boolean);
-  if(!anyCb) return;
-  const otherChecked = otherCbs.some(cb=>cb.checked);
-  otherCbs.forEach(cb=>{ cb.disabled = anyCb.checked; });
-  anyCb.disabled = otherChecked;
-}
-document.addEventListener('change', (e)=>{
-  if(e.target && e.target.classList && e.target.classList.contains('tech-checkbox')){
-    const n = e.target.dataset.trade;
-    if(e.target.checked){
-      if(e.target.dataset.tech === 'ANY'){
-        TECHS.forEach(t=>{
-          if(t === 'ANY') return;
-          const cb = document.getElementById('t'+n+'-tech-'+t);
-          if(cb) cb.checked = false;
-        });
-      } else {
-        const anyCb = document.getElementById('t'+n+'-tech-ANY');
-        if(anyCb) anyCb.checked = false;
-      }
-    }
-    updateTechExclusivity(n);
-    updateTechField(n);
-  }
-});
-
 function tradeBlockHtml(n){
   return '<div class="trade-block" data-trade-num="'+n+'">'+
-    '<p class="trade-title">Trade '+n+'</p>'+
+    '<p class="trade-title">Product '+n+'</p>'+
     '<div class="grid">'+
+    lockableField('Country', selectWithFullNamesHtml('t'+n+'-country',COUNTRIES,COUNTRY_FULLNAMES,'MY'),'t'+n+'-country')+
     lockableField('Registry', comboHtml('t'+n+'-registry','t'+n+'-registry-list',REGISTRIES,'IREC'),'t'+n+'-registry')+
-    lockableField('Dealership', selectHtml('t'+n+'-dealership',['SAXON MY','SAXON SG'],'SAXON MY'),'t'+n+'-dealership')+
-    
-    // Custom label text is updated programmatically to reflect Buyer/Seller dynamically
-    lockableField('Transfer account name', textHtml('t'+n+'-transfer','Account name'),'t'+n+'-transfer')+
-    
+    lockableField('Tech', techCheckboxesHtml(n,'SLR'),'t'+n+'-tech')
+      .replace('<div id=','<div style="grid-column:1 / -1;" id=')+
     lockableField('Vintage start month &amp; year',
       '<div style="display:flex;gap:6px;">'+
         selectHtml('t'+n+'-vintage-start-month', MONTHS, 'Jan')+
@@ -3045,25 +3174,23 @@ function tradeBlockHtml(n){
         comboHtml('t'+n+'-vintage-end-year','t'+n+'-end-year-list', YEARS, '2025')+
       '</div>',
       ['t'+n+'-vintage-end-month','t'+n+'-vintage-end-year'])+
-    lockableField('Tech', techCheckboxesHtml(n), 't'+n+'-tech')
-      .replace('<div id=','<div style="grid-column:1 / -1;" id=')+
-    lockableField('Country', comboHtml('t'+n+'-country','t'+n+'-country-list',COUNTRIES,'MY'),'t'+n+'-country')+
     lockableField('Volume (RECs)', textHtml('t'+n+'-volume','e.g. 30,000'),'t'+n+'-volume')+
+    lockableField('Delivery start date', dateHtml('t'+n+'-dstart'),'t'+n+'-dstart')+
+    lockableField('Delivery end date', dateHtml('t'+n+'-dend'),'t'+n+'-dend')+
+    lockableField('COD (if applicable)', textHtml('t'+n+'-m-cod','NA','NA'),'t'+n+'-m-cod')+
     lockableField('Price currency', comboHtml('t'+n+'-currency','t'+n+'-currency-list',CURRENCIES,'USD'),'t'+n+'-currency')+
     lockableField('Price / REC', textHtml('t'+n+'-price','e.g. 0.27'),'t'+n+'-price')+
     lockableField('Payment term', textHtml('t'+n+'-payterm','30 days after invoice','30 days after invoice'),'t'+n+'-payterm')+
-    lockableField('Delivery start date', dateHtml('t'+n+'-dstart','en-GB'),'t'+n+'-dstart')+
-    lockableField('Delivery end date', dateHtml('t'+n+'-dend','en-GB'),'t'+n+'-dend')+
-    lockableField('COD (if applicable)', textHtml('t'+n+'-m-cod','NA','NA'),'t'+n+'-m-cod')+
     lockableField('Special remarks', '<textarea id="t'+n+'-remarks" placeholder="NA">NA</textarea>', 't'+n+'-remarks')
       .replace('<div id=','<div style="grid-column:1 / -1;" id=')+
-    lockableField('Broker (if any)', textHtml('t'+n+'-broker','NA','NA'),'t'+n+'-broker')+
+    // Custom label text is updated programmatically to reflect Buyer/Seller dynamically
+    lockableField('Transfer account name', textHtml('t'+n+'-transfer','Optional — required before Level 2 approval'),'t'+n+'-transfer')+
     '</div>'+
     '<p class="sub-title">BD source matching</p>'+
     
     '<!-- Matching dropdown is now at the top of BD Source Matching section -->'+
     '<div class="grid" style="margin-bottom: 12px;">'+
-      lockableField('5. Matching', selectHtml('t'+n+'-m-matching',MATCHING,'Open Position'),'t'+n+'-m-matching')+
+      lockableField('5. Matching', selectWithFullNamesHtml('t'+n+'-m-matching',MATCHING,MATCHING_DISPLAY_NAMES,'Open Position'),'t'+n+'-m-matching')+
     '</div>'+
 
     '<!-- Wrapper for matching dependent fields -->'+
@@ -3127,6 +3254,7 @@ function handleMatchingChange(n) {
     dependentContainer.querySelectorAll('input[type="text"], input[type="date"]').forEach(el => {
       el.value = '';
     });
+    refreshAllDateDisplays(dependentContainer);
     // Uncheck checkboxes
     dependentContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => {
       cb.checked = false;
@@ -3163,6 +3291,82 @@ document.addEventListener('change', (e)=>{
   updateDealField(n);
 });
 
+/* ---- Broker / Broker Fees ----
+   "Broker involved" is a plain tickbox: ticked -> the broker name field is
+   shown (and required) and the Broker Fees section appears; unticked -> the
+   name field is hidden and its value is forced back to "NA", matching the
+   old default. Broker Fees itself offers two mutually-exclusive fee
+   structures (like Own RECs / Proceed Share above) — ticking one clears the
+   other, and the shared Currency/Price fields' label switches between
+   "Price / RECs" and "Fixed price" depending on which is picked. */
+function updateBrokerFeeUi(){
+  const perRec = document.getElementById('h-broker-fee-per-rec');
+  const fixed = document.getElementById('h-broker-fee-fixed');
+  const fieldsWrap = document.getElementById('h-broker-fee-fields-wrap');
+  const priceLabel = document.querySelector('label[for="h-broker-fee-price"]');
+  if(!perRec || !fixed || !fieldsWrap) return;
+  const anyChecked = perRec.checked || fixed.checked;
+  fieldsWrap.style.display = anyChecked ? 'grid' : 'none';
+  if(priceLabel) priceLabel.textContent = fixed.checked ? 'Fixed price' : 'Price / RECs';
+  if(!anyChecked){
+    const priceEl = document.getElementById('h-broker-fee-price');
+    if(priceEl) priceEl.value = '';
+  }
+}
+function updateBrokerUi(){
+  const yes = document.getElementById('h-broker-yes');
+  const nameWrap = document.getElementById('h-broker-wrap');
+  const feesWrap = document.getElementById('h-broker-fees-wrap');
+  const nameEl = document.getElementById('h-broker');
+  if(!yes) return;
+  const checked = yes.checked;
+  if(nameWrap) nameWrap.style.display = checked ? '' : 'none';
+  if(feesWrap) feesWrap.style.display = checked ? '' : 'none';
+  if(checked){
+    if(nameEl && nameEl.value === 'NA') nameEl.value = '';
+  } else {
+    if(nameEl) nameEl.value = 'NA';
+    // Unticking clears any in-progress fee selection so a hidden, stale fee
+    // doesn't silently get saved with the deal.
+    const perRec = document.getElementById('h-broker-fee-per-rec');
+    const fixed = document.getElementById('h-broker-fee-fixed');
+    const currEl = document.getElementById('h-broker-fee-currency');
+    const priceEl = document.getElementById('h-broker-fee-price');
+    if(perRec) perRec.checked = false;
+    if(fixed) fixed.checked = false;
+    if(currEl) currEl.value = 'USD';
+    if(priceEl) priceEl.value = '';
+    updateBrokerFeeUi();
+  }
+}
+document.addEventListener('change', (e)=>{
+  if(e.target && e.target.id === 'h-broker-yes') updateBrokerUi();
+});
+document.addEventListener('change', (e)=>{
+  if(e.target && e.target.id === 'h-broker-fee-per-rec' && e.target.checked){
+    const fixed = document.getElementById('h-broker-fee-fixed');
+    if(fixed) fixed.checked = false;
+    updateBrokerFeeUi();
+  } else if(e.target && e.target.id === 'h-broker-fee-fixed' && e.target.checked){
+    const perRec = document.getElementById('h-broker-fee-per-rec');
+    if(perRec) perRec.checked = false;
+    updateBrokerFeeUi();
+  } else if(e.target && (e.target.id === 'h-broker-fee-per-rec' || e.target.id === 'h-broker-fee-fixed')){
+    updateBrokerFeeUi();
+  }
+});
+// Returns '' when no broker fee applies, otherwise the human-readable fee
+// type label that also gets written to TradeDealLog's "Broker Fee Type" column.
+function brokerFeeTypeValue(){
+  const yes = document.getElementById('h-broker-yes');
+  if(!yes || !yes.checked) return '';
+  const perRec = document.getElementById('h-broker-fee-per-rec');
+  const fixed = document.getElementById('h-broker-fee-fixed');
+  if(perRec && perRec.checked) return 'Currency + Price/RECs';
+  if(fixed && fixed.checked) return 'Fixed price';
+  return '';
+}
+
 // Returns the value to fill into the generated table's "From which deal"
 // row: the mapped short code when Own RECs / Proceed Share is ticked and an
 // option is selected, or the raw typed value otherwise.
@@ -3177,7 +3381,11 @@ function dealCodeFor(n){
 }
 
 function renderTrades(){
-  const n = parseInt(document.getElementById('trade-count').value,10);
+  const countEl = document.getElementById('trade-count');
+  let n = parseInt(countEl.value, 10);
+  if(isNaN(n) || n < 1) n = 1;
+  if(n > 50) n = 50;
+  if(String(n) !== countEl.value) countEl.value = n;
   const c = document.getElementById('trades-container');
   let html = '';
   for(let i=1;i<=n;i++) html += tradeBlockHtml(i);
@@ -3246,18 +3454,16 @@ function val(id){ const el=document.getElementById(id); return el ? el.value : '
 
 // The Ops version table shows a Deal ID that encodes how many trades are in
 // this deal: the number of trades selected gets inserted as a single digit
-// right after the first 5 characters of the entered Deal ID (before the
-// company surname suffix). E.g. "01000DIY" with 3 trades -> "010003DIY".
+// right after the 5-digit Deal ID. E.g. "01000" with 3 trades -> "010003".
 function opsDealId(){
   // No real Deal ID exists until Level 1 approves — while currentDealDocId
   // is still the temporary placeholder, show that instead of assembling a
   // number that hasn't actually been assigned yet.
   if(isPendingDealId(currentDealDocId)) return friendlyDealId(currentDealDocId);
   const num = val('h-dealid-num');
-  const alpha = val('h-dealid-alpha');
-  if(!num && !alpha) return '';
+  if(!num) return '';
   const filled = parseInt(document.getElementById('trade-count').value,10) || '';
-  return num + filled + alpha;
+  return num + filled;
 }
 
 // Builds one 3-column trade block (trades startIdx..startIdx+2), the same fixed
@@ -3268,14 +3474,13 @@ function buildTradeGroup(startIdx, filled){
   const addRow = (label, cells, span, parts) => rows.push({label, cells, span: !!span, parts});
   const size = 3;
 
-  const tradeNos = [], registries=[], dealerships=[], transfers=[], vintages=[], vintageParts=[], techs=[], countries=[], volumes=[], prices=[], priceParts=[], payterms=[], dstarts=[], dends=[], remarks=[], brokers=[];
+  const tradeNos = [], registries=[], transfers=[], vintages=[], vintageParts=[], techs=[], countries=[], volumes=[], prices=[], priceParts=[], payterms=[], dstarts=[], dends=[], remarks=[];
   const mNames=[], mRecs=[], mDeals=[], mDdates=[], mMatchings=[], mCods=[];
   for(let j=0;j<size;j++){
     const i = startIdx + j;
     tradeNos.push(i <= filled ? String(i) : '');
     if(i <= filled){
       registries.push(val('t'+i+'-registry'));
-      dealerships.push(val('t'+i+'-dealership'));
       transfers.push(val('t'+i+'-transfer'));
       vintages.push(val('t'+i+'-vintage-start-month')+' | '+val('t'+i+'-vintage-start-year')+' | '+val('t'+i+'-vintage-end-month')+' | '+val('t'+i+'-vintage-end-year'));
       vintageParts.push([val('t'+i+'-vintage-start-month'), val('t'+i+'-vintage-start-year'), val('t'+i+'-vintage-end-month'), val('t'+i+'-vintage-end-year')]);
@@ -3288,7 +3493,6 @@ function buildTradeGroup(startIdx, filled){
       dstarts.push(fmtDateOrdinal(val('t'+i+'-dstart')));
       dends.push(fmtDateOrdinal(val('t'+i+'-dend')));
       remarks.push(val('t'+i+'-remarks'));
-      brokers.push(val('t'+i+'-broker'));
       mNames.push(val('t'+i+'-m-name'));
       mRecs.push(val('t'+i+'-m-recs'));
       mDeals.push(dealCodeFor(i));
@@ -3296,16 +3500,15 @@ function buildTradeGroup(startIdx, filled){
       mMatchings.push(val('t'+i+'-m-matching'));
       mCods.push(val('t'+i+'-m-cod'));
     } else {
-      registries.push(''); dealerships.push(''); transfers.push('');
+      registries.push(''); transfers.push('');
       vintages.push(''); vintageParts.push(['','','','']); techs.push(''); countries.push(''); volumes.push(''); prices.push(''); priceParts.push(['','']);
-      payterms.push(''); dstarts.push(''); dends.push(''); remarks.push(''); brokers.push('');
+      payterms.push(''); dstarts.push(''); dends.push(''); remarks.push('');
       mNames.push(''); mRecs.push(''); mDeals.push(''); mDdates.push(''); mMatchings.push(''); mCods.push('');
     }
   }
-  addRow('Trade', tradeNos);
+  addRow('Product', tradeNos);
   addRow('Registry', registries);
-  addRow('Dealership', dealerships);
-  addRow(currentRole() + ' Transfer Account', transfers);
+  addRow(transferAccountLabel(currentRole()), transfers);
   addRow('Vintage', vintages, false, vintageParts);
   addRow('Tech', techs);
   addRow('Country', countries);
@@ -3316,7 +3519,6 @@ function buildTradeGroup(startIdx, filled){
   addRow('Delivery End Date', dends);
   addRow('COD (if applicable)', mCods);
   addRow('Special Remarks Request', remarks);
-  addRow('Broker (if any)', brokers);
   addRow('BD Source Matching: 1. Buyer/Seller', mNames);
   addRow('2. No of RECs', mRecs);
   addRow('3. From which deal', mDeals);
@@ -3336,11 +3538,12 @@ function buildTable(){
 
   const headerRows = [];
   const addHeaderRow = (label, cells) => headerRows.push({label, cells, span:true});
-  addHeaderRow('Date', [fmtDate(val('h-date'))]);
+  addHeaderRow('Deal Date', [fmtDate(val('h-date'))]);
   addHeaderRow('Entity', [val('h-entity')]);
   addHeaderRow('BD in-charge', [val('h-bd')]);
   addHeaderRow(currentRole(), [val('h-buyer')]);
   addHeaderRow('Order Type', [val('h-order')]);
+  addHeaderRow('Broker (if any)', [val('h-broker')]);
 
   const groups = [buildTradeGroup(1, filled)];
   if(filled > 3) groups.push(buildTradeGroup(4, filled));
@@ -3526,10 +3729,10 @@ function buildPointFormat(){
   lines.push({type:'title', text:'Details: Transaction Recap'});
   addBlank();
   // The 5-digit sequence number isn't claimed until Save agreement succeeds,
-  // so opsDealId() before that point is just "trade count + alpha suffix" —
-  // showing that here would look like a real (and wrong) Deal ID.
+  // so opsDealId() before that point is just "trade count" appended to a
+  // blank number — showing that here would look like a real (and wrong) Deal ID.
   addField('Deal ID', currentDealDocId ? opsDealId() : 'Assigned once saved');
-  addField('Date', fmtDate(val('h-date')));
+  addField('Deal Date', fmtDate(val('h-date')));
   addField('Entity', val('h-entity'));
   addField('BD in-charge', val('h-bd'));
   addField(currentRole(), val('h-buyer'));
@@ -3539,10 +3742,9 @@ function buildPointFormat(){
 
   for(let i=1;i<=filled;i++){
     addBlank();
-    lines.push({type:'tradeTitle', text:'Trade '+i});
+    lines.push({type:'tradeTitle', text:'Product '+i});
     addField('Registry', val('t'+i+'-registry'));
-    addField('Dealership', val('t'+i+'-dealership'));
-    addField(currentRole() + ' Transfer Account', val('t'+i+'-transfer'));
+    addField(transferAccountLabel(currentRole()), val('t'+i+'-transfer'));
     addField('Vintage', val('t'+i+'-vintage-start-month')+' '+val('t'+i+'-vintage-start-year')+' - '+val('t'+i+'-vintage-end-month')+' '+val('t'+i+'-vintage-end-year'));
     addField('Tech', techFullName(val('t'+i+'-tech')));
     addField('Country', countryFullName(val('t'+i+'-country')));
@@ -3596,17 +3798,23 @@ function isEmpty(id){
 function detailFieldDefs(requireDealId){
   const defs = [];
   defs.push(
-    {id:'h-date', label:'Date'},
+    {id:'h-date', label:'Deal Date'},
     {id:'h-entity', label:'Entity'},
     {id:'h-bd', label:'BD in-charge'},
-    {id:'h-buyer', label:currentRole()+' Name'},
+    {id:'h-buyer', label:currentRole()+' Full Name'},
     {id:'h-order', label:'Order type'},
-    {id:'h-description', label:'Content for Level 1 approval'},
-    // Required so the saved Deal ID (sequence number + trade count + these
-    // letters) is never all-digits — an all-numeric value gets silently
-    // reinterpreted as a number by Excel, dropping the leading zero.
-    {id:'h-dealid-alpha', label:'Deal ID letters'}
+    {id:'h-description', label:'Commercial Justification'}
   );
+  const brokerYes = document.getElementById('h-broker-yes');
+  if(brokerYes && brokerYes.checked){
+    defs.push({id:'h-broker', label:'Broker name'});
+    defs.push({id:'h-broker-fee-type', label:'Broker Fees (choose Currency + Price/RECs, or Fixed price)',
+      validate: ()=>!!brokerFeeTypeValue()});
+    if(brokerFeeTypeValue()){
+      defs.push({id:'h-broker-fee-currency', label:'Broker Fee Currency'});
+      defs.push({id:'h-broker-fee-price', label:'Broker Fee Price'});
+    }
+  }
   return defs;
 }
 // A field is valid if it has a custom validator that passes, or (by default)
@@ -3620,8 +3828,6 @@ function tradeFieldDefs(i){
   // Fields to validate for a standard Trade section
   const baseDefs = [
     {ids:['t'+i+'-registry'], label:'Registry'},
-    {ids:['t'+i+'-dealership'], label:'Dealership'},
-    {ids:['t'+i+'-transfer'], label:currentRole() + ' Transfer Account'},
     {ids:['t'+i+'-vintage-start-month','t'+i+'-vintage-start-year'], label:'Vintage start month & year'},
     {ids:['t'+i+'-vintage-end-month','t'+i+'-vintage-end-year'], label:'Vintage end month & year'},
     {ids:['t'+i+'-tech'], label:'Tech'},
@@ -3675,7 +3881,7 @@ function validateVersion(requireDealId){
   for(let i=1;i<=filled;i++){
     tradeFieldDefs(i).forEach(f=>{
       if(f.ids.some(id=>isEmpty(id))){
-        missing.push({section:'Trade '+i, label:f.label});
+        missing.push({section:'Product '+i, label:f.label});
         markMissing(f.ids.join(','));
       }
     });
@@ -3729,8 +3935,8 @@ function generateOutput(){
     lastPlain = buildPointFormatText(lines);
   }
   // The "Deal ID" field itself stays blank until Save agreement actually
-  // claims one from the shared counter, so opsDealId() before that point is
-  // really just "trade count + alpha suffix" — showing that here in the
+  // claims one from the shared counter, so opsDealId() before that point
+  // isn't a real number yet — showing that here in the
   // card label would look like a real (and wrong) Deal ID. Only show the
   // label once a real one exists.
   setPreviewDealIdLabel(currentDealDocId ? opsDealId() : '');
@@ -3793,9 +3999,12 @@ document.getElementById('save-agreement-btn').addEventListener('click', async ()
     await loadHistory(); // refresh logRowsCache so dealAlreadySubmitted() sees this deal
     await notifyNextApprover(STATUS_PENDING_1, currentDealDocId, val('h-description'));
 
-    note.textContent = 'Submitted — awaiting Level 1 approval. A Deal ID will be assigned once that approval happens, and you\'ll get an email then.';
+    note.textContent = 'Submitted — awaiting Level 1 approval. A Deal ID will be assigned once that approval happens, and you\'ll get an email then. Starting a new agreement…';
     note.style.display = 'block';
-    lockSubmittedForm(currentDealDocId);
+    // Give the person a moment to read the confirmation, then automatically
+    // move on to a blank agreement — no need to click Reset data unless
+    // they actually want to wipe locked fields too.
+    setTimeout(resetToBlankForm, 1500);
   }catch(err){
     console.error('Save agreement failed', err);
     note.textContent = 'Save failed: ' + err.message;
