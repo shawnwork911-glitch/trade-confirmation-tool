@@ -1,377 +1,3810 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Deal Management & BD Source Matching</title>
-  <style>
-    /* Base Application Styles */
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      margin: 20px;
-      background-color: #f8f9fa;
-      color: #333;
-    }
-    .card {
-      background: #ffffff;
-      padding: 20px;
-      border-radius: 8px;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-      margin-bottom: 20px;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 15px;
-    }
-    th, td {
-      border: 1px solid #dee2e6;
-      padding: 10px;
-      text-align: left;
-    }
-    th {
-      background-color: #f1f3f5;
-    }
-    .btn {
-      padding: 6px 12px;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 14px;
-    }
-    .btn-primary { background-color: #0078d4; color: #fff; }
-    .btn-secondary { background-color: #6c757d; color: #fff; }
-    .btn-success { background-color: #28a745; color: #fff; }
-    .btn-danger { background-color: #dc3545; color: #fff; }
-    .badge {
-      padding: 4px 8px;
-      border-radius: 4px;
-      font-size: 12px;
-      font-weight: bold;
-    }
-    .badge-approved { background-color: #d4edda; color: #155724; }
-    .badge-pending { background-color: #fff3cd; color: #856404; }
-    
-    /* Modal Overlay Styles */
-    #edit-request-modal-overlay {
-      display: none;
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(0,0,0,0.5);
-      z-index: 9999;
-      justify-content: center;
-      align-items: center;
-    }
-    .modal-content {
-      background: #fff;
-      padding: 24px;
-      border-radius: 8px;
-      width: 420px;
-      max-width: 90%;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-    }
-    .form-group {
-      margin-bottom: 14px;
-    }
-    .form-group label {
-      display: block;
-      margin-bottom: 5px;
-      font-weight: 600;
-    }
-    .form-group input, .form-group select {
-      width: 100%;
-      padding: 8px;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-      box-sizing: border-box;
-    }
-    .modal-actions {
-      display: flex;
-      justify-content: flex-end;
-      gap: 10px;
-      margin-top: 20px;
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agreement Table Generator</title>
+<script src="https://unpkg.com/@azure/msal-browser@3/lib/msal-browser.min.js"></script>
+<style>
+  :root{
+    --bg:#f5f5f4;
+    --surface:#ffffff;
+    --surface-2:#fafaf9;
+    --border:#e2e0dc;
+    --border-strong:#3a3a38;
+    --text:#2b2a28;
+    --text-secondary:#6b6963;
+    --accent:#c15f3c;
+    --accent-hover:#a94f30;
+    --success:#3f7d4f;
+    --radius:8px;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    padding:32px 16px 64px;
+  }
+  .wrap{
+    max-width:960px;
+    margin:0 auto;
+    display:flex;
+    flex-direction:column;
+    gap:24px;
+  }
+  h1{
+    font-size:20px;
+    font-weight:600;
+    margin:0;
+  }
+  p.subtitle{
+    margin:4px 0 0;
+    color:var(--text-secondary);
+    font-size:14px;
+  }
+  .card{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:12px;
+    padding:20px 24px;
+  }
+  .card-title{
+    font-size:14px;
+    font-weight:600;
+    margin:0 0 14px;
+  }
+  .grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+    gap:12px 16px;
+  }
+  label{
+    font-size:12px;
+    color:var(--text-secondary);
+    display:block;
+    margin-bottom:4px;
+  }
+  input[type=text], input[type=date], select, textarea{
+    width:100%;
+    padding:8px 10px;
+    font-size:14px;
+    border:1px solid var(--border);
+    border-radius:6px;
+    background:var(--surface);
+    color:var(--text);
+    font-family:inherit;
+  }
+  textarea{
+    resize:vertical;
+    min-height:70px;
+    line-height:1.4;
+  }
+  input:focus, select:focus, textarea:focus{
+    outline:2px solid var(--accent);
+    outline-offset:1px;
+    border-color:var(--accent);
+  }
+  input[readonly]{
+    background:var(--surface-2);
+    color:var(--text-secondary);
+    cursor:not-allowed;
+  }
+  input[readonly]:focus{
+    outline:none;
+    border-color:var(--border);
+  }
+  .trade-count-row{
+    display:flex;
+    align-items:center;
+    gap:12px;
+  }
+  select#trade-count{width:90px;}
+  .trade-block{
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    padding:16px;
+    background:var(--surface-2);
+  }
+  .trade-block + .trade-block{margin-top:12px;}
+  .trade-title{
+    font-size:13px;
+    font-weight:600;
+    margin:0 0 12px;
+  }
+  .sub-title{
+    font-size:12px;
+    color:var(--text-secondary);
+    margin:16px 0 6px;
+  }
+  button{
+    font-family:inherit;
+    font-size:14px;
+    font-weight:600;
+    padding:10px 18px;
+    border-radius:8px;
+    border:none;
+    cursor:pointer;
+    background:var(--accent);
+    color:#fff;
+    transition:background .15s ease;
+  }
+  button:hover{background:var(--accent-hover);}
+  button.secondary{
+    background:transparent;
+    color:var(--text);
+    border:1px solid var(--border-strong);
+  }
+  button.secondary:hover{background:var(--surface-2);}
+  #output-section{
+    display:none;
+    flex-direction:column;
+    gap:12px;
+  }
+  .output-header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    flex-wrap:wrap;
+    gap:10px;
+  }
+  #table-preview{
+    overflow-x:auto;
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    padding:10px;
+    background:var(--surface-2);
+  }
+  #table-preview table{
+    border-collapse:collapse;
+    width:100%;
+    font-size:13px;
+    table-layout:fixed;
+  }
+  #table-preview td{
+    border:2px solid var(--border-strong);
+    padding:6px 10px;
+    word-wrap:break-word;
+    overflow-wrap:break-word;
+  }
+  #copy-status{
+    font-size:13px;
+    color:var(--success);
+    margin:0;
+    display:none;
+  }
+  footer{
+    text-align:center;
+    font-size:12px;
+    color:var(--text-secondary);
+    margin-top:12px;
+  }
+  .card-title-row{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    margin:0 0 6px;
+  }
+  .card-title-row .card-title{margin:0;}
+  #lock-note{
+    font-size:12px;
+    color:var(--text-secondary);
+    margin:0 0 14px;
+  }
+  .field-label-row{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:6px;
+    margin-bottom:4px;
+  }
+  .field-label-row label{margin-bottom:0;}
+  .field-lock{
+    background:transparent;
+    border:none;
+    padding:0;
+    margin:0;
+    font-size:13px;
+    line-height:1;
+    cursor:pointer;
+    color:var(--text-secondary);
+    flex-shrink:0;
+  }
+  .field-lock:hover{color:var(--text);}
+  .field-lock.is-locked{color:var(--accent);}
+  .field-locked input,
+  .field-locked select,
+  .field-locked textarea{
+    background:var(--surface-2);
+    color:var(--text-secondary);
+    border-color:var(--border);
+    cursor:not-allowed;
+    pointer-events:none;
+  }
+  .section-lock{
+    background:transparent;
+    color:var(--text-secondary);
+    border:1px solid var(--border-strong);
+    font-size:12px;
+    font-weight:600;
+    padding:6px 12px;
+    border-radius:6px;
+    cursor:pointer;
+    flex-shrink:0;
+    white-space:nowrap;
+  }
+  .section-lock:hover{background:var(--surface-2);color:var(--text);}
+  .section-lock.is-locked{
+    background:var(--accent);
+    color:#fff;
+    border-color:var(--accent);
+  }
+  .section-lock.is-locked:hover{background:var(--accent-hover);}
+  .field-lock:disabled{
+    opacity:.35;
+    cursor:not-allowed;
+  }
+  .version-choice{
+    display:flex;
+    align-items:center;
+    gap:6px;
+    font-size:13px;
+    color:var(--text);
+    cursor:pointer;
+  }
+  .version-choice input{width:auto;margin:0;}
+  .warning-box{
+    display:none;
+    background:#fdecea;
+    border:1px solid #e2a49a;
+    color:#8a2d1f;
+    border-radius:var(--radius);
+    padding:14px 18px;
+    font-size:13px;
+    line-height:1.5;
+  }
+  .warning-box strong{display:block;margin-bottom:6px;font-size:13px;}
+  .warning-box ul{margin:0;padding-left:20px;columns:2;-webkit-columns:2;column-gap:24px;}
+  .warning-box li{margin:2px 0;break-inside:avoid;}
+  @media (max-width:600px){
+    .warning-box ul{columns:1;}
+  }
+  .field-missing input,
+  .field-missing select,
+  .field-missing textarea{
+    border-color:#c1493a !important;
+    box-shadow:0 0 0 1px #c1493a;
+  }
+  #login-overlay{
+    position:fixed;
+    inset:0;
+    background:var(--bg);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    z-index:1000;
+    padding:16px;
+  }
+  #login-card{
+    width:100%;
+    max-width:360px;
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:12px;
+    padding:28px 24px;
+    display:flex;
+    flex-direction:column;
+    gap:12px;
+  }
+  #login-card h2{margin:0 0 4px;font-size:17px;}
+  #login-card p{margin:0 0 8px;font-size:13px;color:var(--text-secondary);}
+  #login-error{
+    display:none;
+    font-size:12px;
+    color:#8a2d1f;
+    background:#fdecea;
+    border:1px solid #e2a49a;
+    border-radius:6px;
+    padding:8px 10px;
+  }
+  .login-btn-row{display:flex;gap:8px;margin-top:4px;}
+  .login-btn-row button{flex:1;}
+  #user-bar{
+    display:none;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    flex-wrap:wrap;
+    font-size:13px;
+    color:var(--text-secondary);
+  }
+  #user-bar .right{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  #history-list table{width:100%;border-collapse:collapse;}
+  #history-list th{font-size:12px;color:var(--text-secondary);border-bottom:1px solid var(--border);}
+  #draft-status{font-size:12px;color:var(--text-secondary);margin:0;}
+  #user-role-label{color:var(--text-secondary);font-weight:400;}
+  #user-mgmt-list table{width:100%;border-collapse:collapse;}
+  #user-mgmt-list th{font-size:12px;color:var(--text-secondary);border-bottom:1px solid var(--border);text-align:left;padding:6px;}
+  #user-mgmt-list td{padding:6px;font-size:13px;}
+</style>
 </head>
 <body>
 
-  <h1>Deal Management System</h1>
-
-  <!-- Saved Records / History Section -->
-  <div class="card" id="my-history-card">
-    <h2>Approved Deals & Pending Requests</h2>
-    <table id="deals-table">
-      <thead>
-        <tr>
-          <th>Deal ID</th>
-          <th>BD Matching</th>
-          <th>Buyer / Seller</th>
-          <th>Which Deal</th>
-          <th>Status</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody id="deals-table-body">
-        <!-- Rendered dynamically via JS -->
-      </tbody>
-    </table>
+<div id="login-overlay">
+  <div id="login-card">
+    <h2>Sign in</h2>
+    <p>Sign in with your organization's Microsoft account. Saved agreements are stored in the shared SharePoint file — your view only filters to your own by default.</p>
+    <div id="login-error"></div>
+    <div class="login-btn-row">
+      <button type="button" id="ms-signin-btn">Sign in with Microsoft</button>
+    </div>
   </div>
+</div>
 
-  <!-- Change Request Modal Overlay -->
-  <div id="edit-request-modal-overlay">
-    <div class="modal-content">
-      <h3>Request BD Matching Change</h3>
-      <form id="edit-request-form" onsubmit="handleModalSubmit(event)">
-        <input type="hidden" id="edit-modal-deal-id" />
-        
-        <div class="form-group">
-          <label for="edit-modal-matching">BD Matching:</label>
-          <select id="edit-modal-matching" required>
-            <option value="direct">Direct Match</option>
-            <option value="indirect">Indirect Match</option>
-            <option value="none">No Match</option>
-          </select>
-        </div>
+<div class="wrap" id="app-content" style="display:none;">
 
-        <div class="form-group">
-          <label for="edit-modal-buyer-seller">Buyer / Seller:</label>
-          <input type="text" id="edit-modal-buyer-seller" required />
-        </div>
-
-        <div class="form-group">
-          <label for="edit-modal-which-deal">Which Deal:</label>
-          <input type="text" id="edit-modal-which-deal" required />
-        </div>
-
-        <div class="modal-actions">
-          <button type="button" class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
-          <button type="submit" class="btn btn-primary">Submit Request</button>
-        </div>
-      </form>
+  <div id="user-bar">
+    <span>Signed in as <strong id="user-email-label"></strong><span id="user-role-label"></span></span>
+    <div class="right">
+      <span id="draft-status"></span>
+      <button type="button" id="new-confirmation-btn" class="secondary">New Agreement</button>
+      <button type="button" id="signout-btn" class="secondary">Sign out</button>
     </div>
   </div>
 
-  <script>
-    // ----------------------------------------------------
-    // 1. Constants & Extended 52-Column Schema Mapping (MC)
-    // ----------------------------------------------------
-    const COL_COUNT = 52;
-    const STATUS_APPROVED = "Approved";
-    const STATUS_PENDING_CHANGE_3 = "Pending Change - Level 3";
+  <div id="submitted-lock-banner" style="display:none;background:#fdf3e7;border:1px solid #e8c99a;color:#8a6d1f;border-radius:var(--radius);padding:12px 16px;font-size:13px;line-height:1.5;"></div>
 
-    const MC = {
-      dealId: 0,
-      bdMatching: 1,
-      buyerSeller: 2,
-      whichDeal: 3,
-      status: 4,
-      // Columns 5 - 46 hold other core metadata fields...
-      // Staging and Tracking Columns for Change Requests (Indices 47 - 51)
-      pendingMatching: 47,
-      pendingBuyerSeller: 48,
-      pendingWhichDeal: 49,
-      pendingRequestedBy: 50,
-      pendingRequestedDate: 51
+  <div>
+    <h1>Agreement Table Generator</h1>
+    <p class="subtitle" id="page-subtitle">Fill in the details below, generate the Customer version table, then copy and send to your customer.</p>
+  </div>
+
+  <div id="agreement-form-section" style="display:flex;flex-direction:column;gap:24px;">
+
+  <div class="card">
+    <div class="card-title-row">
+      <p class="card-title">Details</p>
+      <button type="button" class="section-lock" data-section="header" title="Lock this whole section">🔓 Lock section</button>
+    </div>
+    <p id="lock-note">Click the 🔓 next to any field to lock just that field, or use "Lock section" above to lock every field in Details at once. Locked fields stay filled in and protected the next time you open this file, even when you change the number of trades. While a section is locked, its individual field locks are held in place — unlock the section to edit again.</p>
+    <div id="header-fields" class="grid"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title-row">
+      <p class="card-title">Trades</p>
+      <button type="button" class="section-lock" data-section="trades" title="Lock this whole section">🔓 Lock section</button>
+    </div>
+    <div class="trade-count-row">
+      <label style="margin:0;">Number of trades</label>
+      <select id="trade-count">
+        <option value="1" selected>1</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+        <option value="4">4</option>
+        <option value="5">5</option>
+        <option value="6">6</option>
+      </select>
+    </div>
+    <div id="trades-container" style="margin-top:16px;"></div>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+    <button id="generate-btn">Generate table</button>
+    <button id="save-agreement-btn" class="secondary" type="button">Save agreement</button>
+  </div>
+  <p id="save-note" style="font-size:12px;color:var(--text-secondary);margin:-14px 0 0;display:none;"></p>
+
+  <div id="validation-warning" class="warning-box"></div>
+
+  </div>
+
+  <div id="output-section" class="card">
+    <div class="output-header">
+      <p class="card-title" style="margin:0;">Preview<span id="preview-dealid-label" style="font-weight:normal;color:var(--text-secondary);"></span></p>
+      <span id="preview-agreement-link" style="font-size:13px;"></span>
+      <button id="copy-btn" class="secondary" style="display:none;" title="Appears once Level 1 approves and a real Deal ID is assigned">Copy table</button>
+    </div>
+    <div id="table-preview"></div>
+    <p id="copy-status">Copied — paste directly into your email.</p>
+  </div>
+
+  <div class="card" id="my-history-card">
+    <p class="card-title">My saved confirmations</p>
+    <div id="history-list"><p style="font-size:13px;color:var(--text-secondary);">Loading...</p></div>
+  </div>
+
+  <div class="card" id="approval-queue-card" style="display:none;">
+    <p class="card-title">Approval queue</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Confirmations currently waiting on your approval level. Superadmins see every pending stage.</p>
+    <div id="approval-queue-list"><p style="font-size:13px;color:var(--text-secondary);">Loading...</p></div>
+  </div>
+
+  <div class="card" id="admin-history-card" style="display:none;">
+    <p class="card-title">All confirmations (Admin)</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Visible to Admin/Super Admin accounts — shows every saved confirmation across every user, read-only, with the full approval trail.</p>
+    <div id="admin-history-list"><p style="font-size:13px;color:var(--text-secondary);">Loading...</p></div>
+  </div>
+
+  <div class="card" id="user-mgmt-card" style="display:none;">
+    <p class="card-title">User management</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Superadmin only. Assign each person's approval level — Admin Level 1, 2, 3, or plain User. Levels approve in order (1 → 2 → 3) before a deal counts as fully Approved.</p>
+    <div id="user-mgmt-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;margin-bottom:10px;"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;">
+      <div style="flex:1;min-width:220px;">
+        <label>Email</label>
+        <input type="text" id="user-mgmt-email" placeholder="name@company.com">
+      </div>
+      <div style="min-width:170px;">
+        <label>Role</label>
+        <select id="user-mgmt-role">
+          <option value="admin1">Admin — Level 1</option>
+          <option value="admin2">Admin — Level 2</option>
+          <option value="admin3">Admin — Level 3</option>
+          <option value="user" selected>User</option>
+        </select>
+      </div>
+      <button type="button" id="user-mgmt-assign-btn">Assign role</button>
+    </div>
+    <div id="user-mgmt-list"><p style="font-size:13px;color:var(--text-secondary);">Loading...</p></div>
+  </div>
+
+  <div class="card" id="dealid-settings-card" style="display:none;">
+    <p class="card-title">Deal ID numbering</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Superadmin only. Sets the lowest 5-digit number the next new Deal ID can start from — e.g. to line this system up with numbering used elsewhere, or to pick a clean range for testing. It's a floor, not a reset: once any deal has been issued at or above that number, this has no further effect and nothing already issued is renumbered.</p>
+    <div id="dealid-settings-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;margin-bottom:10px;"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+      <div style="min-width:170px;">
+        <label>Starting number</label>
+        <input type="text" id="dealid-start-input" maxlength="5" inputmode="numeric" placeholder="e.g. 500">
+      </div>
+      <button type="button" id="dealid-start-save-btn">Save starting number</button>
+    </div>
+    <p id="dealid-start-current" style="font-size:12px;color:var(--text-secondary);margin:10px 0 0;"></p>
+  </div>
+
+  <footer>Built from the Trade Confirmation email SOP · draft autosaves per account, approval and history saved to the shared SharePoint workbook</footer>
+
+</div>
+
+<div id="view-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
+  <div style="width:100%;max-width:900px;max-height:85vh;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px 24px;display:flex;flex-direction:column;gap:10px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+      <p class="card-title" style="margin:0;">Deal ID <span id="view-modal-dealid"></span></p>
+      <div style="display:flex;align-items:center;gap:14px;">
+        <span id="view-modal-agreement-link" style="font-size:13px;"></span>
+        <button type="button" class="secondary" id="view-modal-copy" style="display:none;" title="Appears once Level 1 approves and a real Deal ID is assigned">Copy table</button>
+        <button type="button" class="secondary" id="view-modal-close">Close</button>
+      </div>
+    </div>
+    <p id="view-modal-copy-status" style="display:none;font-size:12px;color:var(--text-secondary);margin:0;">Copied — paste directly into your email.</p>
+    <div id="view-modal-table" style="overflow:auto;"></div>
+  </div>
+</div>
+
+<div id="approve-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
+  <div style="width:100%;max-width:420px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:10px;">
+    <h2 style="margin:0;font-size:16px;">Approve Deal ID <span id="approve-modal-dealid"></span> — Level 2</h2>
+    <p style="margin:0;font-size:13px;color:var(--text-secondary);">Level 2 approval requires the signed agreement to be attached. Once approved, it becomes viewable to everyone from this deal's row. Max 4 MB.</p>
+    <label style="margin:4px 0 0;">Agreement file (required)</label>
+    <input type="file" id="approve-modal-file" accept=".pdf,.doc,.docx"/>
+    <div id="approve-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
+      <button type="button" class="secondary" id="approve-modal-cancel">Cancel</button>
+      <button type="button" id="approve-modal-submit">Approve</button>
+    </div>
+  </div>
+</div>
+
+<div id="reject-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
+  <div style="width:100%;max-width:420px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:10px;">
+    <h2 style="margin:0;font-size:16px;">Reject Deal ID <span id="reject-modal-dealid"></span></h2>
+    <p style="margin:0;font-size:13px;color:var(--text-secondary);">This comment is shown to the person who submitted the confirmation so they know what to fix.</p>
+    <label style="margin:4px 0 0;">Comment (required)</label>
+    <textarea id="reject-comment" placeholder="e.g. Price/REC doesn't match the agreed rate — please confirm and resubmit." style="min-height:90px;"></textarea>
+    <div id="reject-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
+      <button type="button" class="secondary" id="reject-modal-cancel">Cancel</button>
+      <button type="button" id="reject-modal-submit" style="background:#c1493a;">Reject</button>
+    </div>
+  </div>
+</div>
+
+<div id="edit-matching-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
+  <div style="width:100%;max-width:700px;max-height:85vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:10px;">
+    <h2 style="margin:0;font-size:16px;">Correct matching info — Deal ID <span id="edit-matching-modal-dealid"></span></h2>
+    <p style="margin:0;font-size:13px;color:var(--text-secondary);">This agreement is already fully Approved. Only the BD source matching fields below can be corrected here — everything else about the agreement stays as approved. Saving sends it back for Level 3 re-approval only (Level 1 and Level 2 sign-offs already stand).</p>
+    <div id="edit-matching-modal-body"></div>
+    <div id="edit-matching-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
+      <button type="button" class="secondary" id="edit-matching-modal-cancel">Cancel</button>
+      <button type="button" id="edit-matching-modal-submit">Save &amp; send for Level 3 re-approval</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* =======================================================================
+   MICROSOFT SIGN-IN + SHAREPOINT EXCEL SETUP — fill these in before use.
+   ======================================================================= */
+const TENANT_ID = "ab7c8c1e-dc1d-431f-ba8b-e4de2b047f8b";           // Directory (tenant) ID from the Azure app registration overview page
+const CLIENT_ID = "5b17f2d1-ca2a-4521-9d03-01cda2e86c16";           // Application (client) ID from the same page
+const SP_HOSTNAME = "saxonrenewables.sharepoint.com";
+const SP_SITE_PATH = "/sites/Operations";
+const APPROVED_LIST_NAME = "BD Agreement Record Approved";
+const SP_FILE_NAME = "BD Agreement Record.xlsx";
+// Resolving straight from this sharing link (instead of guessing the site's
+// default drive + a root-level path) sidesteps two whole classes of failure:
+// the file living in a non-default document library, and it living inside
+// a subfolder rather than at the drive root. If the file ever moves, just
+// grab its "Copy link" URL again and paste it in here — nothing else in
+// resolveWorkbook needs to change.
+const SP_FILE_SHARE_URL = "https://saxonrenewables.sharepoint.com/:x:/s/Operations/IQCIkW5tgJWPQJB1t7KiWT7KAaDp_pqoAmZigGQ9UbvBQME?e=dquVG0";
+const LOG_TABLE_NAME = "TradeDealLog";        // must match the Excel Table name you create
+// Column layout of the restructured TradeDealLog "main list" table.
+// One physical row per TRADE (a multi-trade agreement produces several rows
+// sharing the same Agreement ID). Create the Excel Table with these 46
+// columns in exactly this order:
+// Sales PIC, Entity, Agreement Date, Agreement ID, Supply/Demand, Company,
+// Broker, Country, Registry, Tech, Match/Open Position, Volume (RECs),
+// Delivery (Start date), Delivery (End date), V (From MM), V (From YY),
+// V (To MM), V (To YY), Currency, Unit Price, Special Requirement, COD,
+// TIGRS / IREC NAME, Payment Term, Buyer/Seller, No of RECs, Which deal,
+// Delivery Date, Submitted By, Submitted Date, Generated HTML, Status,
+// Approved By (Level 1), Approved Date (Level 1), Approved By (Level 2),
+// Approved Date (Level 2), Approved By (Level 3), Approved Date (Level 3),
+// Rejected By, Rejected Date, Rejection Comment, Agreement File Name,
+// Agreement File URL, Description, Matching Edit Note, Approved List Item Id
+// ("Approved List Item Id" holds the SharePoint item ID this trade got
+// copied to in the "Approved" list, once Level 3 approves it — used so a
+// later matching-info correction updates that same item instead of adding
+// a duplicate; see addApprovedDealToList.)
+// NOTE: if you're adding this to an existing workbook, add any new column
+// ("Description", "Matching Edit Note", and "Approved List Item Id"
+// included) at the END of the live TradeDealLog Excel Table — don't insert
+// them in the middle, or every existing column index below will point at
+// the wrong data.
+const MC = {
+  salesPic:0, entity:1, agreementDate:2, dealId:3, supplyDemand:4, company:5,
+  broker:6, country:7, registry:8, tech:9, matching:10, volume:11,
+  deliveryStart:12, deliveryEnd:13, vFromMM:14, vFromYY:15, vToMM:16, vToYY:17,
+  currency:18, unitPrice:19, specialReq:20, cod:21, tigrsIrecName:22,
+  paymentTerm:23, buyerSeller:24, noOfRecs:25, whichDeal:26, deliveryDateM:27,
+  submittedBy:28, submittedDate:29, generatedHtml:30, status:31,
+  approvedBy1:32, approvedDate1:33, approvedBy2:34, approvedDate2:35,
+  approvedBy3:36, approvedDate3:37, rejectedBy:38, rejectedDate:39,
+  rejectReason:40, agreementFileName:41, agreementFileUrl:42, description:43,
+  matchingEditNote:44, approvedListItemId:45, rowUid:46
+};
+const COL_COUNT = 47;
+const DRAFT_TABLE_NAME = "TradeDealDrafts";   // must match the Excel Table name you create
+// Small generic key/value settings table. Currently holds one row:
+// key="dealIdStart", value=the lowest 5-digit number the next new Deal ID
+// is allowed to start from (superadmin-editable — see "Deal ID numbering").
+// Create the Excel Table with just these 2 columns: Key, Value.
+const SETTINGS_TABLE_NAME = "TradeSettings";  // must match the Excel Table name you create
+const SC = { key:0, value:1 };
+const DEAL_ID_START_KEY = "dealIdStart";
+const GRAPH_SCOPES = ["Sites.ReadWrite.All", "User.Read"];
+// Requested separately from GRAPH_SCOPES, only at the moment an email is
+// actually sent — so until Mail.Send is admin-consented in Azure (or if
+// that consent is ever revoked), it only affects notification emails and
+// can never block ordinary saves/drafts/approvals, which never request it.
+const MAIL_SCOPES = ["Mail.Send"];
+
+/* ---- Roles & 3-level approval ----
+   Approval is now handled entirely inside this app (no external
+   PowerAutomate approval flow) — if a PowerAutomate "start and wait for
+   approval" flow is still attached to this workbook/table, turn it off so it
+   doesn't also try to write to the Status/Approved columns.
+
+   Roles: 'superadmin', 'admin1', 'admin2', 'admin3', 'user'.
+   A deal moves Pending Level 1 -> Pending Level 2 -> Pending Level 3 ->
+   Approved as each admin level signs off in order. Any admin level (or the
+   superadmin) can Reject at any pending stage, which requires a comment the
+   submitter can see. Superadmin can act at any level, in addition to
+   managing who holds each role. */
+const ROLES = ["superadmin","admin1","admin2","admin3","user"];
+const ROLE_LABELS = {
+  superadmin:"Super Admin", admin1:"Admin — Level 1", admin2:"Admin — Level 2",
+  admin3:"Admin — Level 3", user:"User"
+};
+// Hardcoded, UI-inaccessible superadmin(s) — a safety net so the role
+// assignment table can never be edited into a state with zero superadmins.
+const SUPERADMIN_EMAILS = ["shauyuan.tan@saxonrenewables.com"];
+const USER_ROLES_TABLE_NAME = "TradeUserRoles"; // must match the Excel Table name you create
+// Column layout for the TradeUserRoles table: Email, Role, Assigned By, Assigned Date
+const RC = { email:0, role:1, assignedBy:2, assignedDate:3 };
+const STATUS_PENDING_1 = "Pending Level 1";
+const STATUS_PENDING_2 = "Pending Level 2";
+const STATUS_PENDING_3 = "Pending Level 3";
+const STATUS_APPROVED = "Approved";
+const STATUS_REJECTED = "Rejected";
+// Every trade row in a deal normally shares one status, EXCEPT while a
+// matching-info correction is in flight: resubmitMatchingInfo() only sends
+// the actually-edited trade(s) back to Pending Level 3 and leaves the rest
+// sitting at Approved untouched. dealStatus() picks whichever status is
+// "least finished" across the deal's rows, so the deal is shown/actioned as
+// still needing attention until that correction is resolved one way or
+// another. In the normal (all-rows-match) case this is just that status.
+const STATUS_PRECEDENCE = [STATUS_PENDING_1, STATUS_PENDING_2, STATUS_PENDING_3, STATUS_REJECTED, STATUS_APPROVED];
+function dealStatus(rows){
+  let best = null, bestRank = -1;
+  rows.forEach(r=>{
+    const s = r.values[0][MC.status] || STATUS_PENDING_1;
+    const rank = STATUS_PRECEDENCE.indexOf(s);
+    if(best === null || rank < bestRank){ best = s; bestRank = rank; }
+  });
+  return best || STATUS_PENDING_1;
+}
+
+/* ---- Deal ID is now only assigned once Level 1 approval happens ----
+   Before that, a submitted agreement is tracked internally with a temporary
+   placeholder ("PND_<alpha>_<random>") instead of a real Deal ID — nothing
+   about the row is a real Deal ID yet, so it must never be shown to anyone
+   as if it were one. isPendingDealId()/friendlyDealId() are used everywhere
+   a Deal ID would otherwise be displayed. */
+function isPendingDealId(id){
+  return /^PND_/.test(String(id || ''));
+}
+function friendlyDealId(id){
+  return isPendingDealId(id) ? 'Pending Level 1 approval' : (id || '');
+}
+
+const msalInstance = new msal.PublicClientApplication({
+  auth: {
+    clientId: CLIENT_ID,
+    authority: "https://login.microsoftonline.com/" + TENANT_ID,
+    redirectUri: window.location.origin + window.location.pathname
+  },
+  cache: { cacheLocation: "sessionStorage" }
+});
+
+let currentAccount = null;
+let siteId = null;
+let fileItemId = null;
+let driveId = null;
+let currentDealDocId = null;
+// The submittedDate written to this user's own rows at Save agreement time.
+// Deal ID placeholder -> real swap happens (by a different user, the Level 1
+// approver, in their own session) after this loads, so once that happens
+// this stable (submittedBy + submittedDate) pair is what lets *this* user's
+// session recognize its own submission again after a reload — currentDealDocId
+// alone can no longer be trusted for that once the swap has happened.
+let currentSubmittedDate = null;
+let draftRowIndex = null;      // this user's row index in the Drafts table, or null if none saved yet
+let logRowsCache = [];         // last-fetched rows from the log table, for the "View" buttons
+let userRolesCache = [];       // last-fetched rows from the TradeUserRoles table
+let currentUserRole = 'user';
+let isAdmin = false;           // true for admin1/admin2/admin3/superadmin — any elevated role
+let settingsCache = [];
+let dealIdStartOverride = 0;   // 0 = no override, use the normal max+1 behavior
+let draftSaveTimer = null;
+let suppressAutosave = false;  // true while programmatically filling the form from a loaded draft
+
+const loginOverlay = document.getElementById('login-overlay');
+const appContent = document.getElementById('app-content');
+const userBar = document.getElementById('user-bar');
+
+function showLoginError(err){
+  const errEl = document.getElementById('login-error');
+  errEl.textContent = (err && err.message) ? err.message : String(err);
+  errEl.style.display = 'block';
+}
+
+document.getElementById('ms-signin-btn').addEventListener('click', async ()=>{
+  const errEl = document.getElementById('login-error');
+  errEl.style.display = 'none';
+  try{
+    const result = await msalInstance.loginPopup({ scopes: GRAPH_SCOPES });
+    currentAccount = result.account;
+    await onSignedIn();
+  }catch(err){
+    showLoginError(err);
+  }
+});
+document.getElementById('signout-btn').addEventListener('click', ()=>{
+  const account = currentAccount;
+  msalInstance.logoutPopup({ account }).finally(()=> location.reload());
+});
+
+window.addEventListener('load', async ()=>{
+  await msalInstance.initialize();
+  const accounts = msalInstance.getAllAccounts();
+  if(accounts.length){
+    currentAccount = accounts[0];
+    await onSignedIn();
+  }else{
+    loginOverlay.style.display = 'flex';
+    appContent.style.display = 'none';
+  }
+});
+
+async function onSignedIn(){
+  loginOverlay.style.display = 'none';
+  appContent.style.display = 'flex';
+  userBar.style.display = 'flex';
+  document.getElementById('user-email-label').textContent = currentAccount.username;
+  setDraftStatus('Connecting to SharePoint…');
+  try{
+    await resolveWorkbook();
+    await createWorkbookSession();
+    await loadUserRoles();
+    await loadDealIdSettings();
+    applyRoleUi();
+    await loadDraftAndHistory();
+  }catch(err){
+    console.error('Could not connect to the workbook', err);
+    setDraftStatus('Could not connect to SharePoint: ' + err.message);
+  }
+}
+
+/* ---- Role resolution ----
+   Superadmin is a hardcoded allowlist (can't be edited away via the UI).
+   Every other role comes from the TradeUserRoles table, which the superadmin
+   manages from the "User management" panel. Anyone not listed is 'user'.
+   This is UI-only, same caveat as before: anyone with SharePoint access to
+   the file can already see/edit every row directly. */
+function getUserRole(email){
+  email = (email||'').toLowerCase();
+  if(SUPERADMIN_EMAILS.map(e=>e.toLowerCase()).includes(email)) return 'superadmin';
+  const entry = userRolesCache.find(r => (r.values[0][RC.email]||'').toLowerCase() === email);
+  const role = entry ? entry.values[0][RC.role] : 'user';
+  return ROLES.includes(role) ? role : 'user';
+}
+async function loadUserRoles(){
+  try{
+    userRolesCache = await getTableRows(USER_ROLES_TABLE_NAME);
+  }catch(err){
+    console.error('Could not load user roles', err);
+    userRolesCache = [];
+  }
+  currentUserRole = getUserRole(currentAccount.username);
+  isAdmin = currentUserRole !== 'user';
+  await recordSignInIfNew();
+}
+// Ensures every person who's ever signed in shows up in the superadmin's
+// User management list right away — not just people who've had a role
+// explicitly assigned. Writes a plain 'user' row on first sign-in only;
+// harmless no-op for hardcoded superadmin or anyone who already has a row
+// (of any role) from a prior sign-in or an explicit assignment.
+async function recordSignInIfNew(){
+  const email = (currentAccount.username || '').toLowerCase();
+  if(SUPERADMIN_EMAILS.map(e=>e.toLowerCase()).includes(email)) return;
+  const existing = userRolesCache.find(r => (r.values[0][RC.email]||'').toLowerCase() === email);
+  if(existing) return;
+  try{
+    await addTableRow(USER_ROLES_TABLE_NAME, [currentAccount.username, 'user', '(sign-in)', new Date().toISOString()]);
+    userRolesCache = await getTableRows(USER_ROLES_TABLE_NAME);
+  }catch(err){
+    console.error('Could not record sign-in in User management', err);
+  }
+}
+
+/* ---- Deal ID starting number (superadmin only) ----
+   A floor under the normal "highest existing + 1" logic in assignFormalDealId.
+   Lets a superadmin set where numbering should begin — e.g. to line this
+   system up with an existing external sequence, or to pick a clean range for
+   testing — without renumbering anything already issued. */
+async function loadDealIdSettings(){
+  try{
+    settingsCache = await getTableRows(SETTINGS_TABLE_NAME);
+  }catch(err){
+    console.error('Could not load settings', err);
+    settingsCache = [];
+  }
+  const row = settingsCache.find(r => (r.values[0][SC.key]||'') === DEAL_ID_START_KEY);
+  const n = row ? parseInt(String(row.values[0][SC.value]||'').trim(), 10) : 0;
+  dealIdStartOverride = (!isNaN(n) && n > 0) ? n : 0;
+}
+async function setDealIdStart(numStr){
+  const n = parseInt(String(numStr||'').trim(), 10);
+  if(isNaN(n) || n < 1 || n > 99999) throw new Error('Enter a whole number between 1 and 99999.');
+  const existing = settingsCache.find(r => (r.values[0][SC.key]||'') === DEAL_ID_START_KEY);
+  if(existing){
+    await updateTableRow(SETTINGS_TABLE_NAME, existing.index, [DEAL_ID_START_KEY, String(n)]);
+  }else{
+    await addTableRow(SETTINGS_TABLE_NAME, [DEAL_ID_START_KEY, String(n)]);
+  }
+  await loadDealIdSettings();
+  renderDealIdSettings();
+}
+function renderDealIdSettings(){
+  const el = document.getElementById('dealid-start-current');
+  if(!el) return;
+  el.textContent = dealIdStartOverride
+    ? 'Current starting number: ' + String(dealIdStartOverride).padStart(5,'0') + ' — only applies once no higher Deal ID has been issued yet.'
+    : 'No starting number set — the next Deal ID will just be the highest issued so far, + 1.';
+}
+// Plain Users create/submit agreements as their normal job. Superadmin also
+// gets the creation form — purely so they can build a test agreement and run
+// it through the full flow — in addition to their normal review access
+// (Approval queue, All confirmations, "View" on any deal). Admin1/2/3 stay
+// review-only.
+function canBuildAgreement(){
+  return currentUserRole === 'user' || currentUserRole === 'superadmin';
+}
+function applyRoleUi(){
+  document.getElementById('user-role-label').textContent = ' · ' + ROLE_LABELS[currentUserRole];
+  const isUserRole = canBuildAgreement();
+  // Plain Users and Superadmin create/submit agreements. Admin1/2/3 are here
+  // purely to review: they see the generated-table preview (when they click
+  // "View" from a queue/list), the Approval queue, and the full "All
+  // confirmations" list — never the creation form.
+  document.getElementById('agreement-form-section').style.display = isUserRole ? 'flex' : 'none';
+  document.getElementById('my-history-card').style.display = isUserRole ? 'block' : 'none';
+  document.getElementById('draft-status').style.display = isUserRole ? 'inline' : 'none';
+  document.getElementById('new-confirmation-btn').style.display = isUserRole ? 'inline-block' : 'none';
+  document.getElementById('page-subtitle').textContent = isUserRole
+    ? 'Fill in the details below, generate the Customer version table, then copy and send to your customer.'
+    : 'Review confirmations submitted by users — check the Approval queue for anything waiting on your level, or browse All confirmations for the full history.';
+  document.getElementById('admin-history-card').style.display = isAdmin ? 'block' : 'none';
+  document.getElementById('approval-queue-card').style.display = isAdmin ? 'block' : 'none';
+  const isSuperadmin = currentUserRole === 'superadmin';
+  document.getElementById('user-mgmt-card').style.display = isSuperadmin ? 'block' : 'none';
+  document.getElementById('dealid-settings-card').style.display = isSuperadmin ? 'block' : 'none';
+  if(isSuperadmin){
+    renderUserMgmtList();
+    renderDealIdSettings();
+  }
+}
+/* Which pending status (if any) the current user's role is allowed to act
+   on. Superadmin can act on any pending stage. */
+function actionableStatusesForRole(role){
+  if(role === 'superadmin') return [STATUS_PENDING_1, STATUS_PENDING_2, STATUS_PENDING_3];
+  if(role === 'admin1') return [STATUS_PENDING_1];
+  if(role === 'admin2') return [STATUS_PENDING_2];
+  if(role === 'admin3') return [STATUS_PENDING_3];
+  return [];
+}
+function canActOnStatus(status){
+  return actionableStatusesForRole(currentUserRole).includes(status);
+}
+
+/* ---- User management (superadmin only) ----
+   Writes to the TradeUserRoles table: one row per email that's been given a
+   non-default role. Assigning a role to an email that already has a row
+   updates it in place; assigning 'user' to someone with an existing row
+   removes the row entirely (since 'user' is already the default for anyone
+   not listed). */
+async function assignRole(email, role){
+  email = (email||'').trim().toLowerCase();
+  if(!email) throw new Error('Enter an email address.');
+  if(SUPERADMIN_EMAILS.map(e=>e.toLowerCase()).includes(email)){
+    throw new Error('That address is already a hardcoded superadmin and can\'t be reassigned here.');
+  }
+  const existing = userRolesCache.find(r => (r.values[0][RC.email]||'').toLowerCase() === email);
+  // 'User' is the implicit default for anyone with no row at all, but we
+  // still write/keep a row for it here — otherwise clicking "Assign role"
+  // with User selected for someone brand-new looks like it silently did
+  // nothing (nothing appears in the list, no error either). Writing the row
+  // makes the action visible and auditable (who set them back to User, and
+  // when), same as any other role.
+  if(existing){
+    const values = existing.values[0].slice();
+    values[RC.role] = role;
+    values[RC.assignedBy] = currentAccount.username;
+    values[RC.assignedDate] = new Date().toISOString();
+    await updateTableRow(USER_ROLES_TABLE_NAME, existing.index, values);
+  }else{
+    await addTableRow(USER_ROLES_TABLE_NAME, [email, role, currentAccount.username, new Date().toISOString()]);
+  }
+  await loadUserRoles();
+  renderUserMgmtList();
+}
+
+/* ---- Email notifications on submit / approve ----
+   Sent via Graph "sendMail" as whoever just took the action (the submitter
+   on first submit, the approving admin on each level-advance) — no separate
+   mail server needed. Requires the Mail.Send delegated permission to be
+   granted (admin consent) on the Azure app registration; if it isn't yet,
+   sending just throws and is caught/logged, so it never blocks the actual
+   submit/approve action itself. Only the *next* approver is notified — a
+   deal reaching Approved has no further approver, so nothing is sent then. */
+const APPROVER_ROLE_FOR_STATUS = {};
+APPROVER_ROLE_FOR_STATUS[STATUS_PENDING_1] = 'admin1';
+APPROVER_ROLE_FOR_STATUS[STATUS_PENDING_2] = 'admin2';
+APPROVER_ROLE_FOR_STATUS[STATUS_PENDING_3] = 'admin3';
+function emailsForRole(role){
+  const seen = new Set();
+  const emails = [];
+  userRolesCache.forEach(r=>{
+    if((r.values[0][RC.role]||'') !== role) return;
+    const email = (r.values[0][RC.email]||'').trim();
+    if(!email) return;
+    const key = email.toLowerCase();
+    if(seen.has(key)) return;
+    seen.add(key);
+    emails.push(email);
+  });
+  return emails;
+}
+function dealDeepLink(dealId){
+  return location.origin + location.pathname + '?deal=' + encodeURIComponent(dealId);
+}
+async function sendMailGraph(toEmails, subject, htmlBody){
+  if(!toEmails.length) return;
+  await graphFetch('/me/sendMail', {
+    method: 'POST',
+    scopes: MAIL_SCOPES,
+    body: JSON.stringify({
+      message: {
+        subject,
+        body: { contentType: 'HTML', content: htmlBody },
+        toRecipients: toEmails.map(e => ({ emailAddress: { address: e } }))
+      },
+      saveToSentItems: false
+    })
+  });
+}
+// status = the deal's status *after* this submit/approve just happened —
+// looks up which role is now responsible and emails everyone holding it.
+// changeSummary is optional — used when a deal is sent back to Level 3 with
+// only its matching info corrected, so the approver sees exactly what
+// changed without having to compare the whole agreement by eye.
+async function notifyNextApprover(status, dealId, description, changeSummary){
+  const role = APPROVER_ROLE_FOR_STATUS[status];
+  if(!role) return; // e.g. Approved — no next approver to notify
+  const toEmails = emailsForRole(role);
+  if(!toEmails.length){
+    console.warn('No ' + role + ' assigned — skipping approval notification for Deal ID ' + dealId);
+    return;
+  }
+  const levelLabel = ROLE_LABELS[role] || role;
+  const link = dealDeepLink(dealId);
+  const displayId = friendlyDealId(dealId);
+  const label = isPendingDealId(dealId) ? 'An agreement' : 'Deal ID <strong>' + escapeHtml(displayId) + '</strong>';
+  const descBlock = (description && description.trim()) ? '<p><strong>Description:</strong> ' + escapeHtml(description) + '</p>' : '';
+  const changeBlock = (changeSummary && changeSummary.trim())
+    ? '<p><strong>What changed (matching info correction):</strong><br>' + escapeHtml(changeSummary).replace(/\n/g,'<br>') + '</p>'
+    : '';
+  const html = '<p>' + label + ' is waiting on your ' + escapeHtml(levelLabel) + ' approval.</p>' +
+    descBlock +
+    changeBlock +
+    '<p><a href="' + link + '">Open it in the Trade Confirmation app</a></p>';
+  try{
+    await sendMailGraph(toEmails, 'Approval needed — ' + (isPendingDealId(dealId) ? levelLabel : displayId + ' (' + levelLabel + ')'), html);
+  }catch(err){
+    console.error('Approval notification email failed', err);
+  }
+}
+
+// Emails the person who submitted the deal if it's Rejected at whatever
+// level it was at. Separate from notifyNextApprover, which only ever emails
+// the *next* approver in the chain. Note: per policy there is deliberately
+// no "fully Approved" email here — the submitter is already notified once,
+// when their Deal ID is first created at Level 1 (see notifyDealIdAssigned
+// below); nothing further is sent when the deal later reaches the last
+// approval level.
+async function notifySubmitter(status, dealId, submitterEmail, reason){
+  const email = (submitterEmail || '').trim();
+  if(!email) {
+    console.warn('No submitter email on file — skipping outcome notification for Deal ID ' + dealId);
+    return;
+  }
+  if(status !== STATUS_REJECTED) return; // only Rejected has a submitter email
+  const link = dealDeepLink(dealId);
+  const displayId = friendlyDealId(dealId);
+  const label = isPendingDealId(dealId) ? 'Your agreement (' + escapeHtml(displayId) + ')' : 'Deal ID <strong>' + escapeHtml(displayId) + '</strong>';
+  const subject = 'Rejected — ' + (isPendingDealId(dealId) ? 'agreement' : 'Deal ID ' + displayId);
+  const html = '<p>' + label + ' has been rejected.</p>' +
+    (reason ? '<p><strong>Reason:</strong> ' + escapeHtml(reason) + '</p>' : '') +
+    '<p><a href="' + link + '">View it in the Trade Confirmation app</a></p>';
+  try{
+    await sendMailGraph([email], subject, html);
+  }catch(err){
+    console.error('Outcome notification email failed', err);
+  }
+}
+
+// Emails the submitter when a matching-info correction (resubmitMatchingInfo)
+// is rejected at Level 3 on an otherwise-Approved deal. Distinct from
+// notifySubmitter, which is for a whole deal being rejected/locked — here
+// the deal itself is untouched and stays Approved; only the correction
+// didn't go through.
+async function notifyCorrectionRejected(dealId, submitterEmail, reason){
+  const email = (submitterEmail || '').trim();
+  if(!email){
+    console.warn('No submitter email on file — skipping correction-rejected notification for Deal ID ' + dealId);
+    return;
+  }
+  const link = dealDeepLink(dealId);
+  const displayId = friendlyDealId(dealId);
+  const label = isPendingDealId(dealId) ? 'Your agreement (' + escapeHtml(displayId) + ')' : 'Deal ID <strong>' + escapeHtml(displayId) + '</strong>';
+  const html = '<p>' + label + ' — your matching info correction was rejected at Level 3. The affected trade\'s prior approval stands unchanged; nothing else about the deal was touched.</p>' +
+    (reason ? '<p><strong>Reason:</strong> ' + escapeHtml(reason) + '</p>' : '') +
+    '<p><a href="' + link + '">View it in the Trade Confirmation app</a></p>';
+  try{
+    await sendMailGraph([email], 'Correction rejected — ' + (isPendingDealId(dealId) ? 'agreement' : displayId), html);
+  }catch(err){
+    console.error('Correction-rejected notification email failed', err);
+  }
+}
+
+// Emails the agreement's creator the moment their Deal ID is actually
+// created — i.e. right after Level 1 approval assigns the real ID in place
+// of the submit-time placeholder. This is the only "your Deal ID is ready"
+// notification; no further email is sent for Level 2/3 approvals.
+async function notifyDealIdAssigned(dealId, submitterEmail){
+  const email = (submitterEmail || '').trim();
+  if(!email){
+    console.warn('No submitter email on file — skipping Deal ID notification for Deal ID ' + dealId);
+    return;
+  }
+  const link = dealDeepLink(dealId);
+  const html = '<p>Your agreement has been approved at Level 1 and its Deal ID is now <strong>' + escapeHtml(dealId) + '</strong>.</p>' +
+    '<p><a href="' + link + '">View it in the Trade Confirmation app</a></p>';
+  try{
+    await sendMailGraph([email], 'Deal ID created — ' + dealId, html);
+  }catch(err){
+    console.error('Deal ID notification email failed', err);
+  }
+}
+
+// a notification email's "?deal=XXXXX" link, once logRowsCache has data.
+let urlDealOpened = false;
+function tryOpenDealFromUrl(){
+  if(urlDealOpened) return;
+  const dealId = new URLSearchParams(location.search).get('deal');
+  if(!dealId) { urlDealOpened = true; return; }
+  const group = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  const withHtml = group.find(r => r.values[0][MC.generatedHtml]);
+  if(!withHtml) return; // history may not have loaded this deal yet — try again next refresh
+  openViewModal(dealId, withHtml.values[0][MC.generatedHtml], withHtml.values[0][MC.agreementFileUrl]);
+  urlDealOpened = true;
+}
+function renderUserMgmtList(){
+  const el = document.getElementById('user-mgmt-list');
+  const rows = userRolesCache.filter(r => r.values[0][RC.email]);
+  let html = '<table><tr><th>Email</th><th>Role</th><th>Assigned by</th><th></th></tr>';
+  html += '<tr style="border-top:1px solid var(--border);"><td>' + SUPERADMIN_EMAILS.map(escapeHtml).join(', ') +
+    '</td><td>Super Admin</td><td>—</td><td style="font-size:11px;color:var(--text-secondary);">hardcoded</td></tr>';
+  rows.forEach(r=>{
+    const v = r.values[0];
+    html += '<tr style="border-top:1px solid var(--border);">' +
+      '<td>'+escapeHtml(v[RC.email]||'')+'</td>' +
+      '<td>'+escapeHtml(ROLE_LABELS[v[RC.role]] || v[RC.role] || '')+'</td>' +
+      '<td>'+escapeHtml(v[RC.assignedBy]||'')+'</td>' +
+      '<td><button type="button" class="secondary user-mgmt-remove-btn" data-email="'+escapeHtml(v[RC.email]||'')+'" style="padding:3px 8px;font-size:12px;">Remove</button></td>' +
+    '</tr>';
+  });
+  html += '</table>';
+  el.innerHTML = html;
+}
+const userMgmtEmailInput = document.getElementById('user-mgmt-email');
+const userMgmtRoleSelect = document.getElementById('user-mgmt-role');
+const userMgmtAssignBtn = document.getElementById('user-mgmt-assign-btn');
+if(userMgmtAssignBtn){
+  userMgmtAssignBtn.addEventListener('click', async ()=>{
+    const errEl = document.getElementById('user-mgmt-error');
+    errEl.style.display = 'none';
+    userMgmtAssignBtn.disabled = true;
+    try{
+      await assignRole(userMgmtEmailInput.value, userMgmtRoleSelect.value);
+      userMgmtEmailInput.value = '';
+    }catch(err){
+      errEl.textContent = err.message;
+      errEl.style.display = 'block';
+    }finally{
+      userMgmtAssignBtn.disabled = false;
+    }
+  });
+  document.getElementById('user-mgmt-list').addEventListener('click', async (e)=>{
+    const btn = e.target.closest('.user-mgmt-remove-btn');
+    if(!btn) return;
+    const email = btn.getAttribute('data-email');
+    if(!confirm('Remove role assignment for ' + email + '? They will become a plain User.')) return;
+    btn.disabled = true;
+    try{ await assignRole(email, 'user'); }
+    catch(err){ alert('Could not remove: ' + err.message); }
+  });
+}
+
+const dealIdStartInput = document.getElementById('dealid-start-input');
+const dealIdStartSaveBtn = document.getElementById('dealid-start-save-btn');
+if(dealIdStartSaveBtn){
+  dealIdStartSaveBtn.addEventListener('click', async ()=>{
+    const errEl = document.getElementById('dealid-settings-error');
+    errEl.style.display = 'none';
+    dealIdStartSaveBtn.disabled = true;
+    try{
+      await setDealIdStart(dealIdStartInput.value);
+      dealIdStartInput.value = '';
+    }catch(err){
+      errEl.textContent = err.message;
+      errEl.style.display = 'block';
+    }finally{
+      dealIdStartSaveBtn.disabled = false;
+    }
+  });
+}
+
+/* ---- Microsoft Graph plumbing ---- */
+async function getAccessToken(scopes){
+  scopes = scopes || GRAPH_SCOPES;
+  try{
+    const result = await msalInstance.acquireTokenSilent({ scopes, account: currentAccount });
+    return result.accessToken;
+  }catch(e){
+    const result = await msalInstance.acquireTokenPopup({ scopes });
+    return result.accessToken;
+  }
+}
+async function graphFetch(path, options){
+  options = options || {};
+  const isWorkbookCall = path.indexOf('/workbook/') !== -1;
+  const maxAttempts = 3;
+  for(let attempt = 0; attempt < maxAttempts; attempt++){
+    const token = await getAccessToken(options.scopes);
+    const headers = Object.assign({ 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, options.headers || {});
+    if(isWorkbookCall && workbookSessionId) headers['workbook-session-id'] = workbookSessionId;
+    const res = await fetch('https://graph.microsoft.com/v1.0' + path, {
+      method: options.method || 'GET',
+      body: options.body,
+      headers
+    });
+    if(res.ok){
+      if(res.status === 204 || res.status === 202) return null;
+      const text = await res.text();
+      return text ? JSON.parse(text) : null;
+    }
+    const text = await res.text().catch(()=> '');
+    const isLastAttempt = attempt === maxAttempts - 1;
+    // Excel sessions expire after ~5 min idle (or a longer hard cap) — if a
+    // workbook call reports the session is gone, get a fresh one and retry
+    // rather than surfacing an error the person can't do anything about.
+    const sessionExpired = isWorkbookCall && /InvalidSession|SessionNotFound/i.test(text);
+    if(sessionExpired && !isLastAttempt){
+      await createWorkbookSession();
+      continue;
+    }
+    // 504/503/429 are transient server-side conditions (Graph/Excel backend
+    // slow or briefly overloaded) — worth a couple of short-backoff retries
+    // before giving up and showing the person an error.
+    const transient = res.status === 504 || res.status === 503 || res.status === 429;
+    if(transient && !isLastAttempt){
+      await new Promise(r => setTimeout(r, 700 * (attempt + 1)));
+      continue;
+    }
+    throw new Error('Graph ' + res.status + ': ' + text.slice(0, 300));
+  }
+}
+// Excel workbook calls (getTableRows/addTableRow/updateTableRow/etc.) are
+// much faster and far less prone to timing out when they reuse one
+// persistent session instead of Graph opening/closing the workbook file on
+// every single call. Created once after sign-in; graphFetch attaches it
+// automatically to any /workbook/ path, and recreates it transparently if
+// it ever expires mid-session (see the sessionExpired branch above).
+let workbookSessionId = null;
+async function createWorkbookSession(){
+  if(!fileItemId || !driveId) return null;
+  try{
+    const token = await getAccessToken(GRAPH_SCOPES);
+    const res = await fetch('https://graph.microsoft.com/v1.0/drives/' + driveId + '/items/' + fileItemId + '/workbook/createSession', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ persistChanges: true })
+    });
+    if(!res.ok){
+      console.warn('Could not create a workbook session (Graph ' + res.status + ') — falling back to session-less calls, which are slower and more timeout-prone.');
+      workbookSessionId = null;
+      return null;
+    }
+    const data = await res.json();
+    workbookSessionId = data.id;
+    return workbookSessionId;
+  }catch(err){
+    console.warn('Could not create a workbook session — falling back to session-less calls, which are slower and more timeout-prone.', err);
+    workbookSessionId = null;
+    return null;
+  }
+}
+function encodeShareUrl(url){
+  // Graph's /shares/{shareId} format: base64-encode the URL, then make it
+  // URL-safe and strip padding, prefixed with "u!".
+  const b64 = btoa(url).replace(/=+$/,'').replace(/\//g,'_').replace(/\+/g,'-');
+  return 'u!' + b64;
+}
+async function resolveWorkbook(){
+  // Primary: resolve directly from the sharing link — works no matter which
+  // document library or subfolder the file actually lives in, and doesn't
+  // depend on SharePoint's permission-filtered search index at all.
+  try{
+    const item = await graphFetch('/shares/' + encodeShareUrl(SP_FILE_SHARE_URL) + '/driveItem?$select=id,parentReference,name');
+    fileItemId = item.id;
+    driveId = item.parentReference.driveId;
+    siteId = item.parentReference.siteId || null;
+    return;
+  }catch(shareErr){
+    if(/Graph 403/.test(shareErr.message)){
+      throw new Error('You don\'t have permission to open "' + SP_FILE_NAME + '" on SharePoint. Ask an admin to grant you at least Read access to that file, then sign in again.');
+    }
+    console.warn('Share-link lookup failed, falling back to site search', shareErr);
+  }
+  // Fallback: guess it's at the default drive's root, by name, on the
+  // Operations site — only used if the share link itself stops resolving
+  // (e.g. link was regenerated).
+  const site = await graphFetch('/sites/' + SP_HOSTNAME + ':' + SP_SITE_PATH);
+  siteId = site.id;
+  try{
+    const match = await graphFetch('/sites/' + siteId + '/drive/root:/' + encodeURIComponent(SP_FILE_NAME));
+    fileItemId = match.id;
+    driveId = match.parentReference.driveId;
+    return;
+  }catch(pathErr){
+    if(/Graph 403/.test(pathErr.message)){
+      throw new Error('You don\'t have permission to open "' + SP_FILE_NAME + '" on SharePoint. Ask an admin to grant you at least Read access to that file (or the Operations site), then sign in again.');
+    }
+  }
+  const search = await graphFetch('/sites/' + siteId + "/drive/root/search(q='" + encodeURIComponent(SP_FILE_NAME) + "')");
+  const match = (search.value || []).find(f => f.name === SP_FILE_NAME);
+  if(!match) throw new Error('Could not find "' + SP_FILE_NAME + '" in the Operations site. If you can see this file yourself in SharePoint, you may still be missing permission on it — ask an admin to check your access, then sign in again.');
+  fileItemId = match.id;
+  driveId = match.parentReference.driveId;
+}
+function workbookTablePath(tableName){
+  if(!fileItemId || !driveId) throw new Error('Not connected to the SharePoint workbook yet — try refreshing the page.');
+  return '/drives/' + driveId + '/items/' + fileItemId + '/workbook/tables/' + encodeURIComponent(tableName);
+}
+async function getTableRows(tableName){
+  const data = await graphFetch(workbookTablePath(tableName) + '/rows');
+  return data.value || []; // each row: { index, values: [[col1, col2, ...]] }
+}
+async function getSharePointListId(listName) {
+    const data = await graphFetch(
+        "/sites/" + siteId + "/lists?$filter=displayName eq '" + listName + "'"
+    );
+
+    if (!data.value.length)
+        throw new Error("SharePoint List not found: " + listName);
+
+    return data.value[0].id;
+}
+let approvedListId = null;
+// Graph requires each SharePoint list column's INTERNAL name (e.g.
+// "field_2" or "Agreement_x0020_Date"), not the friendly label shown in the
+// list UI ("Agreement Date") — and the internal name isn't guessable from
+// the label once a column has been renamed after creation, which is exactly
+// what happened here. Instead of hardcoding guesses that silently break the
+// whole write the moment one is wrong, this looks up the list's actual
+// columns once (displayName -> internal name) and builds the write from
+// that, so it survives the list being renamed/restructured going forward.
+let approvedListColumnMapCache = null;
+// The "Deal ID" line inside the saved point-format HTML is baked in at
+// Save-agreement time — before Level 1 approval, that's necessarily the
+// placeholder text ("Pending Level 1 approval"), since no real Deal ID
+// exists yet. Once Level 1 assigns the real ID, this patches that one line
+// in place so the stored HTML (what "View" / Copy show from then on,
+// through every later approval level and after) reflects the real Deal ID
+// permanently — instead of staying frozen on the placeholder forever, while
+// only the header around it (computed live from the row) shows correctly.
+function patchDealIdInGeneratedHtml(html, dealId){
+  if(!html) return html;
+  return html.replace(/(<strong>Deal ID:<\/strong>\s*)[^<]*/, '$1' + escapeHtml(dealId));
+}
+// Same Excel-serial-vs-ISO-string ambiguity as formatStoredDate() above (a
+// "YYYY-MM-DD" string saved into the TradeDealLog Excel table can come back
+// from Graph as either that same string or Excel's own numeric date serial,
+// depending on how Excel chose to store it) — but this one always outputs
+// DD-MM-YYYY (dashes, 4-digit year), which is what the Approved list's
+// "Delivery Date" column expects.
+// Values read back from the log for a date-like field can be an Excel
+// serial number, an ISO "YYYY-MM-DD"(-ish) string, or a "DD-MM-YYYY"
+// display string (same ambiguity as formatStoredDate/formatDeliveryDateDMY
+// above) — but a native <input type="date"> will only accept an exact
+// "YYYY-MM-DD" value and silently blanks itself on anything else. This
+// normalizes any of those stored shapes into that exact format so the
+// "Edit matching info" modal's delivery date field pre-fills correctly.
+function toDateInputValue(v){
+  if(v === '' || v === null || v === undefined) return '';
+  const str = String(v).trim();
+  if(/^\d{4}-\d{2}-\d{2}/.test(str)) return str.slice(0,10);
+  if(/^-?\d+(\.\d+)?$/.test(str)){
+    const ms = Math.round((Number(str) - 25569) * 86400 * 1000); // Excel serial date epoch -> Unix epoch
+    const d = new Date(ms);
+    if(isNaN(d.getTime())) return '';
+    const dd = String(d.getUTCDate()).padStart(2,'0');
+    const mm = String(d.getUTCMonth()+1).padStart(2,'0');
+    const yyyy = d.getUTCFullYear();
+    return yyyy+'-'+mm+'-'+dd;
+  }
+  const m = str.match(/^(\d{2})[-\/](\d{2})[-\/](\d{4})$/); // DD-MM-YYYY or DD/MM/YYYY
+  if(m) return m[3]+'-'+m[2]+'-'+m[1];
+  return '';
+}
+function formatDeliveryDateDMY(v){
+  if(v === '' || v === null || v === undefined) return '';
+  const str = String(v).trim();
+  if(/^-?\d+(\.\d+)?$/.test(str)){
+    const ms = Math.round((Number(str) - 25569) * 86400 * 1000); // Excel serial date epoch -> Unix epoch
+    const d = new Date(ms);
+    if(isNaN(d.getTime())) return str;
+    const dd = String(d.getUTCDate()).padStart(2,'0');
+    const mm = String(d.getUTCMonth()+1).padStart(2,'0');
+    const yyyy = d.getUTCFullYear();
+    return dd+'-'+mm+'-'+yyyy;
+  }
+  if(/^\d{4}-\d{2}-\d{2}/.test(str)){
+    const [y,m,d] = str.split('-');
+    return d+'-'+m+'-'+y;
+  }
+  return str;
+}
+// Generic value coercion for whatever type the Approved list's column
+// actually is, based on Graph's column schema (see getApprovedListColumnMap
+// below) — this replaces guessing per-field which columns are Number vs
+// Text vs Date, and fixes the root cause of "invalidRequest / badArgument"
+// errors: Graph rejects e.g. a "YYYY-MM-DD" string for a Number column, or
+// a bare date (no time) for some DateTime column configurations.
+function coerceForColumnType(raw, colType){
+  if(raw === '' || raw === null || raw === undefined) return null;
+  const str = String(raw).trim();
+  if(colType === 'number'){
+    if(/^-?\d+(\.\d+)?$/.test(str)) return Number(str); // plain number or Excel serial
+    if(/^\d{4}-\d{2}-\d{2}/.test(str)){
+      // date-like string landing on a Number column -> Excel serial date
+      const [y,m,d] = str.split('-').map(Number);
+      const serial = Math.round(Date.UTC(y, m-1, d) / 86400000) + 25569; // Unix epoch -> Excel serial
+      return isNaN(serial) ? null : serial;
+    }
+    return null; // not parseable as a number — send null rather than a bad string
+  }
+  if(colType === 'dateTime'){
+    if(/^\d{4}-\d{2}-\d{2}$/.test(str)) return str + 'T00:00:00Z';
+    if(/^-?\d+(\.\d+)?$/.test(str)){
+      // Excel serial date -> ISO 8601
+      const ms = Math.round((Number(str) - 25569) * 86400 * 1000);
+      const d = new Date(ms);
+      return isNaN(d.getTime()) ? null : d.toISOString();
+    }
+    return str; // already ISO-ish, or unparseable — pass through as-is
+  }
+  return raw; // text/choice/boolean/etc — send as given
+}
+async function getApprovedListColumnMap(){
+  if(approvedListColumnMapCache) return approvedListColumnMapCache;
+  const data = await graphFetch("/sites/" + siteId + "/lists/" + approvedListId + "/columns?$select=name,displayName,hidden,readOnly,text,number,dateTime,boolean,choice");
+  const map = {};
+  (data.value || []).forEach(col => {
+    // SharePoint lists carry extra hidden/computed columns that piggyback
+    // on the same displayName as a real column — most notably "LinkTitle"
+    // and "LinkTitleNoMenu", which both report displayName "Title" but are
+    // read-only rendering helpers, not the actual Title field. Without this
+    // filter, whichever one Graph happens to return last silently overwrites
+    // the real column in this map, and the write then fails with something
+    // like `Field 'LinkTitleNoMenu' is read-only`. Skipping anything
+    // hidden or read-only ensures only the genuine, writable column wins.
+    if(col.hidden || col.readOnly) return;
+    let type = 'text';
+    if(col.number) type = 'number';
+    else if(col.dateTime) type = 'dateTime';
+    else if(col.boolean) type = 'boolean';
+    map[col.displayName] = { name: col.name, type };
+  });
+  approvedListColumnMapCache = map;
+  return map;
+}
+
+async function addApprovedDealToList(values){
+
+    if(!approvedListId){
+        approvedListId = await getSharePointListId(APPROVED_LIST_NAME);
+    }
+    const columnMap = await getApprovedListColumnMap();
+
+    // Keyed by the column's DISPLAY name, i.e. what you actually see as the
+    // header in the "Approved" list. Add a line here any time a new column
+    // is added to that list and should be populated on approval — no need
+    // to know or guess its internal name or type; coerceForColumnType()
+    // adapts the value to whatever type Graph reports for that column.
+    const desiredByDisplayName = {
+        'Title': values[MC.salesPic],
+        'Entity': values[MC.entity],
+        'Agreement Date': values[MC.agreementDate],
+        'Agreement ID (Assigned to BD)': values[MC.dealId],
+        'Supply/Demand': values[MC.supplyDemand],
+        'Company': values[MC.company],
+        'Broker': values[MC.broker],
+        'Country': values[MC.country],
+        'Registry': values[MC.registry],
+        'Tech': values[MC.tech],
+        'Match/Open Position': values[MC.matching],
+        'Volume (RECs)': values[MC.volume],
+        'Delivery (Start date)': values[MC.deliveryStart],
+        'Delivery (End date)': values[MC.deliveryEnd],
+        'V (From MM)': values[MC.vFromMM],
+        'V (From YY)': values[MC.vFromYY],
+        'V (To MM)': values[MC.vToMM],
+        'V (To YY)': values[MC.vToYY],
+        'Currency': values[MC.currency],
+        'Unit Price': values[MC.unitPrice],
+        'Special Requirement': values[MC.specialReq],
+        'COD': values[MC.cod],
+        'TIGRS / IREC NAME': values[MC.tigrsIrecName],
+        'Payment Term': values[MC.paymentTerm],
+        'Buyer/Seller': values[MC.buyerSeller],
+        'No of RECs': values[MC.noOfRecs],
+        'Which deal': values[MC.whichDeal],
+        'Delivery Date': values[MC.deliveryDateM],
+        'Status': values[MC.status],
+        'Submitted By': values[MC.submittedBy],
+        'Submitted Date': values[MC.submittedDate],
+        // Row Uid: the same stable UID already stamped on this row in
+        // TradeDealLog (see MC.rowUid / genRowUid). Sending it here is what
+        // lets the "Approved list with matched" flow match this list item
+        // back to its one exact row in the master file's SingleTrade table
+        // (via the empty "ID" column there) instead of the old 13-field
+        // match. Requires a "Row Uid" text column on this list — same
+        // pattern as the TradeDealLog fix.
+        'Row Uid': values[MC.rowUid]
+        // Agreement File: no matching column on this list — intentionally
+        // left out rather than sent-and-skipped. Add a line here (with the
+        // exact display name) if a column for it is ever created.
     };
 
-    // Current Simulated User (e.g., Submitter or Admin)
-    const currentUser = {
-      email: "user@company.com",
-      role: "admin3" // Set to 'admin3' or 'superadmin' to view approval controls
-    };
-
-    // Sample Dataset Initialization
-    let mockDealsDb = [
-      [
-        "DEAL-1001", "direct", "Buyer Corporate Inc.", "Acquisition A", STATUS_APPROVED,
-        // Empty slots for indices 5 through 46...
-        ...Array(42).fill(""),
-        // Staging slots (47-51)
-        "", "", "", "", ""
-      ],
-      [
-        "DEAL-1002", "none", "Seller Logistics LLC", "Divestment B", STATUS_PENDING_CHANGE_3,
-        ...Array(42).fill(""),
-        "indirect", "Seller Logistics LLC", "Divestment B - Revised", "analyst@company.com", "2026-07-28T10:00:00Z"
-      ]
-    ];
-
-    // ----------------------------------------------------
-    // 2. Data Access & Lookup Functions
-    // ----------------------------------------------------
-    function getDealRowById(dealId) {
-      return mockDealsDb.find(row => row[MC.dealId] === dealId);
-    }
-
-    function saveDataToBackend() {
-      console.log("Syncing changes to backend/Excel list...", mockDealsDb);
-      renderTable();
-    }
-
-    function matchingDisplayLabel(code) {
-      const map = {
-        'direct': 'Direct Match',
-        'indirect': 'Indirect Match',
-        'none': 'No Match'
-      };
-      return map[code] || code || '-';
-    }
-
-    // ----------------------------------------------------
-    // 3. Workflow Action Handlers
-    // ----------------------------------------------------
-    function requestBdMatchChange(dealId, edits) {
-      const row = getDealRowById(dealId);
-      if (!row) return;
-
-      // Populate staging columns (47-51)
-      row[MC.pendingMatching] = edits.matching;
-      row[MC.pendingBuyerSeller] = edits.buyerSeller;
-      row[MC.pendingWhichDeal] = edits.whichDeal;
-      row[MC.pendingRequestedBy] = currentUser.email;
-      row[MC.pendingRequestedDate] = new Date().toISOString();
-      row[MC.status] = STATUS_PENDING_CHANGE_3;
-
-      saveDataToBackend();
-      alert("Change request submitted for Level 3 approval.");
-    }
-
-    function approveBdMatchChange(dealId) {
-      const row = getDealRowById(dealId);
-      if (!row) return;
-
-      // Copy staged changes to live columns
-      row[MC.bdMatching] = row[MC.pendingMatching];
-      row[MC.buyerSeller] = row[MC.pendingBuyerSeller];
-      row[MC.whichDeal] = row[MC.pendingWhichDeal];
-
-      const submitter = row[MC.pendingRequestedBy];
-
-      // Clear staging columns
-      clearStagingFields(row);
-      row[MC.status] = STATUS_APPROVED;
-
-      saveDataToBackend();
-      if (submitter) notifyChangeSubmitter(dealId, submitter, "Approved");
-    }
-
-    function rejectBdMatchChange(dealId, reason = "Request rejected by approver.") {
-      const row = getDealRowById(dealId);
-      if (!row) return;
-
-      const submitter = row[MC.pendingRequestedBy];
-
-      // Revert staging without modifying active live fields
-      clearStagingFields(row);
-      row[MC.status] = STATUS_APPROVED;
-
-      saveDataToBackend();
-      if (submitter) notifyChangeSubmitter(dealId, submitter, "Rejected", reason);
-    }
-
-    function clearStagingFields(row) {
-      row[MC.pendingMatching] = "";
-      row[MC.pendingBuyerSeller] = "";
-      row[MC.pendingWhichDeal] = "";
-      row[MC.pendingRequestedBy] = "";
-      row[MC.pendingRequestedDate] = "";
-    }
-
-    function notifyChangeSubmitter(dealId, submitterEmail, outcome, reason = "") {
-      const message = `[Notification] To: ${submitterEmail}\nBD Matching change request for Deal ${dealId} was ${outcome}.` +
-                      (reason ? `\nReason: ${reason}` : '');
-      console.log(message);
-      alert(message);
-    }
-
-    // ----------------------------------------------------
-    // 4. Modal Interface Logic
-    // ----------------------------------------------------
-    function openEditModal(dealId) {
-      const row = getDealRowById(dealId);
-      if (!row) return;
-
-      document.getElementById('edit-modal-deal-id').value = dealId;
-      document.getElementById('edit-modal-matching').value = row[MC.bdMatching] || 'direct';
-      document.getElementById('edit-modal-buyer-seller').value = row[MC.buyerSeller] || '';
-      document.getElementById('edit-modal-which-deal').value = row[MC.whichDeal] || '';
-      
-      document.getElementById('edit-request-modal-overlay').style.display = 'flex';
-    }
-
-    function closeEditModal() {
-      document.getElementById('edit-request-modal-overlay').style.display = 'none';
-      document.getElementById('edit-request-form').reset();
-    }
-
-    function handleModalSubmit(event) {
-      event.preventDefault();
-      const dealId = document.getElementById('edit-modal-deal-id').value;
-      const edits = {
-        matching: document.getElementById('edit-modal-matching').value,
-        buyerSeller: document.getElementById('edit-modal-buyer-seller').value,
-        whichDeal: document.getElementById('edit-modal-which-deal').value
-      };
-
-      requestBdMatchChange(dealId, edits);
-      closeEditModal();
-    }
-
-    // ----------------------------------------------------
-    // 5. Table Rendering & View Logic
-    // ----------------------------------------------------
-    function renderTable() {
-      const tbody = document.getElementById('deals-table-body');
-      tbody.innerHTML = '';
-
-      mockDealsDb.forEach(row => {
-        const dealId = row[MC.dealId];
-        const status = row[MC.status];
-        const isPending = status === STATUS_PENDING_CHANGE_3;
-
-        let statusBadge = isPending 
-          ? `<span class="badge badge-pending">${STATUS_PENDING_CHANGE_3}</span>`
-          : `<span class="badge badge-approved">${STATUS_APPROVED}</span>`;
-
-        let actionButtons = '';
-
-        if (status === STATUS_APPROVED) {
-          actionButtons = `<button class="btn btn-secondary" onclick="openEditModal('${dealId}')">Request Edit</button>`;
-        } else if (isPending && (currentUser.role === 'admin3' || currentUser.role === 'superadmin')) {
-          actionButtons = `
-            <button class="btn btn-success" onclick="approveBdMatchChange('${dealId}')">Approve</button>
-            <button class="btn btn-danger" onclick="rejectBdMatchChange('${dealId}')">Reject</button>
-          `;
+    const fields = {};
+    const skipped = [];
+    Object.keys(desiredByDisplayName).forEach(displayName => {
+        const col = columnMap[displayName];
+        if(col){
+            fields[col.name] = coerceForColumnType(desiredByDisplayName[displayName], col.type);
+        } else {
+            skipped.push(displayName);
         }
+    });
+    if(skipped.length){
+        console.warn('"' + APPROVED_LIST_NAME + '" list has no column matching these labels — skipped: ' + skipped.join(', '));
+    }
 
-        let rowHtml = `
-          <tr>
-            <td><strong>${dealId}</strong></td>
-            <td>
-              ${matchingDisplayLabel(row[MC.bdMatching])}
-              ${isPending ? `<br><small style="color: #d9534f;">Proposed: ${matchingDisplayLabel(row[MC.pendingMatching])}</small>` : ''}
-            </td>
-            <td>
-              ${row[MC.buyerSeller]}
-              ${isPending ? `<br><small style="color: #d9534f;">Proposed: ${row[MC.pendingBuyerSeller]}</small>` : ''}
-            </td>
-            <td>
-              ${row[MC.whichDeal]}
-              ${isPending ? `<br><small style="color: #d9534f;">Proposed: ${row[MC.pendingWhichDeal]}</small>` : ''}
-            </td>
-            <td>${statusBadge}</td>
-            <td>${actionButtons}</td>
-          </tr>
-        `;
-        tbody.innerHTML += rowHtml;
+    // Always create a brand-new "Approved" list item for every approval —
+    // including a matching-info correction being re-approved at Level 3.
+    // Deliberately NOT patching a prior item by its stored
+    // "Approved List Item Id" here: that used to make a correction
+    // overwrite the earlier "Approved" list row, which erased the history
+    // of what the deal looked like before. Every approval event (original
+    // or corrected) now gets its own separate, permanent list item —
+    // "Row Uid" (below) still carries the same stable value across all of
+    // them, which is what lets the "Approved list with matched" Power
+    // Automate flow keep matching them to the one right row in the Master
+    // Folder file and overwrite it there — the Master Folder file is
+    // meant to always reflect just the latest version; this list, like
+    // TradeDealLog, is meant to keep every version.
+    try{
+        const created = await graphFetch(
+            "/sites/" + siteId +
+            "/lists/" + approvedListId +
+            "/items",
+        {
+            method:"POST",
+            body:JSON.stringify({ fields })
+        }
+    );
+        return created && created.id;
+    }catch(err){
+        // Annotate with exactly what was sent so a failure here is diagnosable
+        // from the error alone, without needing another round of screenshots —
+        // the caller (approveDeal) surfaces err.message directly to the user.
+        err.message = (err.message || String(err)) + '\n\nFields sent: ' + JSON.stringify(fields);
+        throw err;
+    }
+}
+// Caches how many columns the live Excel Table actually has right now, so
+// row writes can be shaped to match — this is what keeps saves working even
+// when the code's column list (MC/COL_COUNT) has grown ahead of what's
+// actually been added to the workbook yet, instead of Graph rejecting the
+// whole write with a dimension-mismatch error.
+let tableColumnCountCache = {};
+async function getTableColumnCount(tableName){
+  if(tableColumnCountCache[tableName]) return tableColumnCountCache[tableName];
+  const data = await graphFetch(workbookTablePath(tableName) + '/columns?$select=name');
+  const count = (data.value || []).length;
+  tableColumnCountCache[tableName] = count;
+  return count;
+}
+function fitRowToColumnCount(values, count){
+  if(values.length === count) return values;
+  if(values.length > count) return values.slice(0, count);
+  return values.concat(new Array(count - values.length).fill(''));
+}
+async function addTableRow(tableName, values){
+  const count = await getTableColumnCount(tableName);
+  return graphFetch(workbookTablePath(tableName) + '/rows/add', {
+    method: 'POST',
+    body: JSON.stringify({ values: [fitRowToColumnCount(values, count)] })
+  });
+}
+function genRowUid(){
+  return (window.crypto && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : (Date.now().toString(36) + Math.random().toString(36).slice(2,10) + Math.random().toString(36).slice(2,10));
+}
+async function updateTableRow(tableName, rowIndex, values){
+  const count = await getTableColumnCount(tableName);
+  return graphFetch(workbookTablePath(tableName) + '/rows/itemAt(index=' + rowIndex + ')', {
+    method: 'PATCH',
+    body: JSON.stringify({ values: [fitRowToColumnCount(values, count)] })
+  });
+
+}
+async function deleteTableRow(tableName, rowIndex){
+  return graphFetch(workbookTablePath(tableName) + '/rows/itemAt(index=' + rowIndex + ')', { method: 'DELETE' });
+}
+/* Row position in the shared Excel table (row.index) is NOT a stable
+   identifier — it shifts whenever ANY user adds or deletes ANY row
+   anywhere in the table, including concurrently with this session's own
+   in-flight edit. Caching an index from an earlier fetch and reusing it
+   for a write later is what let one person's "Edit matching info" save
+   land on a completely different deal's row.
+   The fix: every LOG_TABLE_NAME row gets a permanent rowUid at creation
+   time (see MC.rowUid), and any function that needs to WRITE to a
+   specific row (not just read it) re-resolves that row's CURRENT index
+   via this helper immediately before the write — never reusing an index
+   captured earlier in the same flow. Rows created before this rowUid
+   column existed won't have one; callers fall back to whatever index
+   they already have for those, since there's no better identifier
+   available for legacy rows. */
+async function resolveLogRowIndexByUid(uid, fallbackIndex){
+  if(!uid){
+    if(fallbackIndex == null) throw new Error('Could not identify this row to update (no rowUid and no fallback index) — reload the page and try again.');
+    return fallbackIndex;
+  }
+  const rows = await getTableRows(LOG_TABLE_NAME);
+  const row = rows.find(r => String(r.values[0][MC.rowUid] || '') === uid);
+  if(!row){
+    throw new Error('Could not find this row anymore — it may have been changed by someone else. Reload the page and try again.');
+  }
+  return row.index;
+}
+
+/* ---- Level 2 approval: agreement file upload ----
+   Uploaded into an "Agreement Files" folder in the same SharePoint drive
+   that hosts the workbook, so it inherits the same site permissions —
+   anyone who can already open the workbook can open the agreement.
+   Uses the simple (non-resumable) upload endpoint, which Graph limits to
+   4 MB; that's enough for a scanned/signed agreement PDF in normal use. */
+const AGREEMENT_UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
+async function uploadAgreementFile(dealId, file){
+  if(!driveId) throw new Error('Not connected to the SharePoint workbook yet — try refreshing the page.');
+  if(file.size > AGREEMENT_UPLOAD_MAX_BYTES){
+    throw new Error('That file is larger than 4 MB — please compress it or upload a smaller file.');
+  }
+  const token = await getAccessToken(GRAPH_SCOPES);
+  const safeName = (dealId + ' - ' + file.name).replace(/[\\\/:*?"<>|]/g, '-');
+  const path = '/drives/' + driveId + '/root:/Agreement Files/' + encodeURIComponent(safeName) + ':/content';
+  const res = await fetch('https://graph.microsoft.com/v1.0' + path, {
+    method: 'PUT',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': file.type || 'application/octet-stream' },
+    body: file
+  });
+  if(!res.ok){
+    const text = await res.text().catch(()=> '');
+    throw new Error('Agreement upload failed (' + res.status + '): ' + text.slice(0, 300));
+  }
+  const item = await res.json();
+  return { name: item.name, webUrl: item.webUrl };
+}
+
+/* ---- Deal ID assignment ----
+   A Deal ID is a promise about a real, reviewed agreement — so it's no
+   longer handed out the moment someone clicks "Save agreement". Instead:
+     1. Save agreement gives the submission a temporary placeholder
+        ("PND_<alpha>_<random>") purely so this app can track/lock the row —
+        it is never shown to anyone as a Deal ID.
+     2. Only once a Level 1 approver actually approves does assignFormalDealId()
+        run (in the *approver's* session) and claim the real 5-digit number,
+        overwriting the placeholder in every row of the agreement. The
+        submitter is emailed once this happens (see notifyDealIdAssigned). */
+function assignPendingDealId(){
+  const alpha = val('h-dealid-alpha').replace(/[^a-zA-Z]/g,'').slice(0,3).toUpperCase();
+  const rand = (window.crypto && crypto.randomUUID)
+    ? crypto.randomUUID().replace(/-/g,'').slice(0,10).toUpperCase()
+    : (Date.now().toString(36) + Math.random().toString(36).slice(2,8)).toUpperCase();
+  const placeholder = 'PND_' + alpha + '_' + rand;
+  currentDealDocId = placeholder;
+  return placeholder;
+}
+// Best-effort uniqueness: highest existing (real, non-placeholder) Deal ID in
+// the log table, +1, then re-checked against a fresh read right before
+// committing. Excel/Graph has no atomic transactions, so this can't offer a
+// hard guarantee — collisions are very unlikely under normal, occasional
+// approving (a true zero-risk guarantee needs a real backend).
+// tradeCount = number of trade-rows sharing this placeholder (one physical
+// row per trade), which becomes the digit inserted into the ID, exactly like
+// opsDealId() used to read live off the trade-count dropdown — except this
+// runs in the approver's session, so it's derived from the stored rows
+// instead. The alpha letters were captured into the placeholder itself back
+// when the submitter saved, so a manual override of that field still
+// survives all the way through to the real Deal ID.
+async function assignFormalDealId(placeholderId, tradeCount){
+  const alphaMatch = /^PND_([A-Z]{0,3})_/.exec(placeholderId || '');
+  const alpha = alphaMatch ? alphaMatch[1] : '';
+  const scan = async () => {
+    const rows = await getTableRows(LOG_TABLE_NAME);
+    let maxNum = 0;
+    const takenNums = new Set();
+    rows.forEach(r=>{
+      const raw = String(r.values[0][MC.dealId] || '').trim();
+      if(isPendingDealId(raw)) return; // not a real number yet — ignore
+      const n = parseInt(raw.slice(0,5), 10);
+      if(!isNaN(n)){
+        if(n > maxNum) maxNum = n;
+        takenNums.add(raw.slice(0,5));
+      }
+    });
+    return { maxNum, takenNums };
+  };
+  const first = await scan();
+  // The superadmin-set starting number is a floor: it only matters while
+  // nothing has been issued yet at or above it, and never moves a number
+  // backwards or renumbers anything already saved.
+  let candidate = Math.max(first.maxNum + 1, dealIdStartOverride || 1);
+  const { takenNums } = await scan();
+  let padded = String(candidate).padStart(5,'0');
+  while(takenNums.has(padded)){
+    candidate += 1;
+    padded = String(candidate).padStart(5,'0');
+  }
+  return padded + (parseInt(tradeCount,10) || '') + alpha;
+}
+
+/* ---- Per-user draft (autosaves the in-progress form into the Drafts table) ---- */
+function gatherFormData(){
+  const tradeCount = document.getElementById('trade-count').value;
+  const allValues = {};
+  const checkedIds = [];
+  document.querySelectorAll('input[id], select[id], textarea[id]').forEach(el=>{
+    if(el.type === 'radio' || el.type === 'checkbox'){
+      if(el.checked) checkedIds.push(el.id);
+    } else {
+      allValues[el.id] = el.value;
+    }
+  });
+  return { tradeCount, allValues, checkedIds, dealId: currentDealDocId || val('h-dealid-num'), submittedDate: currentSubmittedDate };
+}
+function setDraftStatus(text){
+  const el = document.getElementById('draft-status');
+  if(el) el.textContent = text;
+}
+async function saveDraft(){
+  if(!currentAccount || !fileItemId) return;
+  setDraftStatus('Saving…');
+  const json = JSON.stringify(gatherFormData());
+  const nowIso = new Date().toISOString();
+  try{
+    if(draftRowIndex !== null){
+      await updateTableRow(DRAFT_TABLE_NAME, draftRowIndex, [currentAccount.username, json, nowIso]);
+    }else{
+      await addTableRow(DRAFT_TABLE_NAME, [currentAccount.username, json, nowIso]);
+      const rows = await getTableRows(DRAFT_TABLE_NAME);
+      const mine = rows.find(r => (r.values[0][0] || '').toLowerCase() === (currentAccount.username || '').toLowerCase());
+      if(mine) draftRowIndex = mine.index;
+    }
+    setDraftStatus('Draft saved');
+  }catch(err){
+    console.error('Draft save failed', err);
+    setDraftStatus('Draft save failed');
+  }
+}
+function applyDraftData(data){
+  suppressAutosave = true;
+  document.getElementById('trade-count').value = data.tradeCount || '1';
+  renderTrades();
+  // Tech tick boxes default to SLR checked on a fresh render (unlike other
+  // checkboxes, which default unchecked) — clear them first so restoring a
+  // draft ends up with exactly the saved selection, not SLR-plus-whatever
+  // was saved.
+  document.querySelectorAll('.tech-checkbox').forEach(cb=>{ cb.checked = false; });
+  Object.keys(data.allValues || {}).forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.value = data.allValues[id];
+  });
+  (data.checkedIds || []).forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.checked = true;
+  });
+  const n = parseInt(document.getElementById('trade-count').value, 10);
+  for(let i=1;i<=n;i++){
+    updateDealField(i);
+    const dealEl = document.getElementById('t'+i+'-m-deal');
+    if(dealEl && data.allValues && data.allValues['t'+i+'-m-deal'] !== undefined) dealEl.value = data.allValues['t'+i+'-m-deal'];
+    handleMatchingChange(i);
+    updateTechExclusivity(i);
+  }
+  updateBuyerSellerFieldLabel();
+  updateTransferAccountLabels();
+  currentDealDocId = data.dealId || val('h-dealid-num') || null;
+  currentSubmittedDate = data.submittedDate || null;
+  suppressAutosave = false;
+}
+async function loadDraftAndHistory(){
+  if(!canBuildAgreement()){
+    // Review-only roles never create agreements, so there's no per-user
+    // draft to load for them — just pull the shared history/queue data.
+    await loadHistory();
+    return;
+  }
+  setDraftStatus('Loading…');
+  try{
+    const rows = await getTableRows(DRAFT_TABLE_NAME);
+    const myEmail = (currentAccount.username || '').toLowerCase();
+    const mine = rows.find(r => (r.values[0][0] || '').toLowerCase() === myEmail);
+    draftRowIndex = mine ? mine.index : null;
+    if(mine){
+      try{ applyDraftData(JSON.parse(mine.values[0][1])); setDraftStatus('Draft loaded'); }
+      catch(e){ console.error('Draft could not be read', e); setDraftStatus('Draft retrieve error, please press New Agreement to start.'); }
+    }else{
+      setDraftStatus('New draft — Deal ID is assigned once Level 1 approves your saved agreement.');
+    }
+  }catch(err){
+    console.error('Draft load failed', err);
+    setDraftStatus('Could not load draft: ' + err.message);
+  }
+  await loadHistory();
+  checkSubmittedLock();
+}
+
+/* ---- Locking a submitted deal ----
+   A Deal ID is only ever assigned the moment "Save agreement" first
+   succeeds, and once that write has happened, the agreement is done: it can
+   never be edited or resaved under that same ID, and a rejected deal is not
+   reopened for editing either — trying again means starting a New
+   confirmation, which gets a brand-new Deal ID. This function detects "the
+   currently loaded form's Deal ID already has rows in TradeDealLog" (either
+   right after a successful save, or on reload/reconnect) and locks the form
+   accordingly. The per-user draft row still autosaves the in-progress form
+   right up until that first successful save — its only purpose is to
+   protect unsaved work, never to enable post-submission edits. */
+// A Level 1 approval (run in the *approver's* session, not the submitter's)
+// swaps a row's placeholder Deal ID for the real one — so the submitter's
+// own currentDealDocId can go stale the moment that happens. Falling back to
+// matching on (submittedBy + submittedDate), a pair that never changes,
+// lets this user's session still recognize its own submission after that
+// swap, e.g. on reload.
+function myRowsBySubmissionRef(){
+  if(!currentAccount || !currentSubmittedDate) return [];
+  const myEmail = (currentAccount.username || '').toLowerCase();
+  return logRowsCache.filter(r =>
+    String(r.values[0][MC.submittedBy] || '').toLowerCase() === myEmail &&
+    String(r.values[0][MC.submittedDate] || '') === currentSubmittedDate
+  );
+}
+function dealAlreadySubmitted(dealId){
+  if(dealId && logRowsCache.some(r => String(r.values[0][MC.dealId] || '').trim() === dealId)) return true;
+  return myRowsBySubmissionRef().length > 0;
+}
+function submittedDealStatus(dealId){
+  const dealRows = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  if(dealRows.length) return dealStatus(dealRows);
+  const mine = myRowsBySubmissionRef();
+  return mine.length ? (mine[0].values[0][MC.status] || STATUS_PENDING_1) : null;
+}
+function checkSubmittedLock(){
+  // Resync currentDealDocId if Level 1 has since assigned the real Deal ID
+  // in someone else's session.
+  const mine = myRowsBySubmissionRef()[0];
+  if(mine){
+    const realId = String(mine.values[0][MC.dealId] || '').trim();
+    if(realId && realId !== currentDealDocId) currentDealDocId = realId;
+  }
+  if(dealAlreadySubmitted(currentDealDocId)){
+    lockSubmittedForm(currentDealDocId);
+  }
+}
+function lockSubmittedForm(dealId){
+  const status = submittedDealStatus(dealId);
+  document.querySelectorAll('#header-fields input, #header-fields select, #header-fields textarea, ' +
+    '#trades-container input, #trades-container select, #trades-container textarea, #trade-count')
+    .forEach(el => el.disabled = true);
+  document.getElementById('generate-btn').style.display = 'none';
+  document.getElementById('save-agreement-btn').style.display = 'none';
+  const banner = document.getElementById('submitted-lock-banner');
+  const displayId = friendlyDealId(dealId);
+  banner.innerHTML = '<strong>' + (isPendingDealId(dealId) ? 'This agreement' : 'Deal ID ' + escapeHtml(displayId)) +
+    ' has been submitted (status: ' + escapeHtml(status || STATUS_PENDING_1) +
+    ') and can no longer be edited — it is locked permanently, even if it\'s rejected.</strong> ' +
+    (isPendingDealId(dealId) ? 'A Deal ID will be assigned once Level 1 approves, and you\'ll get an email then. ' : '') +
+    'To submit a new agreement, use "New Agreement" above — it will get its own Deal ID.';
+  banner.style.display = 'block';
+
+  // "Generate table" is gone once locked (nothing left to regenerate), so
+  // this is the only remaining way to get the Preview card — and its Copy
+  // button — back: pull the saved Generated HTML straight from the row.
+  // Runs every time a locked form loads (including a plain page reload),
+  // so it also picks up the corrected Deal ID once Level 1 approval has
+  // patched it into the stored HTML (see patchDealIdInGeneratedHtml).
+  let row = logRowsCache.find(r => String(r.values[0][MC.dealId] || '').trim() === dealId && r.values[0][MC.generatedHtml]);
+  if(!row) row = myRowsBySubmissionRef().find(r => r.values[0][MC.generatedHtml]);
+  if(row){
+    lastHtml = row.values[0][MC.generatedHtml];
+    lastPlain = htmlToPlainFallback(lastHtml);
+    document.getElementById('table-preview').innerHTML = lastHtml;
+    setPreviewDealIdLabel(isPendingDealId(dealId) ? '' : displayId);
+    setPreviewAgreementLink(row.values[0][MC.agreementFileUrl]);
+    // Copy table stays hidden until Level 1 approval assigns a real Deal ID.
+    document.getElementById('copy-btn').style.display = isPendingDealId(dealId) ? 'none' : 'inline-block';
+    document.getElementById('output-section').style.display = 'flex';
+  }
+}
+document.addEventListener('input', ()=>{
+  if(!currentAccount || suppressAutosave || !canBuildAgreement()) return;
+  if(dealAlreadySubmitted(currentDealDocId)) return;
+  clearTimeout(draftSaveTimer);
+  draftSaveTimer = setTimeout(saveDraft, 1200);
+});
+document.addEventListener('change', ()=>{
+  if(!currentAccount || suppressAutosave || !canBuildAgreement()) return;
+  if(dealAlreadySubmitted(currentDealDocId)) return;
+  clearTimeout(draftSaveTimer);
+  draftSaveTimer = setTimeout(saveDraft, 1200);
+});
+
+document.getElementById('new-confirmation-btn').addEventListener('click', async ()=>{
+  if(!currentAccount) return;
+  if(!confirm('Start a new agreement? Locked fields are kept; unlocked fields clear. This new agreement will get its own Deal ID once Level 1 approves it. Your saved history is not affected.')) return;
+  try{
+    if(draftRowIndex !== null) await deleteTableRow(DRAFT_TABLE_NAME, draftRowIndex);
+  }catch(err){ console.error('Could not clear draft row', err); }
+  location.reload();
+});
+
+/* ---- Saved agreements (the shared, restructured TradeDealLog table) ----
+   One physical row per TRADE within an agreement (a 3-trade submission under
+   one Deal ID produces 3 rows). A Deal ID is only ever saved ONCE — if rows
+   already exist for it, saving is refused (the UI already prevents this via
+   lockSubmittedForm(), this is a server-side-equivalent guard in case of a
+   double-click or stale page). A brand-new submission always starts at
+   "Pending Level 1" with every approval/rejection field blank. Nothing is
+   ever written to this table's Status/approval columns except by the
+   Approve/Reject actions. Every signed-in user can technically read every
+   row (that's inherent to a shared Excel file) — "My saved confirmations" is
+   a client-side filter, not a security boundary. */
+async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
+  if(!currentAccount || !dealId) return;
+  const rows = await getTableRows(LOG_TABLE_NAME);
+  const existingRows = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  if(existingRows.length){
+    throw new Error((isPendingDealId(dealId) ? 'This agreement' : 'Deal ID ' + dealId) + ' has already been submitted and cannot be resaved. Start a New Agreement instead.');
+  }
+  const nowIso = submittedDateIso || new Date().toISOString();
+  const tradeCount = parseInt(document.getElementById('trade-count').value, 10) || 1;
+  for(let n = 1; n <= tradeCount; n++){
+    const matching = val('t'+n+'-m-matching');
+    const matchingActive = matching && matching !== 'Open Position';
+    const row = new Array(COL_COUNT).fill('');
+    row[MC.salesPic] = val('h-bd');
+    row[MC.entity] = val('h-entity');
+    row[MC.agreementDate] = val('h-date');
+    row[MC.dealId] = dealId;
+    row[MC.supplyDemand] = val('h-order');
+    row[MC.company] = val('h-buyer');
+    row[MC.broker] = val('t'+n+'-broker');
+    row[MC.country] = val('t'+n+'-country');
+    row[MC.registry] = val('t'+n+'-registry');
+    row[MC.tech] = val('t'+n+'-tech');
+    row[MC.matching] = matching;
+    row[MC.volume] = val('t'+n+'-volume');
+    row[MC.deliveryStart] = val('t'+n+'-dstart');
+    row[MC.deliveryEnd] = val('t'+n+'-dend');
+    row[MC.vFromMM] = val('t'+n+'-vintage-start-month');
+    row[MC.vFromYY] = val('t'+n+'-vintage-start-year');
+    row[MC.vToMM] = val('t'+n+'-vintage-end-month');
+    row[MC.vToYY] = val('t'+n+'-vintage-end-year');
+    row[MC.currency] = val('t'+n+'-currency');
+    row[MC.unitPrice] = val('t'+n+'-price');
+    row[MC.specialReq] = val('t'+n+'-remarks');
+    row[MC.cod] = val('t'+n+'-m-cod');
+    row[MC.tigrsIrecName] = val('t'+n+'-transfer');
+    row[MC.paymentTerm] = val('t'+n+'-payterm');
+    row[MC.buyerSeller] = matchingActive ? val('t'+n+'-m-name') : '';
+    row[MC.noOfRecs] = matchingActive ? val('t'+n+'-m-recs') : '';
+    row[MC.whichDeal] = val('t'+n+'-m-deal');
+    row[MC.deliveryDateM] = val('t'+n+'-m-ddate');
+    row[MC.submittedBy] = currentAccount.username;
+    row[MC.submittedDate] = nowIso;
+    row[MC.generatedHtml] = (n === 1) ? lastHtml : '';
+    row[MC.status] = STATUS_PENDING_1;
+    row[MC.approvedBy1] = '';
+    row[MC.approvedDate1] = '';
+    row[MC.approvedBy2] = '';
+    row[MC.approvedDate2] = '';
+    row[MC.approvedBy3] = '';
+    row[MC.approvedDate3] = '';
+    row[MC.rejectedBy] = '';
+    row[MC.rejectedDate] = '';
+    row[MC.rejectReason] = '';
+    row[MC.description] = val('h-description');
+    row[MC.rowUid] = genRowUid();
+    await addTableRow(LOG_TABLE_NAME, row);
+  }
+  await loadHistory();
+}
+/* Advances a deal one step through the approval chain, writing the
+   approver + timestamp for whichever level the current status corresponds
+   to. Every role — including superadmin — only ever advances one level per
+   click; superadmin's only difference is which levels canActOnStatus() lets
+   them act on (any pending level, vs. admin1/2/3's own single level). */
+async function approveDeal(dealId, file){
+  if(!dealId) return;
+  const rows = await getTableRows(LOG_TABLE_NAME);
+  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  if(!matching.length) return;
+  const currentStatus = dealStatus(matching);
+  if(!canActOnStatus(currentStatus)) throw new Error('You are not able to approve this deal at its current stage.');
+  const nowIso = new Date().toISOString();
+  let nextStatus, byCol, dateCol;
+  if(currentStatus === STATUS_PENDING_1){ nextStatus = STATUS_PENDING_2; byCol = MC.approvedBy1; dateCol = MC.approvedDate1; }
+  else if(currentStatus === STATUS_PENDING_2){
+    if(!file) throw new Error('Please attach the signed agreement before approving at Level 2.');
+    const liveColumnCount = await getTableColumnCount(LOG_TABLE_NAME);
+    if(liveColumnCount < COL_COUNT){
+      throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing one or more columns this app expects (at minimum "Agreement File Name" and "Agreement File URL" needed to save the attachment, and now also "Matching Edit Note" and "Row Uid"). Ask an admin to add the missing column(s) at the end of the table, then try again.');
+    }
+    nextStatus = STATUS_PENDING_3; byCol = MC.approvedBy2; dateCol = MC.approvedDate2;
+  }
+  else if(currentStatus === STATUS_PENDING_3){ nextStatus = STATUS_APPROVED; byCol = MC.approvedBy3; dateCol = MC.approvedDate3; }
+  else return;
+  // The real Deal ID is only claimed the moment Level 1 approval happens —
+  // this is the one point where the row's dealId column changes from the
+  // submit-time placeholder to a permanent real ID.
+  let assignedDealId = null;
+  if(currentStatus === STATUS_PENDING_1){
+    assignedDealId = await assignFormalDealId(dealId, matching.length);
+  }
+  // Only Level 2 approval carries a file; upload it once, then stamp the
+  // link onto every row of the deal so it shows up wherever the deal does.
+  // Uses the real Deal ID (if one was just assigned this call) so the
+  // uploaded file is named after it rather than the placeholder.
+  let agreementInfo = null;
+  if(file){
+    agreementInfo = await uploadAgreementFile(assignedDealId || dealId, file);
+  }
+  const approvedListErrors = []; // one entry per trade row that failed to copy, not just the last
+  let tradeNum = 0;
+  for(const r of matching){
+    tradeNum++;
+    const rowStatus = r.values[0][MC.status] || STATUS_PENDING_1;
+    // A partial matching-info correction can leave some trades in this deal
+    // already at Approved while only the corrected trade(s) sit at
+    // currentStatus — only advance the ones actually waiting at this stage.
+    if(rowStatus !== currentStatus) continue;
+    const values = r.values[0].slice();
+    if(!values[MC.rowUid]) values[MC.rowUid] = genRowUid(); // backfill legacy rows as they're touched
+    if(assignedDealId){
+      values[MC.dealId] = assignedDealId;
+      if(values[MC.generatedHtml]) values[MC.generatedHtml] = patchDealIdInGeneratedHtml(values[MC.generatedHtml], assignedDealId);
+    }
+    values[MC.status] = nextStatus;
+    values[byCol] = currentAccount.username;
+    values[dateCol] = nowIso;
+    if(agreementInfo){
+      values[MC.agreementFileName] = agreementInfo.name;
+      values[MC.agreementFileUrl] = agreementInfo.webUrl;
+    }
+    await updateTableRow(LOG_TABLE_NAME, await resolveLogRowIndexByUid(r.values[0][MC.rowUid], r.index), values);
+    // Final sign-off (Pending Level 3 -> Approved): also copy this row into
+    // the standalone "Approved" SharePoint list. Best-effort — if the write
+    // fails (e.g. the list is missing a column the app expects), the row
+    // above has already been safely updated, so we don't want to fail the
+    // whole approval. But the person taking the approval action should
+    // actually SEE that it failed, instead of it only showing up in the
+    // browser console — so every failure (not just the last one) is
+    // captured here and surfaced via alert() once the loop and the rest of
+    // the approval flow finish below. A multi-trade deal writes one row per
+    // trade, and each write can fail independently of the others.
+    if(nextStatus === STATUS_APPROVED){
+      try{
+        const itemId = await addApprovedDealToList(values);
+        // Save the item id back onto the log row (only if it's new/changed)
+        // so a future correction on this same trade can update this exact
+        // "Approved" list item instead of creating a duplicate.
+        if(itemId && values[MC.approvedListItemId] !== itemId){
+          values[MC.approvedListItemId] = itemId;
+          await updateTableRow(LOG_TABLE_NAME, await resolveLogRowIndexByUid(r.values[0][MC.rowUid], r.index), values);
+        }
+      }catch(err){
+        console.error('Could not copy Trade ' + tradeNum + ' into the "Approved" list — check that its column internal names match what this app sends (see the fields{} object in addApprovedDealToList).', err);
+        approvedListErrors.push('Trade ' + tradeNum + ': ' + err.message);
+      }
+    }
+  }
+  const idForNotifications = assignedDealId || dealId;
+  await notifyNextApprover(nextStatus, idForNotifications, matching[0].values[0][MC.description]);
+  if(assignedDealId){
+    // The creator gets an email the moment their Deal ID exists — but,
+    // per policy, no separate email when the deal later reaches final
+    // (Level 3) approval; notifySubmitter() only ever covers Rejected.
+    await notifyDealIdAssigned(assignedDealId, matching[0].values[0][MC.submittedBy]);
+  }
+  await loadHistory();
+  if(approvedListErrors.length){
+    // Deliberately a plain alert() rather than routing through the
+    // approve/reject modal's inline error box: this can fire from either
+    // the modal path (Level 2) or the plain confirm() path (Level 1/3), and
+    // by this point the approval itself has already succeeded and been
+    // saved — this is a secondary, non-blocking notice, not a failure of
+    // the action the person just took.
+    alert('This deal was approved successfully, but copying ' + approvedListErrors.length + ' of ' + matching.length +
+      ' trade row(s) into the "Approved" SharePoint list failed:\n\n' +
+      approvedListErrors.join('\n\n') +
+      '\n\nThe approval itself is saved — this only affects the separate "Approved" list. Check that the list\'s column internal names/types match what the app sends (see addApprovedDealToList in the code), then ask an admin to fix the mismatch and re-copy the missing trade(s).');
+  }
+}
+/* Rejects a deal at whatever stage it's currently pending at, recording who
+   rejected it, when, and the comment the submitter will see. Rejection
+   doesn't erase earlier level sign-offs — they stay visible in the approval
+   trail — but the deal must restart from Level 1 if resubmitted. */
+async function rejectDeal(dealId, reason){
+  if(!dealId) return;
+  const trimmedReason = (reason||'').trim();
+  if(!trimmedReason) throw new Error('A comment is required so the submitter knows why this was rejected.');
+  const rows = await getTableRows(LOG_TABLE_NAME);
+  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  if(!matching.length) return;
+  const currentStatus = dealStatus(matching);
+  if(!canActOnStatus(currentStatus)) throw new Error('You are not able to reject this deal at its current stage.');
+  const nowIso = new Date().toISOString();
+  // If the deal already has other trades sitting at Approved, this
+  // "Pending Level 3" is only a matching-info correction on top of an
+  // otherwise-approved agreement (see resubmitMatchingInfo) — rejecting it
+  // should undo just the correction, not blow away the whole deal's
+  // approval and lock it permanently.
+  const isPartialCorrection = currentStatus === STATUS_PENDING_3 &&
+    matching.some(r => (r.values[0][MC.status] || '') === STATUS_APPROVED);
+  for(const r of matching){
+    const rowStatus = r.values[0][MC.status] || STATUS_PENDING_1;
+    if(rowStatus !== currentStatus) continue; // e.g. trades an in-flight correction left at Approved
+    const values = r.values[0].slice();
+    if(!values[MC.rowUid]) values[MC.rowUid] = genRowUid(); // backfill legacy rows as they're touched
+    if(isPartialCorrection){
+      // Revert — this trade's prior Level 3 sign-off (never cleared by
+      // resubmitMatchingInfo) still stands, so it just goes back to normal.
+      values[MC.status] = STATUS_APPROVED;
+      values[MC.matchingEditNote] = 'Correction rejected by ' + currentAccount.username + ': ' + trimmedReason;
+    } else {
+      values[MC.status] = STATUS_REJECTED;
+      values[MC.rejectedBy] = currentAccount.username;
+      values[MC.rejectedDate] = nowIso;
+      values[MC.rejectReason] = trimmedReason;
+    }
+    await updateTableRow(LOG_TABLE_NAME, await resolveLogRowIndexByUid(r.values[0][MC.rowUid], r.index), values);
+  }
+  if(isPartialCorrection){
+    await notifyCorrectionRejected(dealId, matching[0].values[0][MC.submittedBy], trimmedReason);
+  } else {
+    await notifySubmitter(STATUS_REJECTED, dealId, matching[0].values[0][MC.submittedBy], trimmedReason);
+  }
+  await loadHistory();
+}
+// Builds a plain-English "what changed" line for one trade row, comparing
+// its old matching-related values against the edited ones. Returns '' if
+// nothing in this row actually changed.
+function describeMatchingChange(oldV, edit){
+  const parts = [];
+  const was = (label, oldVal, newVal) => {
+    const o = String(oldVal==null?'':oldVal).trim(), n = String(newVal==null?'':newVal).trim();
+    if(o !== n) parts.push(label + ': "' + (o || '—') + '" → "' + (n || '—') + '"');
+  };
+  was('Matching', oldV[MC.matching], edit.matching);
+  was('Buyer/Seller name', oldV[MC.buyerSeller], edit.buyerSeller);
+  was('No of RECs', oldV[MC.noOfRecs], edit.noOfRecs);
+  was('From which deal', oldV[MC.whichDeal], edit.whichDeal);
+  was('Delivery date', oldV[MC.deliveryDateM], edit.deliveryDateM);
+  return parts.join('; ');
+}
+/* Lets the original submitter correct ONLY the BD source matching fields
+   (5. Matching, and — when active — 1. Buyer/Seller name, 2. No of RECs,
+   3. From which deal, 4. Delivery date) on a deal that has already reached
+   full Approved status. Everything else about the agreement is untouched.
+   Rather than restarting the whole 3-level chain, this sends the deal back
+   to "Pending Level 3" only — Level 1 and Level 2 sign-offs already stand
+   and are left as-is. edits is keyed by row index (r.index), one entry per
+   trade row belonging to this deal. A plain-English summary of exactly what
+   changed (per trade) is written into the Matching Edit Note column, and
+   included in the Level 3 approver's email, so the approver can see what's
+   different without having to compare the whole agreement by eye. */
+async function resubmitMatchingInfo(dealId, edits){
+  if(!dealId) return;
+  const rows = await getTableRows(LOG_TABLE_NAME);
+  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  if(!matching.length) throw new Error('Could not find this deal.');
+  const currentStatus = matching[0].values[0][MC.status];
+  if(currentStatus !== STATUS_APPROVED){
+    throw new Error('This deal is no longer Approved (its status has changed) — reload the page and try again.');
+  }
+  const myEmail = (currentAccount.username || '').toLowerCase();
+  if(String(matching[0].values[0][MC.submittedBy] || '').toLowerCase() !== myEmail){
+    throw new Error('Only the original submitter can correct this agreement\'s matching info.');
+  }
+  const nowIso = new Date().toISOString();
+  const changeLines = []; // one entry per trade that actually changed, for the email
+  let tradeNum = 0;
+  for(const r of matching){
+    const oldV = r.values[0];
+    // Prefer the row's stable UID as the lookup key; only fall back to
+    // position-within-deal for legacy rows that predate the rowUid column.
+    const editKey = oldV[MC.rowUid] || ('pos:' + tradeNum);
+    tradeNum++;
+    const edit = edits[editKey];
+    if(!edit) continue;
+    const changeText = describeMatchingChange(oldV, edit);
+    // Nothing actually changed on this trade — skip it entirely. Its row is
+    // left exactly as-is: no write, no status change, no cleared L3 sign-off.
+    // This is what lets a deal with several trades go back for re-approval
+    // on just the one trade that was corrected, instead of the whole
+    // agreement.
+    if(!changeText) continue;
+    const values = oldV.slice();
+    if(!values[MC.rowUid]) values[MC.rowUid] = genRowUid(); // backfill legacy rows as they're touched
+    values[MC.matching] = edit.matching;
+    values[MC.buyerSeller] = edit.buyerSeller;
+    values[MC.noOfRecs] = edit.noOfRecs;
+    values[MC.whichDeal] = edit.whichDeal;
+    values[MC.deliveryDateM] = edit.deliveryDateM;
+    values[MC.status] = STATUS_PENDING_3;
+    // Level 3 needs to sign off again on the corrected info. Deliberately
+    // NOT clearing approvedBy3/approvedDate3 here (unlike before) — they're
+    // kept as a fallback so that if this correction is later rejected,
+    // rejectDeal() can revert this trade straight back to its prior
+    // Approved sign-off instead of nuking the whole deal.
+    values[MC.matchingEditNote] = 'Trade ' + tradeNum + ' — ' + changeText;
+    changeLines.push('Trade ' + tradeNum + ': ' + changeText);
+    // Preserve full history: before overwriting the active row with the
+    // correction, permanently archive exactly what it looked like right
+    // before this edit as a brand-new row appended at the end of the
+    // table. It's tagged with a distinct Deal ID (a " (superseded ...)"
+    // suffix) so it's never picked up by the `rows.filter(dealId === ...)`
+    // lookups used everywhere else in the app (approve/reject/history/
+    // matching), and given a fresh rowUid so it can never be confused with
+    // the live row by resolveLogRowIndexByUid. The live row below keeps
+    // its original rowUid — that's what stays constant across edits and is
+    // what lets the Master Folder file's row still get found and
+    // overwritten in place; TradeDealLog itself, like this, never loses a
+    // version.
+    const archived = oldV.slice();
+    archived[MC.dealId] = String(oldV[MC.dealId] || '') + ' (superseded ' + nowIso + ')';
+    archived[MC.rowUid] = genRowUid();
+    archived[MC.matchingEditNote] = 'Superseded by a matching-info correction — see the current "' + dealId + '" row for the latest version.';
+    await addTableRow(LOG_TABLE_NAME, archived);
+    await updateTableRow(LOG_TABLE_NAME, await resolveLogRowIndexByUid(oldV[MC.rowUid], r.index), values);
+  }
+  if(!changeLines.length){
+    // Nothing changed on any trade — nothing was written, nothing to send
+    // back for re-approval.
+    await loadHistory();
+    return;
+  }
+  const changeSummary = changeLines.join('\n');
+  await notifyNextApprover(STATUS_PENDING_3, dealId, matching[0].values[0][MC.description], changeSummary);
+  await loadHistory();
+}
+function groupByDealId(rows){
+  const groups = {};
+  const order = [];
+  rows.forEach(r=>{
+    const id = String(r.values[0][MC.dealId] || '').trim();
+    if(!groups[id]){ groups[id] = []; order.push(id); }
+    groups[id].push(r);
+  });
+  return order.map(id => ({ dealId: id, rows: groups[id] }));
+}
+async function loadHistory(){
+  const listEl = document.getElementById('history-list');
+  listEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Loading…</p>';
+  try{
+    const rows = await getTableRows(LOG_TABLE_NAME);
+    logRowsCache = rows;
+    const myEmail = (currentAccount.username || '').toLowerCase();
+    const mineGroups = groupByDealId(
+      rows.filter(r => (String(r.values[0][MC.submittedBy] || '')).toLowerCase() === myEmail)
+    ).sort((a,b)=> String(b.rows[0].values[0][MC.submittedDate]||'').localeCompare(String(a.rows[0].values[0][MC.submittedDate]||'')));
+    renderHistoryTable(listEl, mineGroups, {showOwner:false, showActions:false, allowEditMatching:true});
+
+    if(isAdmin){
+      const allGroups = groupByDealId(rows)
+        .sort((a,b)=> String(b.rows[0].values[0][MC.submittedDate]||'').localeCompare(String(a.rows[0].values[0][MC.submittedDate]||'')));
+
+      const queueEl = document.getElementById('approval-queue-list');
+      const queueGroups = allGroups.filter(g => canActOnStatus(dealStatus(g.rows)));
+      renderHistoryTable(queueEl, queueGroups, {showOwner:true, showActions:true, emptyText:'Nothing waiting on your approval right now.'});
+
+      const adminListEl = document.getElementById('admin-history-list');
+      renderHistoryTable(adminListEl, allGroups, {showOwner:true, showActions:false});
+    }
+    tryOpenDealFromUrl();
+  }catch(err){
+    listEl.innerHTML = '<p style="font-size:13px;color:#8a2d1f;">Could not load: ' + escapeHtml(err.message) + '</p>';
+  }
+}
+function statusBadge(status){
+  const s = status || STATUS_PENDING_1;
+  const color = s === STATUS_APPROVED ? '#1f7a4d' : (s === STATUS_REJECTED ? '#8a2d1f' : '#8a6d1f');
+  return '<span style="font-weight:600;color:'+color+';">'+escapeHtml(s)+'</span>';
+}
+// Short "L1 ✓ · L2 ✓ · L3 ✓" trail of whoever has signed off so far — the
+// email address itself is only shown as a hover tooltip (title attribute),
+// not printed inline, to keep the row compact.
+function approvalTrailText(v){
+  const parts = [];
+  if(v[MC.approvedBy1]) parts.push('<span title="'+escapeHtml(v[MC.approvedBy1])+'">L1 ✓</span>');
+  if(v[MC.approvedBy2]) parts.push('<span title="'+escapeHtml(v[MC.approvedBy2])+'">L2 ✓</span>');
+  if(v[MC.approvedBy3]) parts.push('<span title="'+escapeHtml(v[MC.approvedBy3])+'">L3 ✓</span>');
+  return parts.join(' · ');
+}
+function renderHistoryTable(el, groups, opts){
+  opts = opts || {};
+  const showOwner = !!opts.showOwner;
+  const showActions = !!opts.showActions;
+  const allowEditMatching = !!opts.allowEditMatching;
+  const colCount = showOwner ? 7 : 6;
+  if(!groups.length){
+    el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">'+escapeHtml(opts.emptyText || 'No saved confirmations yet.')+'</p>';
+    return;
+  }
+  let html = '<table><tr>' + (showOwner ? '<th style="text-align:left;padding:6px;">BD in-charge</th>' : '') +
+    '<th style="text-align:left;padding:6px;">Deal ID</th>' +
+    '<th style="text-align:left;padding:6px;">Agreement Date</th>' +
+    '<th style="text-align:left;padding:6px;">Counterparty</th>' +
+    '<th style="text-align:left;padding:6px;">Trades</th>' +
+    '<th style="text-align:left;padding:6px;">Status</th>' +
+    '<th style="padding:6px;"></th></tr>';
+  groups.forEach(g=>{
+    const v = g.rows[0].values[0];
+    const status = dealStatus(g.rows);
+    const canAct = showActions && canActOnStatus(status);
+    // Header-level display fields (date, counterparty, etc.) are shared
+    // across every trade row, so v (row 0) is fine for those. But the L1/L2/L3
+    // trail is per-row, and during a partial correction row 0 might still be
+    // showing an old checkmark that doesn't match the deal's overall status
+    // — use whichever row is actually sitting at that status instead.
+    const statusRow = (g.rows.find(r => (r.values[0][MC.status] || STATUS_PENDING_1) === status) || g.rows[0]).values[0];
+    const trail = approvalTrailText(statusRow);
+    const agreementUrl = v[MC.agreementFileUrl];
+    const agreementLink = agreementUrl
+      ? '<div style="font-size:11px;margin-top:2px;"><a href="'+escapeHtml(agreementUrl)+'" target="_blank" rel="noopener">📄 View agreement</a></div>'
+      : '';
+    const canEditMatching = allowEditMatching && status === STATUS_APPROVED;
+    html += '<tr style="border-top:1px solid var(--border);">' +
+      (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[MC.salesPic]||'')+'</td>' : '') +
+      '<td style="padding:6px;">'+(isPendingDealId(v[MC.dealId]) ? '-' : escapeHtml(friendlyDealId(v[MC.dealId])))+'</td>' +
+      '<td style="padding:6px;">'+escapeHtml(formatStoredDate(v[MC.agreementDate]))+'</td>' +
+      '<td style="padding:6px;">'+escapeHtml(v[MC.company]||'')+'</td>' +
+      '<td style="padding:6px;">'+g.rows.length+'</td>' +
+      '<td style="padding:6px;">'+statusBadge(status)+
+        (trail ? '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">'+trail+'</div>' : '')+
+        agreementLink+
+      '</td>' +
+      '<td style="padding:6px;white-space:nowrap;">' +
+        '<button type="button" class="secondary history-view-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;">View</button>' +
+        (canAct ? ' <button type="button" class="secondary history-approve-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;">Approve</button>' +
+                  ' <button type="button" class="secondary history-reject-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;color:#8a2d1f;border-color:#c1493a;">Reject</button>' : '') +
+        (canEditMatching ? ' <button type="button" class="secondary history-editmatch-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;">Edit matching info</button>' : '') +
+      '</td>' +
+    '</tr>';
+    if(status === STATUS_REJECTED && v[MC.rejectReason]){
+      html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
+        '<div style="background:#fdecea;border:1px solid #e2a49a;color:#8a2d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
+        '<strong>Rejected'+(v[MC.rejectedBy]?(' by '+escapeHtml(v[MC.rejectedBy])):'')+':</strong> '+escapeHtml(v[MC.rejectReason]) +
+        '</div></td></tr>';
+    }
+    if(v[MC.description] && status === STATUS_PENDING_1){
+      html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
+        '<div style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:12px;font-weight:bold;color:var(--text);">' +
+        '<strong style="color:var(--text);">Content for Level 1 approval:</strong> '+escapeHtml(v[MC.description]) +
+        '</div></td></tr>';
+    }
+    // Matching Edit Note is stored per-trade row, so gather it across every
+    // row in this deal (not just the first) — otherwise a change on Trade 2
+    // wouldn't show if Trade 1's note is blank.
+    const matchingNotes = g.rows
+      .map(r => (r.values[0][MC.matchingEditNote] || '').trim())
+      .filter(Boolean);
+    if(matchingNotes.length && status === STATUS_PENDING_3){
+      html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
+        '<div style="background:#fdf3e7;border:1px solid #e8c99a;color:#8a6d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
+        '<strong>What changed (matching info correction):</strong><br>'+matchingNotes.map(n=>escapeHtml(n)).join('<br>') +
+        '</div></td></tr>';
+    }
+    // A rejected correction reverts its trade to Approved (see rejectDeal),
+    // so this can't rely on status === Pending Level 3 to surface — check
+    // for the note directly instead.
+    const rejectedCorrectionNotes = matchingNotes.filter(n => n.indexOf('Correction rejected by ') === 0);
+    if(rejectedCorrectionNotes.length && status === STATUS_APPROVED){
+      html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
+        '<div style="background:#fdecea;border:1px solid #e2a49a;color:#8a2d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
+        rejectedCorrectionNotes.map(n=>escapeHtml(n)).join('<br>') +
+        '</div></td></tr>';
+    }
+  });
+  html += '</table>';
+  el.innerHTML = html;
+}
+// Extracted from the copy-btn handler so both the top Preview card and the
+// View modal (opened from history/queue lists) can copy the same way.
+async function copyToClipboard(html, plain){
+  try{
+    const htmlBlob = new Blob([html], {type:'text/html'});
+    const textBlob = new Blob([plain], {type:'text/plain'});
+    await navigator.clipboard.write([new ClipboardItem({'text/html': htmlBlob, 'text/plain': textBlob})]);
+  }catch(e){
+    try{ await navigator.clipboard.writeText(plain); }catch(e2){}
+  }
+}
+// Best-effort plain-text fallback for deals opened from history, which only
+// have the saved HTML (no separately-stored plain-text version) — used so
+// the modal's Copy button still has something sensible for the text/plain
+// clipboard entry.
+function htmlToPlainFallback(html){
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  return tmp.textContent || tmp.innerText || '';
+}
+let viewModalHtml = '';
+function openViewModal(dealId, html, agreementUrl){
+  document.getElementById('view-modal-dealid').textContent = friendlyDealId(dealId);
+  document.getElementById('view-modal-table').innerHTML = html;
+  document.getElementById('view-modal-agreement-link').innerHTML = agreementUrl
+    ? '<a href="'+escapeHtml(agreementUrl)+'" target="_blank" rel="noopener">📄 View agreement</a>' : '';
+  // Copy table stays hidden until Level 1 approval assigns a real Deal ID —
+  // same rule as the main Preview card's Copy button.
+  viewModalHtml = html;
+  document.getElementById('view-modal-copy').style.display = isPendingDealId(dealId) ? 'none' : 'inline-block';
+  document.getElementById('view-modal-copy-status').style.display = 'none';
+  document.getElementById('view-modal-overlay').style.display = 'flex';
+}
+function closeViewModal(){
+  document.getElementById('view-modal-overlay').style.display = 'none';
+}
+document.getElementById('view-modal-copy').addEventListener('click', async ()=>{
+  await copyToClipboard(viewModalHtml, htmlToPlainFallback(viewModalHtml));
+  const status = document.getElementById('view-modal-copy-status');
+  status.style.display = 'block';
+  setTimeout(()=>{ status.style.display='none'; }, 2500);
+});
+document.getElementById('view-modal-close').addEventListener('click', closeViewModal);
+document.getElementById('view-modal-overlay').addEventListener('click', (e)=>{
+  if(e.target.id === 'view-modal-overlay') closeViewModal();
+});
+document.addEventListener('keydown', (e)=>{
+  if(e.key === 'Escape' && document.getElementById('view-modal-overlay').style.display === 'flex') closeViewModal();
+});
+let approveModalDealId = null;
+function openApproveModal(dealId){
+  approveModalDealId = dealId;
+  document.getElementById('approve-modal-dealid').textContent = friendlyDealId(dealId);
+  document.getElementById('approve-modal-file').value = '';
+  document.getElementById('approve-modal-error').style.display = 'none';
+  document.getElementById('approve-modal-overlay').style.display = 'flex';
+}
+function closeApproveModal(){
+  document.getElementById('approve-modal-overlay').style.display = 'none';
+  approveModalDealId = null;
+}
+document.getElementById('approve-modal-cancel').addEventListener('click', closeApproveModal);
+document.getElementById('approve-modal-overlay').addEventListener('click', (e)=>{
+  if(e.target.id === 'approve-modal-overlay') closeApproveModal();
+});
+document.getElementById('approve-modal-submit').addEventListener('click', async ()=>{
+  const dealId = approveModalDealId;
+  const file = document.getElementById('approve-modal-file').files[0];
+  const errEl = document.getElementById('approve-modal-error');
+  const btn = document.getElementById('approve-modal-submit');
+  errEl.style.display = 'none';
+  if(!file){
+    errEl.textContent = 'Please attach the signed agreement file.';
+    errEl.style.display = 'block';
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = 'Uploading…';
+  try{
+    await approveDeal(dealId, file);
+    closeApproveModal();
+  }catch(err){
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
+  }finally{
+    btn.disabled = false;
+    btn.textContent = 'Approve';
+  }
+});
+let rejectModalDealId = null;
+function openRejectModal(dealId){
+  rejectModalDealId = dealId;
+  document.getElementById('reject-modal-dealid').textContent = friendlyDealId(dealId);
+  document.getElementById('reject-comment').value = '';
+  document.getElementById('reject-modal-error').style.display = 'none';
+  document.getElementById('reject-modal-overlay').style.display = 'flex';
+  document.getElementById('reject-comment').focus();
+}
+function closeRejectModal(){
+  document.getElementById('reject-modal-overlay').style.display = 'none';
+  rejectModalDealId = null;
+}
+document.getElementById('reject-modal-cancel').addEventListener('click', closeRejectModal);
+document.getElementById('reject-modal-overlay').addEventListener('click', (e)=>{
+  if(e.target.id === 'reject-modal-overlay') closeRejectModal();
+});
+document.getElementById('reject-modal-submit').addEventListener('click', async ()=>{
+  const dealId = rejectModalDealId;
+  const reason = document.getElementById('reject-comment').value;
+  const errEl = document.getElementById('reject-modal-error');
+  const btn = document.getElementById('reject-modal-submit');
+  errEl.style.display = 'none';
+  btn.disabled = true;
+  try{
+    await rejectDeal(dealId, reason);
+    closeRejectModal();
+  }catch(err){
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
+  }finally{
+    btn.disabled = false;
+  }
+});
+/* ---- "Edit matching info" modal — corrects an Approved deal's BD source
+   matching fields only, then sends it back for Level 3 re-approval. Built
+   dynamically (one block per trade row) rather than reusing the main form's
+   tradeBlockHtml, since only the matching fields are editable here. ---- */
+let editMatchingDealId = null;
+// Stored "From which deal" is just the plain final value — own/proceed
+// checkbox state isn't stored separately — so infer which source (if any)
+// was in play from whether the stored value matches one of those option
+// lists, and pre-select the matching dropdown accordingly.
+function editMatchingDealFieldHtml(rowIndex, storedValue){
+  if(OWN_RECS_OPTIONS.includes(storedValue)){
+    return {own:true, proceed:false, fieldHtml: selectHtml('em-'+rowIndex+'-deal', OWN_RECS_OPTIONS, storedValue)};
+  }
+  if(PROCEED_SHARE_OPTIONS.includes(storedValue)){
+    return {own:false, proceed:true, fieldHtml: selectHtml('em-'+rowIndex+'-deal', PROCEED_SHARE_OPTIONS, storedValue)};
+  }
+  return {own:false, proceed:false, fieldHtml: textHtml('em-'+rowIndex+'-deal','Deal Recap ID', storedValue||'')};
+}
+function editMatchingRowHtml(rowIndex, v, tradeLabel){
+  const matchingVal = v[MC.matching] || 'Open Position';
+  const active = matchingVal && matchingVal !== 'Open Position';
+  const dealField = editMatchingDealFieldHtml(rowIndex, v[MC.whichDeal]||'');
+  return '<div class="trade-block" style="margin-top:10px;">'+
+    '<p class="trade-title">'+escapeHtml(tradeLabel)+'</p>'+
+    '<div class="grid" style="margin-bottom:12px;">'+
+      '<div><label for="em-'+rowIndex+'-matching">5. Matching</label>'+
+        selectHtml('em-'+rowIndex+'-matching', MATCHING, matchingVal)+
+      '</div>'+
+    '</div>'+
+    '<div id="em-'+rowIndex+'-dependent" style="'+(active?'':'display:none;')+'">'+
+      '<div class="grid">'+
+        '<div><label for="em-'+rowIndex+'-name">1. Buyer/Seller name</label>'+textHtml('em-'+rowIndex+'-name','Name',v[MC.buyerSeller]||'')+'</div>'+
+        '<div><label for="em-'+rowIndex+'-recs">2. No of RECs</label>'+textHtml('em-'+rowIndex+'-recs','',v[MC.noOfRecs]||'')+'</div>'+
+        '<div style="grid-column:1 / -1;">'+
+          '<label style="margin-bottom:6px;">Source</label>'+
+          '<div style="display:flex;gap:20px;flex-wrap:wrap;">'+
+            '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
+              '<input type="checkbox" id="em-'+rowIndex+'-own" style="width:auto;margin:0;"'+(dealField.own?' checked':'')+'> Own RECs'+
+            '</label>'+
+            '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
+              '<input type="checkbox" id="em-'+rowIndex+'-proceed" style="width:auto;margin:0;"'+(dealField.proceed?' checked':'')+'> Proceed Share'+
+            '</label>'+
+          '</div>'+
+        '</div>'+
+        '<div><label for="em-'+rowIndex+'-deal">3. From which deal</label><div id="em-'+rowIndex+'-deal-field">'+dealField.fieldHtml+'</div></div>'+
+        '<div><label for="em-'+rowIndex+'-ddate">4. Delivery date</label><input type="date" id="em-'+rowIndex+'-ddate" value="'+escapeHtml(toDateInputValue(v[MC.deliveryDateM]))+'"></div>'+
+      '</div>'+
+    '</div>'+
+  '</div>';
+}
+// Rebuilds the "From which deal" field for a row as a text box (default),
+// or a dropdown of Own RECs / Proceed Share options — mirrors updateDealField
+// for the main form, scoped to the edit-matching modal's row ids.
+function updateEditDealField(rowIndex){
+  const own = document.getElementById('em-'+rowIndex+'-own');
+  const proceed = document.getElementById('em-'+rowIndex+'-proceed');
+  const target = document.getElementById('em-'+rowIndex+'-deal-field');
+  if(!own || !proceed || !target) return;
+  if(own.checked){
+    target.innerHTML = selectHtml('em-'+rowIndex+'-deal', OWN_RECS_OPTIONS, OWN_RECS_OPTIONS[0]);
+  } else if(proceed.checked){
+    target.innerHTML = selectHtml('em-'+rowIndex+'-deal', PROCEED_SHARE_OPTIONS, PROCEED_SHARE_OPTIONS[0]);
+  } else {
+    target.innerHTML = textHtml('em-'+rowIndex+'-deal','Deal Recap ID','');
+  }
+}
+// Own RECs / Proceed Share are mutually exclusive within a row.
+document.addEventListener('change', (e)=>{
+  const m = e.target && e.target.id && e.target.id.match(/^em-(\d+)-(own|proceed)$/);
+  if(!m) return;
+  const rowIndex = m[1], which = m[2];
+  if(which === 'own' && e.target.checked){
+    const p = document.getElementById('em-'+rowIndex+'-proceed');
+    if(p) p.checked = false;
+  } else if(which === 'proceed' && e.target.checked){
+    const o = document.getElementById('em-'+rowIndex+'-own');
+    if(o) o.checked = false;
+  }
+  updateEditDealField(rowIndex);
+});
+function openEditMatchingModal(dealId){
+  const rows = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  if(!rows.length) return;
+  editMatchingDealId = dealId;
+  document.getElementById('edit-matching-modal-dealid').textContent = friendlyDealId(dealId);
+  document.getElementById('edit-matching-modal-body').innerHTML =
+    rows.map((r,i)=> editMatchingRowHtml(i, r.values[0], 'Trade '+(i+1))).join('');
+  document.getElementById('edit-matching-modal-error').style.display = 'none';
+  document.getElementById('edit-matching-modal-overlay').style.display = 'flex';
+}
+function closeEditMatchingModal(){
+  document.getElementById('edit-matching-modal-overlay').style.display = 'none';
+  editMatchingDealId = null;
+}
+document.getElementById('edit-matching-modal-cancel').addEventListener('click', closeEditMatchingModal);
+document.getElementById('edit-matching-modal-overlay').addEventListener('click', (e)=>{
+  if(e.target.id === 'edit-matching-modal-overlay') closeEditMatchingModal();
+});
+// Toggle fields 1-4 for a row when its own Matching dropdown changes.
+document.addEventListener('change', (e)=>{
+  const m = e.target && e.target.id && e.target.id.match(/^em-(\d+)-matching$/);
+  if(!m) return;
+  const dependent = document.getElementById('em-'+m[1]+'-dependent');
+  if(!dependent) return;
+  dependent.style.display = (e.target.value === 'Open Position') ? 'none' : 'block';
+});
+document.getElementById('edit-matching-modal-submit').addEventListener('click', async ()=>{
+  const dealId = editMatchingDealId;
+  const errEl = document.getElementById('edit-matching-modal-error');
+  const btn = document.getElementById('edit-matching-modal-submit');
+  errEl.style.display = 'none';
+  if(!dealId) return;
+  const rows = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  const edits = {};
+  // Keyed by each row's stable rowUid (falling back to position within this
+  // deal's own rows, 0,1,2..., only for legacy rows that predate the rowUid
+  // column). The DOM field ids ('em-0-...', 'em-1-...') still use plain
+  // position since they're just this modal's own render and never persisted
+  // — but the key used to hand edits off to resubmitMatchingInfo must match
+  // row identity, not raw table index, since table index shifts whenever
+  // ANY user adds/removes ANY row anywhere in the shared table.
+  rows.forEach((r,i)=>{
+    const domIndex = i;
+    const editKey = r.values[0][MC.rowUid] || ('pos:' + i);
+    const matchingVal = val('em-'+domIndex+'-matching');
+    const active = matchingVal && matchingVal !== 'Open Position';
+    edits[editKey] = {
+      matching: matchingVal,
+      buyerSeller: active ? val('em-'+domIndex+'-name') : '',
+      noOfRecs: active ? val('em-'+domIndex+'-recs') : '',
+      whichDeal: val('em-'+domIndex+'-deal'),
+      deliveryDateM: val('em-'+domIndex+'-ddate')
+    };
+  });
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  try{
+    await resubmitMatchingInfo(dealId, edits);
+    closeEditMatchingModal();
+  }catch(err){
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
+  }finally{
+    btn.disabled = false;
+    btn.textContent = 'Save & send for Level 3 re-approval';
+  }
+});
+document.addEventListener('click', (e)=>{
+  const viewBtn = e.target.closest('.history-view-btn');
+  if(viewBtn){
+    const dealId = viewBtn.getAttribute('data-dealid');
+    const group = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+    const withHtml = group.find(r => r.values[0][MC.generatedHtml]);
+    if(!withHtml) return;
+    openViewModal(dealId, withHtml.values[0][MC.generatedHtml], withHtml.values[0][MC.agreementFileUrl]);
+    return;
+  }
+  const approveBtn = e.target.closest('.history-approve-btn');
+  if(approveBtn){
+    const dealId = approveBtn.getAttribute('data-dealid');
+    if(submittedDealStatus(dealId) === STATUS_PENDING_2){
+      openApproveModal(dealId);
+      return;
+    }
+    const confirmLabel = isPendingDealId(dealId) ? 'this agreement' : 'Deal ID ' + friendlyDealId(dealId);
+    if(confirm('Approve ' + confirmLabel + ' at your level? This will advance it to the next stage (or mark it fully Approved if this is the final level).')){
+      approveBtn.disabled = true;
+      approveDeal(dealId).catch(err=>{ console.error('Approve failed', err); alert('Approve failed: ' + err.message); });
+    }
+    return;
+  }
+  const rejectBtn = e.target.closest('.history-reject-btn');
+  if(rejectBtn){
+    openRejectModal(rejectBtn.getAttribute('data-dealid'));
+    return;
+  }
+  const editMatchBtn = e.target.closest('.history-editmatch-btn');
+  if(editMatchBtn){
+    openEditMatchingModal(editMatchBtn.getAttribute('data-dealid'));
+  }
+});
+
+
+const COUNTRIES = ["MY","BN","CN","JP","SA","TH","IN","PH","SG","VN","INDO","AUS","TW"];
+const TECHS = ["SLR","GEO","BIO","HYD","BGS","SHY","LHY","CC","WND","ANY"];
+
+// Hardcoded code -> full name lookups for the Customer version output (per
+// the reference sheet). Keys are matched case-insensitively; anything not
+// found here just falls back to showing the original code as typed.
+const COUNTRY_FULLNAMES = {
+  'MY':'Malaysia', 'BN':'Brunei', 'CN':'China', 'JP':'Japan', 'SA':'South Asia',
+  'TH':'Thailand', 'IN':'India', 'PH':'Philipine', 'SG':'Singapore', 'VN':'Vietnam',
+  'ID':'Indonesia', 'INDO':'Indonesia', 'AU':'Australia', 'AUS':'Australia', 'TW':'Taiwan'
+};
+const TECH_FULLNAMES = {
+  'SLR':'Solar', 'ANY':'Any tech', 'GEO':'Geothermal', 'BIO':'Biomass', 'HYD':'Hydro',
+  'BGS':'Biogas', 'SHY':'Small Hydro', 'LHY':'Large Hydro', 'CC':'Carbon Credit',
+  'WND':'Wind',
+  'SLR/WND':'Solar/Wind', 'S/WND':'Solar/Wind', 'SLR/BIO':'Solar/Biomass',
+  'SLR/WND/SHY':'Solar/Wind/Small Hydro', 'SLR/WND/LHY':'Solar/Wind/Large Hydro'
+};
+function countryFullName(code){
+  const key = String(code||'').trim().toUpperCase();
+  return COUNTRY_FULLNAMES[key] || code;
+}
+// Tech values can now be a "/"-joined set of ticked checkboxes (e.g.
+// "SLR/WND"), so resolve each component individually and rejoin, falling
+// back to any pre-existing combo entries in TECH_FULLNAMES first.
+function techFullName(code){
+  const raw = String(code||'').trim();
+  if(!raw) return code;
+  const key = raw.toUpperCase();
+  if(TECH_FULLNAMES[key]) return TECH_FULLNAMES[key];
+  return key.split('/').map(p=>TECH_FULLNAMES[p] || p).join('/');
+}
+const REGISTRIES = ["IREC","TIGR","GEC","Rehash","JEPX","BCX","Verra","LGC","T-REC","K-REC"];
+const ORDER_TYPES = ["Stock-In (T)","Stock-Out (T)","Stock-Out (R)"];
+const CURRENCIES = ["USD","SGD","MYR"];
+const MATCHING = ["Partially Matched","Open Position","Matched","V-Matched"];
+const BD_NAMES = ["Addam","Aston U","Colwen Chan","Edmund Lam","Jordan Tan","Reik Ong","Roseanne Png","Sharon Lim","Thao","TM Lim"];
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const YEARS = ["2025","2026","2027","2028","2029","2030"];
+
+/* ---- "From which deal" tickbox + dropdown (BD source matching) ----
+   Ticking "Own RECs" or "Proceed Share" swaps the "From which deal" text
+   box for a dropdown of the relevant options, and the generated table fills
+   in a short code for that selection rather than the option's display text. */
+const OWN_RECS_OPTIONS = ["TIGR/I-REC MY SLR","TIGR/IREC SG SLR","TIGR MY SLR","TIGR SG SLR","I-REC MY SLR","I-REC SG SLR"];
+const PROCEED_SHARE_OPTIONS = ["Tadau","IS Energy","Aenergy","PLTM"];
+const OWN_RECS_CODE_MAP = {
+  "TIGR/I-REC MY SLR":"OR-TI-MY-SLR",
+  "TIGR/IREC SG SLR":"OR-TI-SG-SLR",
+  "TIGR MY SLR":"OR-TIGR-MY-SLR",
+  "TIGR SG SLR":"OR-TIGR-SG-SLR",
+  "I-REC MY SLR":"OR-IREC-MY-SLR",
+  "I-REC SG SLR":"OR-IREC-SG-SLR"
+};
+const PROCEED_SHARE_CODE_MAP = {
+  "Tadau":"Tadau",
+  "IS Energy":"IS Energy",
+  "Aenergy":"Aenergy",
+  "PLTM":"PLTM"
+};
+
+/* Generic lockable field wrapper — works for a single input/select, or a
+   compound field made of several inputs sharing one lock button (e.g. a
+   month + year pair). `ids` can be a single id string or an array of ids. */
+function lockableField(label, inputHtml, ids){
+  const idArr = Array.isArray(ids) ? ids : [ids];
+  const key = idArr.join(',');
+  return '<div id="'+key+'-wrap"><div class="field-label-row"><label for="'+idArr[0]+'">'+label+'</label>'+
+    '<button type="button" class="field-lock" data-field="'+key+'" title="Lock this field">🔓</button></div>'+
+    inputHtml+'</div>';
+}
+// Back-compat aliases — same thing, different names used historically.
+function headerField(label, inputHtml, id){ return lockableField(label, inputHtml, id); }
+function field(label, inputHtml, id){ return lockableField(label, inputHtml, id); }
+function selectHtml(id, options, def){
+  let o = options.map(v => '<option value="'+v+'"'+(v===def?' selected':'')+'>'+v+'</option>').join('');
+  return '<select id="'+id+'">'+o+'</select>';
+}
+function textHtml(id, placeholder, val){
+  return '<input type="text" id="'+id+'" placeholder="'+(placeholder||'')+'" value="'+(val||'')+'"/>';
+}
+function dateHtml(id, lang){
+  return '<input type="date" id="'+id+'"'+(lang ? ' lang="'+lang+'"' : '')+'/>';
+}
+function comboHtml(id, listId, options, def){
+  const dl = '<datalist id="'+listId+'">' + options.map(v=>'<option value="'+v+'">').join('') + '</datalist>';
+  return '<input type="text" list="'+listId+'" id="'+id+'" value="'+(def||'')+'"/>' + dl;
+}
+
+document.getElementById('header-fields').innerHTML =
+  headerField('Deal ID',
+    '<div style="display:flex;gap:6px;">'+
+      '<input type="text" id="h-dealid-num" maxlength="5" inputmode="numeric" placeholder="auto-assigned" style="flex:1;" readonly/>'+
+      '<input type="text" id="h-dealid-alpha" maxlength="3" placeholder="Max 3 letters" style="flex:1;"/>'+
+    '</div>',
+    ['h-dealid-num','h-dealid-alpha']) +
+  headerField('Date','<input type="date" id="h-date"/>','h-date') +
+  headerField('Entity', selectHtml('h-entity',['MY','SG'],'MY'),'h-entity') +
+  headerField('BD in-charge', selectHtml('h-bd',BD_NAMES,BD_NAMES[0]),'h-bd') +
+  headerField('Buyer or Seller', selectHtml('h-role',['Buyer','Seller'],'Buyer'),'h-role') +
+  headerField('Buyer Name', textHtml('h-buyer','Company name'),'h-buyer') +
+  headerField('Order type', selectHtml('h-order',ORDER_TYPES,'Stock-In (T)'),'h-order') +
+  '<div id="h-description-wrap" style="grid-column:1 / -1;"><label for="h-description">Content for Level 1 approval</label>' +
+  '<textarea id="h-description" placeholder="What is the Deal type? Back to Back/Position Opening; Sell to; buy from; target closing price; GP Margin and GP"></textarea></div>';
+
+/* Keeps the "Buyer/Seller" field's on-screen label, "Transfer Account" label, and the generated table's
+   row labels in sync with the Buyer-or-Seller role selector. */
+function currentRole(){
+  return val('h-role') === 'Seller' ? 'Seller' : 'Buyer';
+}
+function updateBuyerSellerFieldLabel(){
+  const label = document.querySelector('label[for="h-buyer"]');
+  if(label) label.textContent = currentRole() + ' Name';
+}
+function updateTransferAccountLabels(){
+  const role = currentRole();
+  const tradeCount = parseInt(document.getElementById('trade-count').value, 10);
+  for(let i = 1; i <= tradeCount; i++) {
+    const label = document.querySelector(`label[for="t${i}-transfer"]`);
+    if(label) label.textContent = role + ' Transfer Account';
+  }
+}
+document.addEventListener('change', (e)=>{
+  if(e.target && e.target.id === 'h-role') {
+    updateBuyerSellerFieldLabel();
+    updateTransferAccountLabels();
+  }
+});
+updateBuyerSellerFieldLabel();
+
+// Deal ID is split into a compulsory 5-digit box and an optional max-3-letter
+// box; strip anything that doesn't belong as the person types.
+document.addEventListener('input', (e)=>{
+  if(e.target && e.target.id === 'h-dealid-num'){
+    const cleaned = e.target.value.replace(/[^0-9]/g,'').slice(0,5);
+    if(cleaned !== e.target.value) e.target.value = cleaned;
+  }
+  if(e.target && e.target.id === 'h-dealid-alpha'){
+    const cleaned = e.target.value.replace(/[^a-zA-Z]/g,'').slice(0,3).toUpperCase();
+    if(cleaned !== e.target.value) e.target.value = cleaned;
+    // Once the person types their own letters here, stop auto-filling from
+    // the Buyer/Seller name. Clearing it back out resumes auto-fill.
+    dealIdAlphaManuallyEdited = cleaned !== '';
+  }
+});
+
+// Deal ID letters auto-fill from the first 3 letters of the Buyer/Seller
+// Name's first word (skipping common legal-entity suffixes like Sdn/Bhd/Ltd
+// if they happen to lead), like a surname abbreviation — e.g. "Saxon
+// Renewables Energy Sdn Bhd" -> "SAX". The person can still overwrite the
+// letters themselves; once they do, auto-fill stops touching that field.
+let dealIdAlphaManuallyEdited = false;
+const DEAL_ID_SUFFIX_WORDS = new Set(['sdn','bhd','berhad','ltd','limited','pte','pty','llc','inc','incorporated','corp','corporation','co','plc']);
+function initialsFromCompanyName(name){
+  const words = (name||'').split(/\s+/).filter(Boolean).filter(w=>!DEAL_ID_SUFFIX_WORDS.has(w.toLowerCase()));
+  if(!words.length) return '';
+  return words[0].slice(0,3).toUpperCase();
+}
+document.addEventListener('input', (e)=>{
+  if(e.target && e.target.id === 'h-buyer' && !dealIdAlphaManuallyEdited){
+    const alphaField = document.getElementById('h-dealid-alpha');
+    if(alphaField) alphaField.value = initialsFromCompanyName(e.target.value);
+  }
+});
+
+/* ---- Per-field lock/persist (generic — covers header fields AND every
+   trade's fields, including compound fields sharing one lock button) ---- */
+const LOCK_STORAGE_KEY = 'tradeConfirmFieldLocks';
+
+function readLockState(){
+  try{
+    const raw = localStorage.getItem(LOCK_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  }catch(e){ return {}; }
+}
+function writeLockState(state){
+  try{ localStorage.setItem(LOCK_STORAGE_KEY, JSON.stringify(state)); }catch(e){}
+}
+function applyFieldLockUi(key, locked){
+  const ids = key.split(',');
+  const wrap = document.getElementById(key+'-wrap');
+  const btn = document.querySelector('.field-lock[data-field="'+key+'"]');
+  ids.forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.disabled = locked;
+  });
+  if(wrap) wrap.classList.toggle('field-locked', locked);
+  if(btn){
+    btn.textContent = locked ? '🔒' : '🔓';
+    btn.classList.toggle('is-locked', locked);
+    btn.title = locked ? 'Unlock this field' : 'Lock this field';
+  }
+}
+// Ticks the correct Tech checkboxes for trade n to match whatever is
+// currently in its hidden 't{n}-tech' value — needed anywhere that value
+// gets restored programmatically (field lock restore) rather than via the
+// checkboxes' own change handler.
+function syncTechCheckboxesFromHidden(n){
+  const hidden = document.getElementById('t'+n+'-tech');
+  if(!hidden) return;
+  const active = new Set(hidden.value.split('/').map(s=>s.trim()).filter(Boolean));
+  TECHS.forEach(t=>{
+    const cb = document.getElementById('t'+n+'-tech-'+t);
+    if(cb) cb.checked = active.has(t);
+  });
+  updateTechExclusivity(n);
+}
+// Restores saved values/lock state for every lockable field found inside `container`.
+// Safe to call repeatedly (e.g. every time trade blocks are re-rendered).
+function initLocksIn(container){
+  if(!container) return;
+  const state = readLockState();
+  container.querySelectorAll('.field-lock').forEach(btn=>{
+    const key = btn.getAttribute('data-field');
+    const saved = state[key];
+    if(saved){
+      const ids = key.split(',');
+      ids.forEach(id=>{
+        const el = document.getElementById(id);
+        if(el && saved.values && saved.values[id] !== undefined) el.value = saved.values[id];
+      });
+      applyFieldLockUi(key, !!saved.locked);
+      const techMatch = key.match(/^t(\d+)-tech$/);
+      if(techMatch) syncTechCheckboxesFromHidden(techMatch[1]);
+    }
+  });
+}
+
+// One delegated click handler covers header fields, all trade fields, and
+// any trade blocks added later when the trade count changes.
+document.addEventListener('click', (e)=>{
+  const btn = e.target.closest('.field-lock');
+  if(!btn) return;
+  const key = btn.getAttribute('data-field');
+  const ids = key.split(',');
+  const state = readLockState();
+  const currentlyLocked = !!(state[key] && state[key].locked);
+  if(currentlyLocked){
+    // Unlock, keep the last saved values in storage
+    state[key] = { locked:false, values: state[key].values };
+    writeLockState(state);
+    applyFieldLockUi(key, false);
+  } else {
+    // Lock: save current values for every id in this field
+    const values = {};
+    ids.forEach(id=>{ const el = document.getElementById(id); values[id] = el ? el.value : ''; });
+    state[key] = { locked:true, values };
+    writeLockState(state);
+    applyFieldLockUi(key, true);
+  }
+});
+
+initLocksIn(document.getElementById('header-fields'));
+updateBuyerSellerFieldLabel();
+
+/* ---- Section-level lock/persist (Details / Trades) ----
+   Locking a section locks every field inside it in one go, and disables the
+   individual field 🔓 buttons so fields can't be cherry-picked back open —
+   the section has to be unlocked as a whole first. */
+const SECTION_LOCK_KEY = 'tradeConfirmSectionLocks';
+
+function readSectionLockState(){
+  try{
+    const raw = localStorage.getItem(SECTION_LOCK_KEY);
+    return raw ? JSON.parse(raw) : {};
+  }catch(e){ return {}; }
+}
+function writeSectionLockState(state){
+  try{ localStorage.setItem(SECTION_LOCK_KEY, JSON.stringify(state)); }catch(e){}
+}
+function getSectionContainer(section){
+  return section === 'header' ? document.getElementById('header-fields') : document.getElementById('trades-container');
+}
+// Locks or unlocks every field found inside a section container, reusing the
+// same lock-state storage the individual field locks use.
+function setAllFieldLocksIn(container, locked){
+  if(!container) return;
+  const state = readLockState();
+  container.querySelectorAll('.field-lock').forEach(btn=>{
+    const key = btn.getAttribute('data-field');
+    const ids = key.split(',');
+    if(locked){
+      const values = {};
+      ids.forEach(id=>{ const el = document.getElementById(id); values[id] = el ? el.value : ''; });
+      state[key] = { locked:true, values };
+    } else {
+      state[key] = { locked:false, values: state[key] ? state[key].values : {} };
+    }
+    applyFieldLockUi(key, locked);
+  });
+  writeLockState(state);
+}
+function applySectionLockUi(section, locked){
+  const btn = document.querySelector('.section-lock[data-section="'+section+'"]');
+  if(btn){
+    btn.textContent = locked ? '🔒 Section locked' : '🔓 Lock section';
+    btn.classList.toggle('is-locked', locked);
+    btn.title = locked ? 'Unlock this whole section' : 'Lock this whole section';
+  }
+  const container = getSectionContainer(section);
+  if(container){
+    container.classList.toggle('section-locked', locked);
+    container.querySelectorAll('.field-lock').forEach(fbtn=>{ fbtn.disabled = locked; });
+  }
+}
+// Re-applies a saved section lock — called on load and whenever the trade
+// blocks are re-rendered (so a locked Trades section stays locked even after
+// the trade count changes).
+function initSectionLock(section){
+  const state = readSectionLockState();
+  const locked = !!state[section];
+  if(locked) setAllFieldLocksIn(getSectionContainer(section), true);
+  applySectionLockUi(section, locked);
+}
+
+document.addEventListener('click', (e)=>{
+  const btn = e.target.closest('.section-lock');
+  if(!btn) return;
+  const section = btn.getAttribute('data-section');
+  const state = readSectionLockState();
+  const locked = !!state[section];
+  const container = getSectionContainer(section);
+  if(locked){
+    state[section] = false;
+    writeSectionLockState(state);
+    setAllFieldLocksIn(container, false);
+    applySectionLockUi(section, false);
+  } else {
+    state[section] = true;
+    writeSectionLockState(state);
+    setAllFieldLocksIn(container, true);
+    applySectionLockUi(section, true);
+  }
+});
+
+initSectionLock('header');
+
+
+// Tech field: a row of tick boxes (one per TECHS entry) plus a hidden input
+// (id 't{n}-tech') that always holds the "/"-joined string of whichever
+// boxes are ticked, in TECHS order — e.g. ticking SLR and WND produces
+// "SLR/WND". The hidden input is what every other part of the form (val(),
+// validation, table/point-format output, drafts) reads/writes, so the rest
+// of the code needs no changes.
+function techCheckboxesHtml(n){
+  const boxes = TECHS.map(t=>
+    '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
+      '<input type="checkbox" id="t'+n+'-tech-'+t+'" class="tech-checkbox" data-trade="'+n+'" data-tech="'+t+'" style="width:auto;margin:0;"'+(t==='SLR'?' checked':'')+'> '+t+
+    '</label>'
+  ).join('');
+  return '<input type="hidden" id="t'+n+'-tech" value="SLR">'+
+    '<div style="display:flex;gap:14px;flex-wrap:wrap;">'+boxes+'</div>';
+}
+// Recomputes trade n's hidden Tech value from whichever tick boxes are
+// checked, in TECHS order (not click order), so "SLR" + "WND" always
+// renders as "SLR/WND" regardless of which box was ticked first.
+function updateTechField(n){
+  const hidden = document.getElementById('t'+n+'-tech');
+  if(!hidden) return;
+  const checked = TECHS.filter(t=>{
+    const cb = document.getElementById('t'+n+'-tech-'+t);
+    return cb && cb.checked;
+  });
+  hidden.value = checked.join('/');
+}
+// "ANY" means "any technology" and doesn't combine with specific techs, so
+// it's mutually exclusive with the rest: ticking ANY clears and disables
+// every other tech box, and ticking any other tech box clears and disables
+// ANY. Safe to call any time checkbox states change, including after a
+// programmatic restore (draft load, field-lock restore).
+function updateTechExclusivity(n){
+  const anyCb = document.getElementById('t'+n+'-tech-ANY');
+  const otherCbs = TECHS.filter(t=>t!=='ANY').map(t=>document.getElementById('t'+n+'-tech-'+t)).filter(Boolean);
+  if(!anyCb) return;
+  const otherChecked = otherCbs.some(cb=>cb.checked);
+  otherCbs.forEach(cb=>{ cb.disabled = anyCb.checked; });
+  anyCb.disabled = otherChecked;
+}
+document.addEventListener('change', (e)=>{
+  if(e.target && e.target.classList && e.target.classList.contains('tech-checkbox')){
+    const n = e.target.dataset.trade;
+    if(e.target.checked){
+      if(e.target.dataset.tech === 'ANY'){
+        TECHS.forEach(t=>{
+          if(t === 'ANY') return;
+          const cb = document.getElementById('t'+n+'-tech-'+t);
+          if(cb) cb.checked = false;
+        });
+      } else {
+        const anyCb = document.getElementById('t'+n+'-tech-ANY');
+        if(anyCb) anyCb.checked = false;
+      }
+    }
+    updateTechExclusivity(n);
+    updateTechField(n);
+  }
+});
+
+function tradeBlockHtml(n){
+  return '<div class="trade-block" data-trade-num="'+n+'">'+
+    '<p class="trade-title">Trade '+n+'</p>'+
+    '<div class="grid">'+
+    lockableField('Registry', comboHtml('t'+n+'-registry','t'+n+'-registry-list',REGISTRIES,'IREC'),'t'+n+'-registry')+
+    lockableField('Dealership', selectHtml('t'+n+'-dealership',['SAXON MY','SAXON SG'],'SAXON MY'),'t'+n+'-dealership')+
+    
+    // Custom label text is updated programmatically to reflect Buyer/Seller dynamically
+    lockableField('Transfer account name', textHtml('t'+n+'-transfer','Account name'),'t'+n+'-transfer')+
+    
+    lockableField('Vintage start month &amp; year',
+      '<div style="display:flex;gap:6px;">'+
+        selectHtml('t'+n+'-vintage-start-month', MONTHS, 'Jan')+
+        comboHtml('t'+n+'-vintage-start-year','t'+n+'-start-year-list', YEARS, '2025')+
+      '</div>',
+      ['t'+n+'-vintage-start-month','t'+n+'-vintage-start-year'])+
+    lockableField('Vintage end month &amp; year',
+      '<div style="display:flex;gap:6px;">'+
+        selectHtml('t'+n+'-vintage-end-month', MONTHS, 'Dec')+
+        comboHtml('t'+n+'-vintage-end-year','t'+n+'-end-year-list', YEARS, '2025')+
+      '</div>',
+      ['t'+n+'-vintage-end-month','t'+n+'-vintage-end-year'])+
+    lockableField('Tech', techCheckboxesHtml(n), 't'+n+'-tech')
+      .replace('<div id=','<div style="grid-column:1 / -1;" id=')+
+    lockableField('Country', comboHtml('t'+n+'-country','t'+n+'-country-list',COUNTRIES,'MY'),'t'+n+'-country')+
+    lockableField('Volume (RECs)', textHtml('t'+n+'-volume','e.g. 30,000'),'t'+n+'-volume')+
+    lockableField('Price currency', comboHtml('t'+n+'-currency','t'+n+'-currency-list',CURRENCIES,'USD'),'t'+n+'-currency')+
+    lockableField('Price / REC', textHtml('t'+n+'-price','e.g. 0.27'),'t'+n+'-price')+
+    lockableField('Payment term', textHtml('t'+n+'-payterm','30 days after invoice','30 days after invoice'),'t'+n+'-payterm')+
+    lockableField('Delivery start date', dateHtml('t'+n+'-dstart','en-GB'),'t'+n+'-dstart')+
+    lockableField('Delivery end date', dateHtml('t'+n+'-dend','en-GB'),'t'+n+'-dend')+
+    lockableField('COD (if applicable)', textHtml('t'+n+'-m-cod','NA','NA'),'t'+n+'-m-cod')+
+    lockableField('Special remarks', '<textarea id="t'+n+'-remarks" placeholder="NA">NA</textarea>', 't'+n+'-remarks')
+      .replace('<div id=','<div style="grid-column:1 / -1;" id=')+
+    lockableField('Broker (if any)', textHtml('t'+n+'-broker','NA','NA'),'t'+n+'-broker')+
+    '</div>'+
+    '<p class="sub-title">BD source matching</p>'+
+    
+    '<!-- Matching dropdown is now at the top of BD Source Matching section -->'+
+    '<div class="grid" style="margin-bottom: 12px;">'+
+      lockableField('5. Matching', selectHtml('t'+n+'-m-matching',MATCHING,'Open Position'),'t'+n+'-m-matching')+
+    '</div>'+
+
+    '<!-- Wrapper for matching dependent fields -->'+
+    '<div id="t'+n+'-matching-dependent-fields" style="display:none;">'+
+      '<div class="grid">'+
+        lockableField('1. Buyer/Seller name', textHtml('t'+n+'-m-name','Name'),'t'+n+'-m-name')+
+        lockableField('2. No of RECs', textHtml('t'+n+'-m-recs',''),'t'+n+'-m-recs')+
+        '<div id="t'+n+'-m-source-wrap" style="grid-column:1 / -1;">'+
+          '<label style="margin-bottom:6px;">Source</label>'+
+          '<div style="display:flex;gap:20px;flex-wrap:wrap;">'+
+            '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
+              '<input type="checkbox" id="t'+n+'-m-own" style="width:auto;margin:0;"> Own RECs'+
+            '</label>'+
+            '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
+              '<input type="checkbox" id="t'+n+'-m-proceed" style="width:auto;margin:0;"> Proceed Share'+
+            '</label>'+
+          '</div>'+
+        '</div>'+
+        lockableField('3. From which deal', '<div id="t'+n+'-m-deal-field">'+textHtml('t'+n+'-m-deal','Deal Recap ID')+'</div>','t'+n+'-m-deal')+
+        lockableField('4. Delivery date', dateHtml('t'+n+'-m-ddate'),'t'+n+'-m-ddate')+
+      '</div>'+
+    '</div>'+
+  '</div>';
+}
+
+// Rebuilds the "From which deal" field for trade n as a text box (default),
+// or a dropdown of Own RECs / Proceed Share options depending on which
+// tickbox (if any) is checked. Re-applies the field's lock state afterward,
+// since replacing the inner element loses its disabled/locked attribute.
+function updateDealField(n){
+  const own = document.getElementById('t'+n+'-m-own');
+  const proceed = document.getElementById('t'+n+'-m-proceed');
+  const target = document.getElementById('t'+n+'-m-deal-field');
+  if(!own || !proceed || !target) return;
+
+  if(own.checked){
+    target.innerHTML = selectHtml('t'+n+'-m-deal', OWN_RECS_OPTIONS, OWN_RECS_OPTIONS[0]);
+  } else if(proceed.checked){
+    target.innerHTML = selectHtml('t'+n+'-m-deal', PROCEED_SHARE_OPTIONS, PROCEED_SHARE_OPTIONS[0]);
+  } else {
+    target.innerHTML = textHtml('t'+n+'-m-deal','Deal Recap ID');
+  }
+
+  const key = 't'+n+'-m-deal';
+  const state = readLockState();
+  const locked = !!(state[key] && state[key].locked);
+  applyFieldLockUi(key, locked);
+}
+
+// Handle matching conditional display (Open Position hides fields 1 to 4)
+function handleMatchingChange(n) {
+  const matchingSelect = document.getElementById('t'+n+'-m-matching');
+  const dependentContainer = document.getElementById('t'+n+'-matching-dependent-fields');
+  if (!matchingSelect || !dependentContainer) return;
+
+  if (matchingSelect.value === 'Open Position') {
+    // Hide and clear BD matching fields 1-4
+    dependentContainer.style.display = 'none';
+    
+    // Clear standard input elements inside matching dependent area
+    dependentContainer.querySelectorAll('input[type="text"], input[type="date"]').forEach(el => {
+      el.value = '';
+    });
+    // Uncheck checkboxes
+    dependentContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.checked = false;
+    });
+    // Reset specific subfield layouts
+    updateDealField(n);
+  } else {
+    // Reveal fields 1-4 when option is not 'Open Position'
+    dependentContainer.style.display = 'block';
+  }
+}
+
+// Watch changes on the Matching drop-down menu
+document.addEventListener('change', (e) => {
+  if (e.target && e.target.id && e.target.id.endsWith('-m-matching')) {
+    const n = e.target.id.match(/^t(\d+)-m-matching$/)[1];
+    handleMatchingChange(n);
+  }
+});
+
+// Own RECs and Proceed Share are mutually exclusive — ticking one clears
+// the other — and either swaps (or, if unticked, un-swaps) the dropdown.
+document.addEventListener('change', (e)=>{
+  const m = e.target && e.target.id && e.target.id.match(/^t(\d+)-m-(own|proceed)$/);
+  if(!m) return;
+  const n = m[1], which = m[2];
+  if(which === 'own' && e.target.checked){
+    const p = document.getElementById('t'+n+'-m-proceed');
+    if(p) p.checked = false;
+  } else if(which === 'proceed' && e.target.checked){
+    const o = document.getElementById('t'+n+'-m-own');
+    if(o) o.checked = false;
+  }
+  updateDealField(n);
+});
+
+// Returns the value to fill into the generated table's "From which deal"
+// row: the mapped short code when Own RECs / Proceed Share is ticked and an
+// option is selected, or the raw typed value otherwise.
+function dealCodeFor(n){
+  const raw = val('t'+n+'-m-deal');
+  if(!raw) return '';
+  const own = document.getElementById('t'+n+'-m-own');
+  const proceed = document.getElementById('t'+n+'-m-proceed');
+  if(own && own.checked) return OWN_RECS_CODE_MAP[raw] !== undefined ? OWN_RECS_CODE_MAP[raw] : raw;
+  if(proceed && proceed.checked) return PROCEED_SHARE_CODE_MAP[raw] !== undefined ? PROCEED_SHARE_CODE_MAP[raw] : raw;
+  return raw;
+}
+
+function renderTrades(){
+  const n = parseInt(document.getElementById('trade-count').value,10);
+  const c = document.getElementById('trades-container');
+  let html = '';
+  for(let i=1;i<=n;i++) html += tradeBlockHtml(i);
+  c.innerHTML = html;
+  initLocksIn(c); // restore any locked values/state for the freshly-rendered trade blocks
+  initSectionLock('trades'); // re-apply a locked Trades section to the freshly-rendered blocks
+  for(let i=1;i<=n;i++) {
+    handleMatchingChange(i); // initialize conditional visibility matching state
+  }
+  updateTransferAccountLabels(); // update dynamic input labels
+}
+document.getElementById('trade-count').addEventListener('change', renderTrades);
+renderTrades();
+
+function fmtDate(v){
+  if(!v) return '';
+  const [y,m,d] = v.split('-');
+  return d+'/'+m+'/'+y;
+}
+// Values read back from the SharePoint log table for a date-like column:
+// Excel silently converts a "YYYY-MM-DD" string into its own serial date
+// number the moment it's written, so what comes back from Graph is a plain
+// number (e.g. 46217), not the original string. This converts either form
+// into DD/MM/YYYY for display in the history/queue tables.
+function formatStoredDate(v){
+  if(v === '' || v === null || v === undefined) return '';
+  const str = String(v).trim();
+  if(/^-?\d+(\.\d+)?$/.test(str)){
+    const ms = Math.round((Number(str) - 25569) * 86400 * 1000); // Excel serial date epoch -> Unix epoch
+    const d = new Date(ms);
+    if(isNaN(d.getTime())) return str;
+    const dd = String(d.getUTCDate()).padStart(2,'0');
+    const mm = String(d.getUTCMonth()+1).padStart(2,'0');
+    const yyyy = d.getUTCFullYear();
+    return dd+'/'+mm+'/'+yyyy;
+  }
+  if(/^\d{4}-\d{2}-\d{2}/.test(str)){
+    const [y,m,d] = str.split('-');
+    return d+'/'+m+'/'+y;
+  }
+  return str;
+}
+function fmtDateShort(v){
+  if(!v) return '';
+  const [y,m,d] = v.split('-');
+  return d+'-'+m+'-'+y.slice(2);
+}
+const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function ordinalSuffix(day){
+  if(day % 100 >= 11 && day % 100 <= 13) return 'th';
+  switch(day % 10){
+    case 1: return 'st';
+    case 2: return 'nd';
+    case 3: return 'rd';
+    default: return 'th';
+  }
+}
+// Produces "1st Jan 2026" style output — the format PowerAutomate's
+// Html_to_text -> formatDateTime/parseDateTime expression expects.
+function fmtDateOrdinal(v){
+  if(!v) return '';
+  const [y,m,d] = v.split('-').map(Number);
+  return d+ordinalSuffix(d)+' '+MONTH_ABBR[m-1]+' '+y;
+}
+function val(id){ const el=document.getElementById(id); return el ? el.value : ''; }
+
+// The Ops version table shows a Deal ID that encodes how many trades are in
+// this deal: the number of trades selected gets inserted as a single digit
+// right after the first 5 characters of the entered Deal ID (before the
+// company surname suffix). E.g. "01000DIY" with 3 trades -> "010003DIY".
+function opsDealId(){
+  // No real Deal ID exists until Level 1 approves — while currentDealDocId
+  // is still the temporary placeholder, show that instead of assembling a
+  // number that hasn't actually been assigned yet.
+  if(isPendingDealId(currentDealDocId)) return friendlyDealId(currentDealDocId);
+  const num = val('h-dealid-num');
+  const alpha = val('h-dealid-alpha');
+  if(!num && !alpha) return '';
+  const filled = parseInt(document.getElementById('trade-count').value,10) || '';
+  return num + filled + alpha;
+}
+
+// Builds one 3-column trade block (trades startIdx..startIdx+2), the same fixed
+// template used since day one. 'filled' is the total number of trades the person
+// actually filled in; trades beyond it render as blank columns.
+function buildTradeGroup(startIdx, filled){
+  const rows = [];
+  const addRow = (label, cells, span, parts) => rows.push({label, cells, span: !!span, parts});
+  const size = 3;
+
+  const tradeNos = [], registries=[], dealerships=[], transfers=[], vintages=[], vintageParts=[], techs=[], countries=[], volumes=[], prices=[], priceParts=[], payterms=[], dstarts=[], dends=[], remarks=[], brokers=[];
+  const mNames=[], mRecs=[], mDeals=[], mDdates=[], mMatchings=[], mCods=[];
+  for(let j=0;j<size;j++){
+    const i = startIdx + j;
+    tradeNos.push(i <= filled ? String(i) : '');
+    if(i <= filled){
+      registries.push(val('t'+i+'-registry'));
+      dealerships.push(val('t'+i+'-dealership'));
+      transfers.push(val('t'+i+'-transfer'));
+      vintages.push(val('t'+i+'-vintage-start-month')+' | '+val('t'+i+'-vintage-start-year')+' | '+val('t'+i+'-vintage-end-month')+' | '+val('t'+i+'-vintage-end-year'));
+      vintageParts.push([val('t'+i+'-vintage-start-month'), val('t'+i+'-vintage-start-year'), val('t'+i+'-vintage-end-month'), val('t'+i+'-vintage-end-year')]);
+      techs.push(val('t'+i+'-tech'));
+      countries.push(val('t'+i+'-country'));
+      volumes.push(val('t'+i+'-volume'));
+      prices.push(val('t'+i+'-currency')+' | '+val('t'+i+'-price'));
+      priceParts.push([val('t'+i+'-currency'), val('t'+i+'-price')]);
+      payterms.push(val('t'+i+'-payterm'));
+      dstarts.push(fmtDateOrdinal(val('t'+i+'-dstart')));
+      dends.push(fmtDateOrdinal(val('t'+i+'-dend')));
+      remarks.push(val('t'+i+'-remarks'));
+      brokers.push(val('t'+i+'-broker'));
+      mNames.push(val('t'+i+'-m-name'));
+      mRecs.push(val('t'+i+'-m-recs'));
+      mDeals.push(dealCodeFor(i));
+      mDdates.push(fmtDateShort(val('t'+i+'-m-ddate')));
+      mMatchings.push(val('t'+i+'-m-matching'));
+      mCods.push(val('t'+i+'-m-cod'));
+    } else {
+      registries.push(''); dealerships.push(''); transfers.push('');
+      vintages.push(''); vintageParts.push(['','','','']); techs.push(''); countries.push(''); volumes.push(''); prices.push(''); priceParts.push(['','']);
+      payterms.push(''); dstarts.push(''); dends.push(''); remarks.push(''); brokers.push('');
+      mNames.push(''); mRecs.push(''); mDeals.push(''); mDdates.push(''); mMatchings.push(''); mCods.push('');
+    }
+  }
+  addRow('Trade', tradeNos);
+  addRow('Registry', registries);
+  addRow('Dealership', dealerships);
+  addRow(currentRole() + ' Transfer Account', transfers);
+  addRow('Vintage', vintages, false, vintageParts);
+  addRow('Tech', techs);
+  addRow('Country', countries);
+  addRow('Volume (RECs)', volumes);
+  addRow('Price / RECs', prices, false, priceParts);
+  addRow('Payment Term', payterms);
+  addRow('Delivery Start Date', dstarts);
+  addRow('Delivery End Date', dends);
+  addRow('COD (if applicable)', mCods);
+  addRow('Special Remarks Request', remarks);
+  addRow('Broker (if any)', brokers);
+  addRow('BD Source Matching: 1. Buyer/Seller', mNames);
+  addRow('2. No of RECs', mRecs);
+  addRow('3. From which deal', mDeals);
+  addRow('4. Delivery Date', mDdates);
+  addRow('5. Matching', mMatchings);
+
+  return {n: size, rows};
+}
+
+// Trades 1-3 always form the first 3-column block. Trades 4-6, when present,
+// form a second 3-column block stacked directly beneath it (its own "Trade"
+// row through "5. Matching"), rather than widening a single table to 6
+// columns — matching the Ops-version layout used downstream.
+// The data row structure has been kept exactly as defined in the SOP logic, maintaining full back-compat.
+function buildTable(){
+  const filled = parseInt(document.getElementById('trade-count').value,10);
+
+  const headerRows = [];
+  const addHeaderRow = (label, cells) => headerRows.push({label, cells, span:true});
+  addHeaderRow('Date', [fmtDate(val('h-date'))]);
+  addHeaderRow('Entity', [val('h-entity')]);
+  addHeaderRow('BD in-charge', [val('h-bd')]);
+  addHeaderRow(currentRole(), [val('h-buyer')]);
+  addHeaderRow('Order Type', [val('h-order')]);
+
+  const groups = [buildTradeGroup(1, filled)];
+  if(filled > 3) groups.push(buildTradeGroup(4, filled));
+
+  return {headerRows, groups};
+}
+
+function escapeHtml(s){
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// Keeps the Preview card's title in sync with whichever Deal ID is currently
+// loaded into it — set on self-generate, and on "View" from the Approval
+// queue / All confirmations lists — so an admin flipping between deals
+// always knows which one they're looking at.
+function setPreviewDealIdLabel(dealId){
+  const el = document.getElementById('preview-dealid-label');
+  if(!el) return;
+  el.textContent = ' — Deal ID: ' + (dealId || '-');
+}
+function setPreviewAgreementLink(url){
+  const el = document.getElementById('preview-agreement-link');
+  if(!el) return;
+  el.innerHTML = url ? '<a href="'+escapeHtml(url)+'" target="_blank" rel="noopener">📄 View agreement</a>' : '';
+}
+
+function cellStyle(align, extra, widthPx){
+  const w = widthPx ? 'width:'+widthPx+'px;' : '';
+  return 'border:2px solid #000000;padding:6px 10px;font-family:Arial,Helvetica,sans-serif;font-size:13px;'+w+(align?'text-align:'+align+';':'')+(extra||'');
+}
+
+// hasPipe=true (default) renders a literal "|" character so it survives the
+// HTML-to-plain-text conversion Outlook/O365 performs, keeping split(body,'|')
+// token positions intact. The text is the same color as the background so it
+// stays visually invisible as a solid black bar, same as before.
+// hasPipe=false is used only for the leading divider at the very start of each
+// row: that cell exists purely to preserve the visual left margin/column and
+// must NOT contribute a "|" token, otherwise every index downstream shifts by one.
+function pipeTd(hasPipe){
+  const content = hasPipe === false ? '&nbsp;' : '|';
+  return '<td width="14" style="border:none;padding:0;width:14px;text-align:center;font-family:Arial,Helvetica,sans-serif;font-size:13px;background-color:#000000;color:#000000;line-height:1;">'+content+'</td>';
+}
+
+// Builds "Jan | 2025 | Dec | 2025" as plain flowing inline text (no nested
+// table). A nested table with fixed pixel widths looked right in the preview
+// but email clients (Gmail/Outlook) rewrite pasted HTML during copy, and that
+// rewriting was breaking the fixed widths and causing values to spill past
+// the cell edge. Plain text has nothing to overflow — if it doesn't fit on
+// one line it just wraps naturally inside the cell, which every email client
+// handles consistently.
+function splitCellHtml(parts){
+  const sep = '<span style="color:#000000;font-weight:bold;padding:0 3px;">|</span>';
+  return parts.map(p=>'<span style="white-space:nowrap;">'+escapeHtml(p)+'</span>').join(sep);
+}
+
+// Renders one stacked table (either the trades 1-3 block, with the Deal ID +
+// Details header rows on top, or the trades 4-6 block on its own underneath).
+function renderGroupTable(rows, n, dealIdRow){
+  const labelW = 220, pipeW = 14, dataW = 280;
+  const totalW = pipeW + labelW + pipeW + n*(dataW+pipeW);
+
+  let colgroup = '<colgroup>'+
+    '<col style="width:'+pipeW+'px;">'+
+    '<col style="width:'+labelW+'px;">'+
+    '<col style="width:'+pipeW+'px;">';
+  for(let i=0;i<n;i++) colgroup += '<col style="width:'+dataW+'px;"><col style="width:'+pipeW+'px;">';
+  colgroup += '</colgroup>';
+
+  let html = '<table border="0" cellspacing="0" cellpadding="0" width="'+totalW+'" style="border-collapse:collapse;width:'+totalW+'px;table-layout:fixed;font-family:Arial,Helvetica,sans-serif;font-size:13px;">';
+  html += colgroup;
+  if(dealIdRow){
+    html += '<tr>'+pipeTd(false)+
+      '<td width="'+labelW+'" style="'+cellStyle(null,'font-weight:bold;',labelW)+'">Deal ID</td>'+
+      pipeTd()+
+      '<td width="'+(n*dataW+(n-1)*pipeW)+'" style="'+cellStyle('center','font-weight:bold;',n*dataW+(n-1)*pipeW)+'" colspan="'+(n*2-1)+'">'+escapeHtml(opsDealId())+'</td>'+
+      pipeTd()+
+    '</tr>';
+  }
+  rows.forEach(r=>{
+    html += '<tr>'+pipeTd(false);
+    html += '<td width="'+labelW+'" style="'+cellStyle(null,'font-weight:bold;word-wrap:break-word;',labelW)+'">'+escapeHtml(r.label)+'</td>';
+    html += pipeTd();
+    if(r.span){
+      html += '<td width="'+(n*dataW+(n-1)*pipeW)+'" style="'+cellStyle('center',null,n*dataW+(n-1)*pipeW)+'" colspan="'+(n*2-1)+'">'+escapeHtml(r.cells[0])+'</td>';
+      html += pipeTd();
+    } else {
+      r.cells.forEach((c,idx)=>{
+        if(r.parts){
+          html += '<td width="'+dataW+'" style="'+cellStyle('center',null,dataW)+'">'+splitCellHtml(r.parts[idx])+'</td>';
+        } else {
+          html += '<td width="'+dataW+'" style="'+cellStyle('center',null,dataW)+'">'+escapeHtml(c)+'</td>';
+        }
+        html += pipeTd();
       });
     }
+    html += '</tr>';
+  });
+  html += '</table>';
+  return html;
+}
 
-    // Initial page initialization
-    window.addEventListener('DOMContentLoaded', renderTable);
-  </script>
+// data = {headerRows, groups}. Trades 1-3 render as one table (with Deal ID +
+// Details on top); trades 4-6, if present, render as a second table stacked
+// directly beneath — same 3-column width, no repeated Deal ID/Details.
+function renderPreview(data){
+  const group1 = data.groups[0];
+  let html = renderGroupTable(data.headerRows.concat(group1.rows), group1.n, true);
+  for(let g=1; g<data.groups.length; g++){
+    const group = data.groups[g];
+    html += '<div style="height:16px;"></div>';
+    html += renderGroupTable(group.rows, group.n, false);
+  }
+  document.getElementById('table-preview').innerHTML = html;
+  return html;
+}
+
+// Renders one block's rows as pipe-delimited plain text. dealIdRow, when
+// true, adds the "Deal ID" title row on top of this block.
+function renderGroupPlainText(rows, n, dealIdRow){
+  const numCols = 1 + n;
+
+  const colWidths = new Array(numCols).fill(0);
+  rows.forEach(r=>{
+    colWidths[0] = Math.max(colWidths[0], String(r.label).length);
+    if(!r.span){
+      r.cells.forEach((cell, idx)=>{
+        colWidths[idx+1] = Math.max(colWidths[idx+1], String(cell).length);
+      });
+    }
+  });
+  if(dealIdRow) colWidths[0] = Math.max(colWidths[0], 'Deal ID'.length);
+
+  function padCell(text, width){
+    text = String(text);
+    const gap = width - text.length;
+    return text + ' '.repeat(gap > 0 ? gap : 0);
+  }
+
+  const dataColsTotalWidth = colWidths.slice(1).reduce((a,b)=>a+b,0) + (n-1)*3; // account for ' | ' between data columns
+
+  const lines = [];
+
+  if(dealIdRow){
+    lines.push('| ' + padCell('Deal ID', colWidths[0]) + ' | ' + padCell(opsDealId(), dataColsTotalWidth) + ' |');
+  }
+
+  rows.forEach(r=>{
+    const label = padCell(r.label, colWidths[0]);
+    if(r.span){
+      const spanned = padCell(r.cells[0], dataColsTotalWidth);
+      lines.push('| ' + label + ' | ' + spanned + ' |');
+    } else {
+      const cells = r.cells.map((cell, idx) => padCell(cell, colWidths[idx+1]));
+      lines.push('| ' + label + ' | ' + cells.join(' | ') + ' |');
+    }
+  });
+
+  return lines.join('\n');
+}
+
+// data = {headerRows, groups}. Trades 4-6, if present, form a second block
+// stacked below the trades 1-3 block, separated by a blank line.
+function buildPlainText(data){
+  const group1 = data.groups[0];
+  const blocks = [renderGroupPlainText(data.headerRows.concat(group1.rows), group1.n, true)];
+  for(let g=1; g<data.groups.length; g++){
+    const group = data.groups[g];
+    blocks.push(renderGroupPlainText(group.rows, group.n, false));
+  }
+  return blocks.join('\n\n');
+}
+
+/* ---- "Without BD source matching" output: a flat point-format list
+   (Label: value, one per line) instead of the bordered pipe-table — closer
+   to a plain email-style trade confirmation. COD is still included, just
+   without any of the BD Source Matching rows. ---- */
+function buildPointFormat(){
+  const filled = parseInt(document.getElementById('trade-count').value,10);
+  const lines = [];
+  const addField = (label, value) => lines.push({type:'field', label, value});
+  const addBlank = () => lines.push({type:'blank'});
+
+  lines.push({type:'title', text:'Details: Transaction Recap'});
+  addBlank();
+  // The 5-digit sequence number isn't claimed until Save agreement succeeds,
+  // so opsDealId() before that point is just "trade count + alpha suffix" —
+  // showing that here would look like a real (and wrong) Deal ID.
+  addField('Deal ID', currentDealDocId ? opsDealId() : 'Assigned once saved');
+  addField('Date', fmtDate(val('h-date')));
+  addField('Entity', val('h-entity'));
+  addField('BD in-charge', val('h-bd'));
+  addField(currentRole(), val('h-buyer'));
+  // Counterparty line: our own side is always "Saxon", shown with whichever
+  // role is the opposite of the agreement's Buyer/Seller above.
+  addField(currentRole() === 'Seller' ? 'Buyer' : 'Seller', 'Saxon');
+
+  for(let i=1;i<=filled;i++){
+    addBlank();
+    lines.push({type:'tradeTitle', text:'Trade '+i});
+    addField('Registry', val('t'+i+'-registry'));
+    addField('Dealership', val('t'+i+'-dealership'));
+    addField(currentRole() + ' Transfer Account', val('t'+i+'-transfer'));
+    addField('Vintage', val('t'+i+'-vintage-start-month')+' '+val('t'+i+'-vintage-start-year')+' - '+val('t'+i+'-vintage-end-month')+' '+val('t'+i+'-vintage-end-year'));
+    addField('Tech', techFullName(val('t'+i+'-tech')));
+    addField('Country', countryFullName(val('t'+i+'-country')));
+    addField('Volume (RECs)', val('t'+i+'-volume'));
+    addField('Price / RECs', val('t'+i+'-currency')+' '+val('t'+i+'-price'));
+    addField('Payment Term', val('t'+i+'-payterm'));
+    addField('Delivery', fmtDateOrdinal(val('t'+i+'-dstart'))+' - '+fmtDateOrdinal(val('t'+i+'-dend')));
+    addField('COD (if applicable)', val('t'+i+'-m-cod'));
+    addField('Special Remarks Request', val('t'+i+'-remarks'));
+  }
+  return lines;
+}
+
+function renderPointFormatHtml(lines){
+  let html = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.6;">';
+  lines.forEach(l=>{
+    if(l.type === 'blank'){
+      html += '<div>&nbsp;</div>';
+    } else if(l.type === 'title'){
+      html += '<div style="font-weight:bold;">'+escapeHtml(l.text)+'</div>';
+    } else if(l.type === 'tradeTitle'){
+      html += '<div style="font-weight:bold;">'+escapeHtml(l.text)+'</div>';
+    } else {
+      html += '<div>'+'<strong>'+escapeHtml(l.label)+':</strong> '+escapeHtml(l.value)+'</div>';
+    }
+  });
+  html += '</div>';
+  return html;
+}
+
+function buildPointFormatText(lines){
+  return lines.map(l=>{
+    if(l.type === 'blank') return '';
+    if(l.type === 'title' || l.type === 'tradeTitle') return l.text;
+    return l.label+': '+l.value;
+  }).join('\n');
+}
+
+let lastHtml = '', lastPlain = '';
+
+/* ---- Ops version validation ----
+   The Ops version table (with BD Source Matching) must not be generated with
+   gaps in it — every Details field (Deal ID through Transfer Account Name)
+   and every active trade's fields (Vintage through Special Remarks) must be
+   filled in. If anything is missing, generation is blocked and the person
+   sees exactly what's left to fill in, with the offending fields outlined. ---- */
+function isEmpty(id){
+  const v = val(id);
+  return !v || !v.trim();
+}
+function detailFieldDefs(requireDealId){
+  const defs = [];
+  defs.push(
+    {id:'h-date', label:'Date'},
+    {id:'h-entity', label:'Entity'},
+    {id:'h-bd', label:'BD in-charge'},
+    {id:'h-buyer', label:currentRole()+' Name'},
+    {id:'h-order', label:'Order type'},
+    {id:'h-description', label:'Content for Level 1 approval'},
+    // Required so the saved Deal ID (sequence number + trade count + these
+    // letters) is never all-digits — an all-numeric value gets silently
+    // reinterpreted as a number by Excel, dropping the leading zero.
+    {id:'h-dealid-alpha', label:'Deal ID letters'}
+  );
+  return defs;
+}
+// A field is valid if it has a custom validator that passes, or (by default)
+// simply isn't blank.
+function fieldIsValid(f){
+  const v = val(f.id);
+  if(f.validate) return f.validate(v);
+  return !!(v && v.trim());
+}
+function tradeFieldDefs(i){
+  // Fields to validate for a standard Trade section
+  const baseDefs = [
+    {ids:['t'+i+'-registry'], label:'Registry'},
+    {ids:['t'+i+'-dealership'], label:'Dealership'},
+    {ids:['t'+i+'-transfer'], label:currentRole() + ' Transfer Account'},
+    {ids:['t'+i+'-vintage-start-month','t'+i+'-vintage-start-year'], label:'Vintage start month & year'},
+    {ids:['t'+i+'-vintage-end-month','t'+i+'-vintage-end-year'], label:'Vintage end month & year'},
+    {ids:['t'+i+'-tech'], label:'Tech'},
+    {ids:['t'+i+'-country'], label:'Country'},
+    {ids:['t'+i+'-volume'], label:'Volume (RECs)'},
+    {ids:['t'+i+'-currency'], label:'Price currency'},
+    {ids:['t'+i+'-price'], label:'Price / REC'},
+    {ids:['t'+i+'-payterm'], label:'Payment term'},
+    {ids:['t'+i+'-dstart'], label:'Delivery start date'},
+    {ids:['t'+i+'-dend'], label:'Delivery end date'},
+    {ids:['t'+i+'-m-cod'], label:'COD (if applicable)'},
+    {ids:['t'+i+'-remarks'], label:'Special remarks'}
+  ];
+
+  const matchingValue = val('t'+i+'-m-matching');
+  if (matchingValue === 'Open Position') {
+    // If Open Position is selected, we do not require the hidden dependent matching fields (1-4).
+    return baseDefs;
+  }
+
+  // If anything other than 'Open Position' is selected, matching fields 1-4 are mandatory.
+  return baseDefs.concat([
+    {ids:['t'+i+'-m-name'], label:'1. Buyer/Seller name'},
+    {ids:['t'+i+'-m-recs'], label:'2. No of RECs'},
+    {ids:['t'+i+'-m-deal'], label:'3. From which deal'},
+    {ids:['t'+i+'-m-ddate'], label:'4. Delivery date'}
+  ]);
+}
+function clearMissingHighlights(){
+  document.querySelectorAll('.field-missing').forEach(el=>el.classList.remove('field-missing'));
+}
+function markMissing(key){
+  const wrap = document.getElementById(key+'-wrap');
+  if(wrap) wrap.classList.add('field-missing');
+}
+// Returns a list of {section, label} for every required field that's blank.
+// Also outlines the corresponding fields on the form as a side effect.
+// requireDealId is true for the Ops version; the Customer version doesn't need it.
+function validateVersion(requireDealId){
+  clearMissingHighlights();
+  const missing = [];
+
+  detailFieldDefs(requireDealId).forEach(f=>{
+    if(!fieldIsValid(f)){
+      missing.push({section:'Details', label:f.label});
+      markMissing(f.markKey || f.id);
+    }
+  });
+
+  const filled = parseInt(document.getElementById('trade-count').value,10);
+  for(let i=1;i<=filled;i++){
+    tradeFieldDefs(i).forEach(f=>{
+      if(f.ids.some(id=>isEmpty(id))){
+        missing.push({section:'Trade '+i, label:f.label});
+        markMissing(f.ids.join(','));
+      }
+    });
+  }
+
+  return missing;
+}
+function showValidationWarning(missing, versionLabel){
+  const box = document.getElementById('validation-warning');
+  const items = missing.map(m=>'<li>'+escapeHtml(m.section)+' — '+escapeHtml(m.label)+'</li>').join('');
+  box.innerHTML = '<strong>Table not generated — the '+escapeHtml(versionLabel)+' needs every field below filled in. Please complete the following before generating:</strong><ul>'+items+'</ul>';
+  box.style.display = 'block';
+  box.scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+function hideValidationWarning(){
+  document.getElementById('validation-warning').style.display = 'none';
+}
+// Clear a field's "missing" outline as soon as the person edits it.
+document.addEventListener('input', (e)=>{
+  const wrap = e.target.closest('[id$="-wrap"]');
+  if(wrap) wrap.classList.remove('field-missing');
+});
+document.addEventListener('change', (e)=>{
+  const wrap = e.target.closest('[id$="-wrap"]');
+  if(wrap) wrap.classList.remove('field-missing');
+});
+
+// Validates and builds the preview. Returns true/false for which version was
+// built (Ops/Customer), or null if validation failed (warning already shown).
+function generateOutput(){
+  // Ops version has been removed — Customer version (point-format) is now
+  // the only output the form generates.
+  const includeBD = false;
+
+  const missing = validateVersion(includeBD);
+  if(missing.length){
+    showValidationWarning(missing, includeBD ? 'Ops version' : 'Customer version');
+    document.getElementById('output-section').style.display = 'none';
+    return null;
+  }
+  hideValidationWarning();
+
+  if(includeBD){
+    const tableData = buildTable();
+    lastHtml = renderPreview(tableData);
+    lastPlain = buildPlainText(tableData);
+  } else {
+    const lines = buildPointFormat();
+    lastHtml = renderPointFormatHtml(lines);
+    document.getElementById('table-preview').innerHTML = lastHtml;
+    lastPlain = buildPointFormatText(lines);
+  }
+  // The "Deal ID" field itself stays blank until Save agreement actually
+  // claims one from the shared counter, so opsDealId() before that point is
+  // really just "trade count + alpha suffix" — showing that here in the
+  // card label would look like a real (and wrong) Deal ID. Only show the
+  // label once a real one exists.
+  setPreviewDealIdLabel(currentDealDocId ? opsDealId() : '');
+  setPreviewAgreementLink('');
+  // Copy table stays hidden until Level 1 approval assigns a real Deal ID —
+  // currentDealDocId is only a "PND_" placeholder before that happens.
+  document.getElementById('copy-btn').style.display =
+    (currentDealDocId && !isPendingDealId(currentDealDocId)) ? 'inline-block' : 'none';
+  document.getElementById('output-section').style.display = 'flex';
+  document.getElementById('copy-status').style.display = 'none';
+  document.getElementById('output-section').scrollIntoView({behavior:'smooth', block:'nearest'});
+  return includeBD;
+}
+
+document.getElementById('generate-btn').addEventListener('click', ()=>{
+  generateOutput();
+});
+
+document.getElementById('copy-btn').addEventListener('click', async ()=>{
+  try{
+    const htmlBlob = new Blob([lastHtml], {type:'text/html'});
+    const textBlob = new Blob([lastPlain], {type:'text/plain'});
+    await navigator.clipboard.write([new ClipboardItem({'text/html': htmlBlob, 'text/plain': textBlob})]);
+  }catch(e){
+    try{ await navigator.clipboard.writeText(lastPlain); }catch(e2){}
+  }
+  const status = document.getElementById('copy-status');
+  status.style.display = 'block';
+  setTimeout(()=>{ status.style.display='none'; }, 2500);
+});
+
+/* ---- Save agreement: writes the confirmation into the shared SharePoint
+   log table under a temporary placeholder ----
+   No real Deal ID is assigned at this point — that only happens once a
+   Level 1 approver approves it (see assignFormalDealId / approveDeal). This
+   just claims a placeholder so the row can be tracked/locked, and never
+   reassigns it again for this agreement — it's the underlying row key from
+   here until Level 1 approves, at which point it's swapped for the real ID. */
+document.getElementById('save-agreement-btn').addEventListener('click', async ()=>{
+  if(!currentAccount) return;
+  const btn = document.getElementById('save-agreement-btn');
+  const note = document.getElementById('save-note');
+  btn.disabled = true;
+  note.style.display = 'none';
+  try{
+    const includeBD = generateOutput();
+    if(includeBD === null) return; // validation warning already shown
+
+    if(!currentDealDocId){
+      assignPendingDealId();
+      // Rebuild the preview now that currentDealDocId is set, so the "Deal
+      // ID" line reads "Pending Level 1 approval" instead of blank.
+      generateOutput();
+    }
+
+    const submittedDateIso = new Date().toISOString();
+    await saveConfirmationToHistory(includeBD, currentDealDocId, submittedDateIso);
+    currentSubmittedDate = submittedDateIso;
+    saveDraft();
+    await loadHistory(); // refresh logRowsCache so dealAlreadySubmitted() sees this deal
+    await notifyNextApprover(STATUS_PENDING_1, currentDealDocId, val('h-description'));
+
+    note.textContent = 'Submitted — awaiting Level 1 approval. A Deal ID will be assigned once that approval happens, and you\'ll get an email then.';
+    note.style.display = 'block';
+    lockSubmittedForm(currentDealDocId);
+  }catch(err){
+    console.error('Save agreement failed', err);
+    note.textContent = 'Save failed: ' + err.message;
+    note.style.display = 'block';
+  }finally{
+    btn.disabled = false;
+  }
+});
+
+</script>
 </body>
 </html>
