@@ -95,6 +95,34 @@
     outline:none;
     border-color:var(--border);
   }
+  /* Native <input type=date> renders its on-screen text using the browser's
+     OS/locale settings, which ignores the page's lang attribute in some
+     browsers (notably Chromium) — so the same field can show dd/mm/yyyy for
+     one person and mm/dd/yyyy for another. To force a consistent dd/mm/yyyy
+     everywhere, the native input's own text is hidden (kept only for its
+     calendar-picker button and underlying value) and a span on top displays
+     our own formatted text instead. */
+  .date-field-wrap{position:relative;}
+  .date-field-wrap input.date-native{
+    color:transparent;
+    -webkit-text-fill-color:transparent;
+  }
+  .date-field-wrap .date-display{
+    position:absolute;
+    left:10px;
+    right:28px;
+    top:0;
+    bottom:0;
+    display:flex;
+    align-items:center;
+    pointer-events:none;
+    font-size:14px;
+    color:var(--text);
+    overflow:hidden;
+    white-space:nowrap;
+  }
+  .date-field-wrap .date-display.is-placeholder{color:var(--text-secondary);}
+  .field-locked .date-field-wrap .date-display{color:var(--text-secondary);}
   .trade-count-row{
     display:flex;
     align-items:center;
@@ -1553,6 +1581,7 @@ function applyDraftData(data){
     const el = document.getElementById(id);
     if(el) el.value = data.allValues[id];
   });
+  refreshAllDateDisplays();
   (data.checkedIds || []).forEach(id=>{
     const el = document.getElementById(id);
     if(el) el.checked = true;
@@ -2239,9 +2268,38 @@ function selectHtml(id, options, def){
 function textHtml(id, placeholder, val){
   return '<input type="text" id="'+id+'" placeholder="'+(placeholder||'')+'" value="'+(val||'')+'"/>';
 }
-function dateHtml(id, lang){
-  return '<input type="date" id="'+id+'"'+(lang ? ' lang="'+lang+'"' : '')+'/>';
+function dateHtml(id){
+  return '<div class="date-field-wrap">'+
+    '<input type="date" id="'+id+'" class="date-native"/>'+
+    '<span class="date-display is-placeholder" data-for="'+id+'">dd/mm/yyyy</span>'+
+    '</div>';
 }
+// Keeps a .date-native input's overlay span in sync with its actual (ISO
+// "YYYY-MM-DD") value. Called on every real user interaction (delegated
+// input/change listeners below) and also needs to be called manually after
+// any place that sets a date input's .value via JS, since that doesn't fire
+// input/change events on its own.
+function updateDateDisplay(input){
+  const span = input.parentElement && input.parentElement.querySelector('.date-display');
+  if(!span) return;
+  const v = input.value;
+  let formatted = '';
+  if(v){
+    const [y,m,d] = v.split('-');
+    if(y && m && d) formatted = d+'/'+m+'/'+y;
+  }
+  span.textContent = formatted || 'dd/mm/yyyy';
+  span.classList.toggle('is-placeholder', !formatted);
+}
+function refreshAllDateDisplays(root){
+  (root || document).querySelectorAll('input.date-native').forEach(updateDateDisplay);
+}
+document.addEventListener('input', (e)=>{
+  if(e.target.matches && e.target.matches('input.date-native')) updateDateDisplay(e.target);
+});
+document.addEventListener('change', (e)=>{
+  if(e.target.matches && e.target.matches('input.date-native')) updateDateDisplay(e.target);
+});
 function comboHtml(id, listId, options, def){
   const dl = '<datalist id="'+listId+'">' + options.map(v=>'<option value="'+v+'">').join('') + '</datalist>';
   return '<input type="text" list="'+listId+'" id="'+id+'" value="'+(def||'')+'"/>' + dl;
@@ -2262,7 +2320,7 @@ document.getElementById('header-fields').innerHTML =
   headerField('Deal ID',
     '<input type="text" id="h-dealid-num" maxlength="5" inputmode="numeric" placeholder="auto-assigned" readonly/>',
     'h-dealid-num') +
-  headerField('Deal Date','<input type="date" id="h-date"/>','h-date') +
+  headerField('Deal Date', dateHtml('h-date'),'h-date') +
   headerField('Entity', selectHtml('h-entity',['MY','SG'],'MY'),'h-entity') +
   headerField('BD in-charge', selectHtml('h-bd',BD_NAMES,BD_NAMES[0]),'h-bd') +
   headerField('Order type', selectHtml('h-order',ORDER_TYPES,'Stock-In (T)'),'h-order') +
@@ -2369,6 +2427,7 @@ function initLocksIn(container){
       applyFieldLockUi(key, !!saved.locked);
     }
   });
+  refreshAllDateDisplays(container);
 }
 
 // One delegated click handler covers header fields, all trade fields, and
@@ -2501,8 +2560,8 @@ function tradeBlockHtml(n){
       '</div>',
       ['t'+n+'-vintage-end-month','t'+n+'-vintage-end-year'])+
     lockableField('Volume (RECs)', textHtml('t'+n+'-volume','e.g. 30,000'),'t'+n+'-volume')+
-    lockableField('Delivery start date', dateHtml('t'+n+'-dstart','en-GB'),'t'+n+'-dstart')+
-    lockableField('Delivery end date', dateHtml('t'+n+'-dend','en-GB'),'t'+n+'-dend')+
+    lockableField('Delivery start date', dateHtml('t'+n+'-dstart'),'t'+n+'-dstart')+
+    lockableField('Delivery end date', dateHtml('t'+n+'-dend'),'t'+n+'-dend')+
     lockableField('COD (if applicable)', textHtml('t'+n+'-m-cod','NA','NA'),'t'+n+'-m-cod')+
     lockableField('Price currency', comboHtml('t'+n+'-currency','t'+n+'-currency-list',CURRENCIES,'USD'),'t'+n+'-currency')+
     lockableField('Price / REC', textHtml('t'+n+'-price','e.g. 0.27'),'t'+n+'-price')+
@@ -2580,6 +2639,7 @@ function handleMatchingChange(n) {
     dependentContainer.querySelectorAll('input[type="text"], input[type="date"]').forEach(el => {
       el.value = '';
     });
+    refreshAllDateDisplays(dependentContainer);
     // Uncheck checkboxes
     dependentContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => {
       cb.checked = false;
