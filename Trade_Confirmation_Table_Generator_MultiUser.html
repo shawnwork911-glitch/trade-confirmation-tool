@@ -510,6 +510,7 @@
     <p style="margin:0;font-size:13px;color:var(--text-secondary);">Level 2 approval requires the signed agreement to be attached. Once approved, it becomes viewable to everyone from this deal's row. Max 4 MB.</p>
     <label style="margin:4px 0 0;">Agreement file (required)</label>
     <input type="file" id="approve-modal-file" accept=".pdf,.doc,.docx"/>
+    <div id="approve-modal-transfer-fields" style="display:flex;flex-direction:column;gap:8px;"></div>
     <div id="approve-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
       <button type="button" class="secondary" id="approve-modal-cancel">Cancel</button>
@@ -1822,10 +1823,10 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
    to. Every role — including superadmin — only ever advances one level per
    click; superadmin's only difference is which levels canActOnStatus() lets
    them act on (any pending level, vs. admin1/2/3's own single level). */
-async function approveDeal(dealId, file){
+async function approveDeal(dealId, file, transferOverrides){
   if(!dealId) return;
   const rows = await getTableRows(LOG_TABLE_NAME);
-  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
   if(!matching.length) return;
   const currentStatus = matching[0].values[0][MC.status];
   if(!canActOnStatus(currentStatus)) throw new Error('You are not able to approve this deal at its current stage.');
@@ -1834,6 +1835,18 @@ async function approveDeal(dealId, file){
   if(currentStatus === STATUS_PENDING_1){ nextStatus = STATUS_PENDING_2; byCol = MC.approvedBy1; dateCol = MC.approvedDate1; }
   else if(currentStatus === STATUS_PENDING_2){
     if(!file) throw new Error('Please attach the signed agreement before approving at Level 2.');
+    // Apply whatever was typed into the modal's Receiving Account inputs
+    // before checking for gaps — this is the only place left to fill that
+    // field in once a deal is submitted (the whole form locks permanently),
+    // so a value typed here both satisfies the check below and gets saved.
+    if(transferOverrides){
+      matching.forEach((r, idx)=>{
+        const override = transferOverrides[idx];
+        if(override !== undefined && override !== null && String(override).trim() !== ''){
+          r.values[0][MC.tigrsIrecName] = override;
+        }
+      });
+    }
     const missingTransferTrades = [];
     matching.forEach((r, idx)=>{
       if(!String(r.values[0][MC.tigrsIrecName] || '').trim()) missingTransferTrades.push(idx + 1);
@@ -2113,10 +2126,27 @@ function openApproveModal(dealId){
   document.getElementById('approve-modal-dealid').textContent = friendlyDealId(dealId);
   document.getElementById('approve-modal-file').value = '';
   document.getElementById('approve-modal-error').style.display = 'none';
+  // The whole form is locked forever once submitted (see lockSubmittedForm),
+  // so this modal is the only remaining place anyone can fill in a missing
+  // Buyer/Seller Receiving Account before Level 2 approval — one input per
+  // trade/product on the deal, prefilled with whatever's already saved.
+  const group = logRowsCache
+    .filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId)
+    .sort((a,b)=> a.index - b.index);
+  const role = group.length ? roleFromOrderType(group[0].values[0][MC.supplyDemand]) : 'Buyer';
+  const label = transferAccountLabel(role);
+  const fieldsEl = document.getElementById('approve-modal-transfer-fields');
+  fieldsEl.innerHTML = group.map((r, idx)=>{
+    const existing = escapeHtml(String(r.values[0][MC.tigrsIrecName] || ''));
+    const productLabel = group.length > 1 ? label + ' — Product ' + (idx+1) : label;
+    return '<div><label style="margin:0 0 4px;display:block;font-size:13px;">' + escapeHtml(productLabel) + '</label>' +
+      '<input type="text" class="approve-modal-transfer-input" data-idx="' + idx + '" value="' + existing + '"/></div>';
+  }).join('');
   document.getElementById('approve-modal-overlay').style.display = 'flex';
 }
 function closeApproveModal(){
   document.getElementById('approve-modal-overlay').style.display = 'none';
+  document.getElementById('approve-modal-transfer-fields').innerHTML = '';
   approveModalDealId = null;
 }
 document.getElementById('approve-modal-cancel').addEventListener('click', closeApproveModal);
@@ -2134,10 +2164,14 @@ document.getElementById('approve-modal-submit').addEventListener('click', async 
     errEl.style.display = 'block';
     return;
   }
+  const transferOverrides = [];
+  document.querySelectorAll('.approve-modal-transfer-input').forEach(input=>{
+    transferOverrides[parseInt(input.getAttribute('data-idx'), 10)] = input.value;
+  });
   btn.disabled = true;
   btn.textContent = 'Uploading…';
   try{
-    await approveDeal(dealId, file);
+    await approveDeal(dealId, file, transferOverrides);
     closeApproveModal();
   }catch(err){
     errEl.textContent = err.message;
