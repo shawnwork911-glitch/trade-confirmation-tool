@@ -1665,6 +1665,7 @@ function applyDraftData(data){
     if(dealEl && data.allValues && data.allValues['t'+i+'-m-deal'] !== undefined) dealEl.value = data.allValues['t'+i+'-m-deal'];
     handleMatchingChange(i);
     syncTechCheckboxesFromHidden(i);
+    syncCodUiFromHidden(i); // hidden field's restored value drives toggle/year/visibility
   }
   refreshRoleDependentUi();
   currentDealDocId = data.dealId || val('h-dealid-num') || null;
@@ -1864,7 +1865,7 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
     row[MC.vToYY] = val('t'+n+'-vintage-end-year');
     row[MC.currency] = val('t'+n+'-currency');
     row[MC.unitPrice] = val('t'+n+'-price');
-    row[MC.specialReq] = val('t'+n+'-remarks');
+    row[MC.specialReq] = remarksVal(n);
     row[MC.cod] = val('t'+n+'-m-cod');
     row[MC.tigrsIrecName] = val('t'+n+'-transfer');
     row[MC.paymentTerm] = val('t'+n+'-payterm');
@@ -2910,6 +2911,77 @@ document.addEventListener('change', (e)=>{
     applyTechExclusivityUi(n);
   }
 });
+/* COD (if applicable) — the user just ticks "Applicable" and picks a year;
+   this composes the actual string that gets written into the generated
+   table and to SharePoint ("1 Jan {year} or newer", or "N/A" if not
+   applicable). The hidden t{n}-m-cod field holds that composed string and
+   is what every existing consumer already reads via val('t{n}-m-cod'), so
+   nothing downstream (table rendering, SharePoint row, validation) needs
+   to change — same pattern as the tech-checkboxes' hidden field above. */
+function codHtml(n){
+  return '<input type="hidden" id="t'+n+'-m-cod" value="N/A"/>'+
+    '<div class="cod-field" id="t'+n+'-cod-group" data-cod-group="'+n+'">'+
+      '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;font-weight:400;">'+
+        '<input type="checkbox" class="cod-toggle" data-trade="'+n+'" style="width:auto;margin:0;"> Applicable'+
+      '</label>'+
+      '<div class="cod-year-wrap" id="t'+n+'-cod-year-wrap" style="display:none;margin-top:6px;">'+
+        '<input type="text" inputmode="numeric" maxlength="4" placeholder="e.g. 2001" class="cod-year" id="t'+n+'-cod-year" data-trade="'+n+'"/>'+
+      '</div>'+
+    '</div>';
+}
+// Recomputes the hidden tN-m-cod value from the toggle + year — "N/A" when
+// not applicable, "1 Jan {year} or newer" when applicable and a valid
+// 4-digit year has been entered (blank otherwise, so validation catches an
+// incomplete entry rather than silently saving a malformed value).
+function updateCodValue(n){
+  const hidden = document.getElementById('t'+n+'-m-cod');
+  const toggle = document.querySelector('.cod-toggle[data-trade="'+n+'"]');
+  const yearInput = document.getElementById('t'+n+'-cod-year');
+  const yearWrap = document.getElementById('t'+n+'-cod-year-wrap');
+  if(!hidden || !toggle) return;
+  if(toggle.checked){
+    if(yearWrap) yearWrap.style.display = '';
+    const y = (yearInput && yearInput.value || '').trim();
+    hidden.value = /^[0-9]{4}$/.test(y) ? ('1 Jan '+y+' or newer') : '';
+  } else {
+    if(yearWrap) yearWrap.style.display = 'none';
+    if(yearInput) yearInput.value = '';
+    hidden.value = 'N/A';
+  }
+}
+// Brings the toggle/year UI back in sync with whatever's sitting in the
+// hidden field — used after restoring a locked value or a loaded draft,
+// where the hidden field is set directly via JS (same role as
+// syncTechCheckboxesFromHidden for the tech checkboxes).
+function syncCodUiFromHidden(n){
+  const hidden = document.getElementById('t'+n+'-m-cod');
+  const toggle = document.querySelector('.cod-toggle[data-trade="'+n+'"]');
+  const yearInput = document.getElementById('t'+n+'-cod-year');
+  const yearWrap = document.getElementById('t'+n+'-cod-year-wrap');
+  if(!hidden || !toggle) return;
+  const m = String(hidden.value||'').match(/^1 Jan (\d{4}) or newer$/);
+  if(m){
+    toggle.checked = true;
+    if(yearInput) yearInput.value = m[1];
+    if(yearWrap) yearWrap.style.display = '';
+  } else {
+    toggle.checked = false;
+    if(yearInput) yearInput.value = '';
+    if(yearWrap) yearWrap.style.display = 'none';
+  }
+}
+document.addEventListener('change', (e)=>{
+  const ct = e.target.closest('.cod-toggle');
+  if(ct) updateCodValue(ct.getAttribute('data-trade'));
+});
+document.addEventListener('input', (e)=>{
+  const yi = e.target.closest('.cod-year');
+  if(yi){
+    const cleaned = yi.value.replace(/[^0-9]/g,'').slice(0,4);
+    if(cleaned !== yi.value) yi.value = cleaned;
+    updateCodValue(yi.getAttribute('data-trade'));
+  }
+});
 function selectWithFullNamesHtml(id, codes, fullNameMap, def){
   const o = codes.map(code => {
     const label = fullNameMap[code] || code;
@@ -3058,6 +3130,9 @@ function initLocksIn(container){
     const n = group.id.replace(/^t/,'').replace(/-tech-boxes$/,'');
     syncTechCheckboxesFromHidden(n);
   });
+  container.querySelectorAll('[data-cod-group]').forEach(group=>{
+    syncCodUiFromHidden(group.getAttribute('data-cod-group'));
+  });
 }
 
 // One delegated click handler covers header fields, all trade fields, and
@@ -3199,11 +3274,11 @@ function tradeBlockHtml(n){
     lockableField('Volume (RECs)', textHtml('t'+n+'-volume','e.g. 30,000'),'t'+n+'-volume')+
     lockableField('Delivery start date', dateHtml('t'+n+'-dstart'),'t'+n+'-dstart')+
     lockableField('Delivery end date', dateHtml('t'+n+'-dend'),'t'+n+'-dend')+
-    lockableField('COD (if applicable)', textHtml('t'+n+'-m-cod','NA','NA'),'t'+n+'-m-cod')+
+    lockableField('COD (if applicable)', codHtml(n),'t'+n+'-m-cod')+
     lockableField('Price currency', comboHtml('t'+n+'-currency','t'+n+'-currency-list',CURRENCIES,'USD'),'t'+n+'-currency')+
     lockableField('Price / REC', textHtml('t'+n+'-price','e.g. 0.27'),'t'+n+'-price')+
     lockableField('Payment term', textHtml('t'+n+'-payterm','30 days after invoice','30 days after invoice'),'t'+n+'-payterm')+
-    lockableField('Special remarks', '<textarea id="t'+n+'-remarks" placeholder="NA">NA</textarea>', 't'+n+'-remarks')
+    lockableField('Special remarks', '<textarea id="t'+n+'-remarks" placeholder="N/A">N/A</textarea>', 't'+n+'-remarks')
       .replace('<div id=','<div style="grid-column:1 / -1;" id=')+
     // Custom label text is updated programmatically to reflect Buyer/Seller dynamically
     lockableField('Transfer account name', textHtml('t'+n+'-transfer','Optional — required before Level 2 approval'),'t'+n+'-transfer')+
@@ -3473,6 +3548,14 @@ function fmtDateOrdinal(v){
   return d+ordinalSuffix(d)+' '+MONTH_ABBR[m-1]+' '+y;
 }
 function val(id){ const el=document.getElementById(id); return el ? el.value : ''; }
+// Special remarks: an empty box should read/write as "N/A" everywhere the
+// field is consumed (generated table, SharePoint row, customer version) —
+// same "blank means N/A" behavior as COD, without forcing the user to type
+// anything when they've genuinely got nothing to add.
+function remarksVal(i){
+  const v = val('t'+i+'-remarks').trim();
+  return v ? v : 'N/A';
+}
 
 // The Ops version table shows a Deal ID that encodes how many trades are in
 // this deal: the number of trades selected gets inserted as a single digit
@@ -3514,7 +3597,7 @@ function buildTradeGroup(startIdx, filled){
       payterms.push(val('t'+i+'-payterm'));
       dstarts.push(fmtDateOrdinal(val('t'+i+'-dstart')));
       dends.push(fmtDateOrdinal(val('t'+i+'-dend')));
-      remarks.push(val('t'+i+'-remarks'));
+      remarks.push(remarksVal(i));
       mNames.push(val('t'+i+'-m-name'));
       mRecs.push(val('t'+i+'-m-recs'));
       mDeals.push(dealCodeFor(i));
@@ -3775,7 +3858,7 @@ function buildPointFormat(){
     addField('Payment Term', val('t'+i+'-payterm'));
     addField('Delivery', fmtDateOrdinal(val('t'+i+'-dstart'))+' - '+fmtDateOrdinal(val('t'+i+'-dend')));
     addField('COD (if applicable)', val('t'+i+'-m-cod'));
-    addField('Special Remarks Request', val('t'+i+'-remarks'));
+    addField('Special Remarks Request', remarksVal(i));
   }
   return lines;
 }
@@ -3860,8 +3943,7 @@ function tradeFieldDefs(i){
     {ids:['t'+i+'-payterm'], label:'Payment term'},
     {ids:['t'+i+'-dstart'], label:'Delivery start date'},
     {ids:['t'+i+'-dend'], label:'Delivery end date'},
-    {ids:['t'+i+'-m-cod'], label:'COD (if applicable)'},
-    {ids:['t'+i+'-remarks'], label:'Special remarks'}
+    {ids:['t'+i+'-m-cod'], label:'COD (if applicable)'}
   ];
 
   const matchingValue = val('t'+i+'-m-matching');
