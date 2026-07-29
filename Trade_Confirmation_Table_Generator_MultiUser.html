@@ -634,9 +634,16 @@ const MC = {
   pendingRequestedBy:52, pendingRequestedDate:53,
   // ---- Per-row identity / traceability ----
   // See the column-layout comment above for what these two hold.
-  rowUid:54, approvedListItemId:55
+  rowUid:54, approvedListItemId:55,
+  // Freeform context the submitter types when requesting a BD source
+  // matching change (e.g. why the correction is needed) — shown to the
+  // Level 3 approver alongside the field-level diff, and carried through
+  // into the "Approved" list's own "Pending Matching Note" column once
+  // applied. Cleared on approve or reject, same lifecycle as the other
+  // pending* columns.
+  pendingMatchNote:56
 };
-const COL_COUNT = 56;
+const COL_COUNT = 57;
 const DRAFT_TABLE_NAME = "TradeDealDrafts";   // must match the Excel Table name you create
 // Small generic key/value settings table. Currently holds one row:
 // key="dealIdStart", value=the lowest 5-digit number the next new Deal ID
@@ -1478,8 +1485,13 @@ async function addApprovedDealToList(values, changeNote){
         'Approved By': values[MC.approvedBy3],
         'Approved Date': values[MC.approvedDate3],
         // What this entry represents — the initial final sign-off, or the
-        // specific field-level diff for a later BD source matching change.
-        'Change Note': changeNote || 'Initial Level 3 approval',
+        // specific field-level diff (plus the submitter's own explanation,
+        // if given) for a later BD source matching change. Named "Pending
+        // Matching Note" to match the actual column on this SharePoint
+        // list — it previously targeted a "Change Note" column that
+        // doesn't exist there, so this value was silently dropped every
+        // time (see the skipped-column warning below).
+        'Pending Matching Note': changeNote || 'Initial Level 3 approval',
         // Ties this "Approved" list entry back to its exact TradeDealLog
         // source row — see the Row Uid comment on the MC column-layout
         // block above. If the "Approved" list has no such column yet this
@@ -2128,7 +2140,7 @@ async function rejectDeal(dealId, reason){
    index — rowUid is what the modal showed for that product when it was
    opened, and is checked against a freshly-read row set below (not just
    trusted by position) before anything is written. */
-async function requestBdMatchChange(dealId, edits){
+async function requestBdMatchChange(dealId, edits, matchNote){
   if(!dealId) return;
   const rows = await getTableRows(LOG_TABLE_NAME);
   const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
@@ -2156,7 +2168,7 @@ async function requestBdMatchChange(dealId, edits){
   }
   const liveColumnCount = await getTableColumnCount(LOG_TABLE_NAME);
   if(liveColumnCount < COL_COUNT){
-    throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing the "Pending Matching", "Pending Buyer/Seller", "Pending Which Deal", "Pending No of RECs", "Pending Delivery Date", "Change Requested By" and "Change Requested Date" columns. Ask an admin to add those seven columns at the end of the table, then try again.');
+    throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing the "Pending Matching", "Pending Buyer/Seller", "Pending Which Deal", "Pending No of RECs", "Pending Delivery Date", "Change Requested By", "Change Requested Date" and "Pending Matching Note" columns. Ask an admin to add those eight columns at the end of the table, then try again.');
   }
   // Build the per-product diff up front, using the same wording the
   // in-app Approval queue shows (see the STATUS_PENDING_CHANGE_3 block in
@@ -2210,6 +2222,7 @@ async function requestBdMatchChange(dealId, edits){
     values[MC.pendingWhichDeal] = edit.whichDeal || '';
     values[MC.pendingNoOfRecs] = edit.noOfRecs || '';
     values[MC.pendingDeliveryDateM] = edit.deliveryDateM || '';
+    values[MC.pendingMatchNote] = matchNote || '';
     values[MC.pendingRequestedBy] = currentAccount.username;
     values[MC.pendingRequestedDate] = nowIso;
     values[MC.status] = STATUS_PENDING_CHANGE_3;
@@ -2220,7 +2233,8 @@ async function requestBdMatchChange(dealId, edits){
     values[MC.rejectReason] = '';
     await updateTableRow(LOG_TABLE_NAME, r.index, values);
   }
-  await notifyNextApprover(STATUS_PENDING_CHANGE_3, dealId, matching[0].values[0][MC.description], changeLines.join('\n'));
+  const notifyBody = changeLines.join('\n') + (matchNote ? '\n\nNote: ' + matchNote : '');
+  await notifyNextApprover(STATUS_PENDING_CHANGE_3, dealId, matching[0].values[0][MC.description], notifyBody);
   await loadHistory();
 }
 // Applies a pending BD source matching change: copies pendingMatching/
@@ -2270,7 +2284,9 @@ async function approveBdMatchChange(dealId){
     if((values[MC.deliveryDateM]||'') !== (values[MC.pendingDeliveryDateM]||'')){
       noteLines.push('Delivery date: ' + (values[MC.deliveryDateM]||'(blank)') + ' \u2192 ' + (values[MC.pendingDeliveryDateM]||'(blank)'));
     }
-    const changeNote = 'BD source matching change' + (noteLines.length ? ': ' + noteLines.join(', ') : '');
+    const submitterNote = values[MC.pendingMatchNote] || '';
+    const changeNote = 'BD source matching change' + (noteLines.length ? ': ' + noteLines.join(', ') : '') +
+      (submitterNote ? ' \u2014 Note: ' + submitterNote : '');
     values[MC.matching] = values[MC.pendingMatching];
     values[MC.buyerSeller] = values[MC.pendingBuyerSeller];
     values[MC.whichDeal] = values[MC.pendingWhichDeal];
@@ -2281,6 +2297,7 @@ async function approveBdMatchChange(dealId){
     values[MC.pendingWhichDeal] = '';
     values[MC.pendingNoOfRecs] = '';
     values[MC.pendingDeliveryDateM] = '';
+    values[MC.pendingMatchNote] = '';
     values[MC.pendingRequestedBy] = '';
     values[MC.pendingRequestedDate] = '';
     values[MC.status] = STATUS_APPROVED;
@@ -2332,6 +2349,7 @@ async function rejectBdMatchChange(dealId, reason){
     values[MC.pendingWhichDeal] = '';
     values[MC.pendingNoOfRecs] = '';
     values[MC.pendingDeliveryDateM] = '';
+    values[MC.pendingMatchNote] = '';
     values[MC.pendingRequestedBy] = '';
     values[MC.pendingRequestedDate] = '';
     values[MC.rejectedBy] = currentAccount.username;
@@ -2503,9 +2521,14 @@ function renderHistoryTable(el, groups, opts){
         return '<div style="margin-top:'+(idx>0?'6px':'0')+';">'+(g.rows.length>1?'<strong>Product '+(idx+1)+':</strong> ':'')+lines.join(' · ')+'</div>';
       }).join('');
       const requestedBy = v[MC.pendingRequestedBy] ? ' by '+escapeHtml(v[MC.pendingRequestedBy]) : '';
+      // The note is written onto every changed row identically (see
+      // requestBdMatchChange), so the first row in the group always has it.
+      const noteHtml = v[MC.pendingMatchNote]
+        ? '<div style="margin-top:6px;"><strong>Note:</strong> '+escapeHtml(v[MC.pendingMatchNote])+'</div>'
+        : '';
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
         '<div style="background:#f2ecf7;border:1px solid #d3bfe6;color:#4a2d63;border-radius:6px;padding:8px 10px;font-size:12px;">' +
-        '<strong>BD source matching change requested'+requestedBy+':</strong>' + rows +
+        '<strong>BD source matching change requested'+requestedBy+':</strong>' + rows + noteHtml +
         '</div></td></tr>';
     }
     if(v[MC.description] && status === STATUS_PENDING_1){
@@ -2797,7 +2820,16 @@ function openEditRequestModal(dealId){
           '</div></div>' +
       '</div>' +
       '</div>';
-  }).join('');
+  }).join('') +
+    // Single note shared across every product on this deal — explains WHY
+    // the change is being requested. Not prefilled from anything: an
+    // Approved deal has no pending note left over (approve/reject always
+    // clears it), so this always starts blank for a fresh request.
+    '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;">' +
+      '<label style="margin:0;font-size:13px;font-weight:600;" for="edit-request-match-note">Matching Edit Note</label>' +
+      '<p style="margin:0;font-size:12px;color:var(--text-secondary);">Explain why this correction is needed — shown to the Level 3 approver alongside the changes above.</p>' +
+      '<textarea id="edit-request-match-note" rows="3" placeholder="e.g. BD confirmed wrong buyer name was entered at submission"></textarea>' +
+    '</div>';
   document.getElementById('edit-request-modal-overlay').style.display = 'flex';
   refreshAllDateDisplays(fieldsEl);
 }
@@ -2846,10 +2878,12 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
     edits[idx].deliveryDateM = inp.value;
     edits[idx].rowUid = edits[idx].rowUid || inp.getAttribute('data-uid') || '';
   });
+  const noteEl = document.getElementById('edit-request-match-note');
+  const matchNote = noteEl ? noteEl.value.trim() : '';
   btn.disabled = true;
   btn.textContent = 'Submitting…';
   try{
-    await requestBdMatchChange(dealId, edits);
+    await requestBdMatchChange(dealId, edits, matchNote);
     closeEditRequestModal();
   }catch(err){
     errEl.textContent = err.message;
