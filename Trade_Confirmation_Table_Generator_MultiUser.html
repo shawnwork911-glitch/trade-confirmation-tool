@@ -582,12 +582,15 @@ const LOG_TABLE_NAME = "TradeDealLog";        // must match the Excel Table name
 // Rejected By, Rejected Date, Rejection Comment, Agreement File Name,
 // Agreement File URL, Description, Broker Fee Type, Broker Fee Currency,
 // Broker Fee Price, Pending Matching, Pending Buyer/Seller,
-// Pending Which Deal, Change Requested By, Change Requested Date,
+// Pending Which Deal, Pending No of RECs, Pending Delivery Date,
+// Change Requested By, Change Requested Date,
 // Row Uid, Approved List Item Id
 // NOTE: if you're adding this to an existing workbook, add any new column
 // ("Broker Fee Type"/"Broker Fee Currency"/"Broker Fee Price" included, the
-// 5 "Pending ..."/"Change Requested ..." columns used for post-approval BD
-// source matching change requests, and now "Row Uid"/"Approved List Item
+// 7 "Pending ..."/"Change Requested ..." columns used for post-approval BD
+// source matching change requests (Pending Matching, Pending Buyer/Seller,
+// Pending Which Deal, Pending No of RECs, Pending Delivery Date, Change
+// Requested By, Change Requested Date), and now "Row Uid"/"Approved List Item
 // Id") at the END of the live TradeDealLog Excel Table — don't insert them
 // in the middle, or every existing column index below will point at the
 // wrong data.
@@ -619,17 +622,21 @@ const MC = {
   // ---- Post-approval BD source matching change requests ----
   // Staging area for an edit the original submitter has requested after the
   // deal already reached Approved. Nothing here touches the live
-  // matching/buyerSeller/whichDeal columns until a Level 3 approver signs
-  // off (see requestBdMatchChange/approveBdMatchChange/rejectBdMatchChange)
-  // — so the currently-approved values stay authoritative and visible
-  // everywhere else in the app while a change is pending.
+  // matching/buyerSeller/whichDeal/noOfRecs/deliveryDateM columns until a
+  // Level 3 approver signs off (see
+  // requestBdMatchChange/approveBdMatchChange/rejectBdMatchChange) — so the
+  // currently-approved values stay authoritative and visible everywhere
+  // else in the app while a change is pending. No of RECs and Delivery
+  // date only apply (and are only shown/staged) when Matching isn't "Open
+  // Position" — same as Buyer/Seller and Which deal.
   pendingMatching:47, pendingBuyerSeller:48, pendingWhichDeal:49,
-  pendingRequestedBy:50, pendingRequestedDate:51,
+  pendingNoOfRecs:50, pendingDeliveryDateM:51,
+  pendingRequestedBy:52, pendingRequestedDate:53,
   // ---- Per-row identity / traceability ----
   // See the column-layout comment above for what these two hold.
-  rowUid:52, approvedListItemId:53
+  rowUid:54, approvedListItemId:55
 };
-const COL_COUNT = 54;
+const COL_COUNT = 56;
 const DRAFT_TABLE_NAME = "TradeDealDrafts";   // must match the Excel Table name you create
 // Small generic key/value settings table. Currently holds one row:
 // key="dealIdStart", value=the lowest 5-digit number the next new Deal ID
@@ -674,10 +681,11 @@ const STATUS_PENDING_3 = "Pending Level 3";
 const STATUS_APPROVED = "Approved";
 const STATUS_REJECTED = "Rejected";
 // A fully Approved deal's original submitter can request a change to just
-// its BD source matching fields (Matching, Buyer/Seller, Which deal) — this
-// status means that request is sitting in the Level 3 queue. The deal's
-// live matching/buyerSeller/whichDeal values are untouched and stay visible
-// everywhere until a Level 3 approver applies (or rejects) the request; see
+// its BD source matching fields (Matching, Buyer/Seller, Which deal, No of
+// RECs, Delivery date) — this status means that request is sitting in the
+// Level 3 queue. The deal's live matching/buyerSeller/whichDeal/noOfRecs/
+// deliveryDateM values are untouched and stay visible everywhere until a
+// Level 3 approver applies (or rejects) the request; see
 // requestBdMatchChange/approveBdMatchChange/rejectBdMatchChange.
 const STATUS_PENDING_CHANGE_3 = "Pending Change - Level 3";
 
@@ -2148,7 +2156,7 @@ async function requestBdMatchChange(dealId, edits){
   }
   const liveColumnCount = await getTableColumnCount(LOG_TABLE_NAME);
   if(liveColumnCount < COL_COUNT){
-    throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing the "Pending Matching", "Pending Buyer/Seller", "Pending Which Deal", "Change Requested By" and "Change Requested Date" columns. Ask an admin to add those five columns at the end of the table, then try again.');
+    throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing the "Pending Matching", "Pending Buyer/Seller", "Pending Which Deal", "Pending No of RECs", "Pending Delivery Date", "Change Requested By" and "Change Requested Date" columns. Ask an admin to add those seven columns at the end of the table, then try again.');
   }
   // Build the per-product diff up front, using the same wording the
   // in-app Approval queue shows (see the STATUS_PENDING_CHANGE_3 block in
@@ -2172,6 +2180,12 @@ async function requestBdMatchChange(dealId, edits){
     if((rv[MC.whichDeal]||'') !== (edit.whichDeal||'')){
       lines.push('Which deal: ' + (rv[MC.whichDeal]||'(blank)') + ' \u2192 ' + (edit.whichDeal||'(blank)'));
     }
+    if((rv[MC.noOfRecs]||'') !== (edit.noOfRecs||'')){
+      lines.push('No of RECs: ' + (rv[MC.noOfRecs]||'(blank)') + ' \u2192 ' + (edit.noOfRecs||'(blank)'));
+    }
+    if((rv[MC.deliveryDateM]||'') !== (edit.deliveryDateM||'')){
+      lines.push('Delivery date: ' + (rv[MC.deliveryDateM]||'(blank)') + ' \u2192 ' + (edit.deliveryDateM||'(blank)'));
+    }
     if(lines.length){
       rowChanged[i] = true;
       changeLines.push((matching.length > 1 ? 'Product ' + (i+1) + ' \u2014 ' : '') + lines.join(', '));
@@ -2194,6 +2208,8 @@ async function requestBdMatchChange(dealId, edits){
     values[MC.pendingMatching] = edit.matching || '';
     values[MC.pendingBuyerSeller] = edit.buyerSeller || '';
     values[MC.pendingWhichDeal] = edit.whichDeal || '';
+    values[MC.pendingNoOfRecs] = edit.noOfRecs || '';
+    values[MC.pendingDeliveryDateM] = edit.deliveryDateM || '';
     values[MC.pendingRequestedBy] = currentAccount.username;
     values[MC.pendingRequestedDate] = nowIso;
     values[MC.status] = STATUS_PENDING_CHANGE_3;
@@ -2248,13 +2264,23 @@ async function approveBdMatchChange(dealId){
     if((values[MC.whichDeal]||'') !== (values[MC.pendingWhichDeal]||'')){
       noteLines.push('Which deal: ' + (values[MC.whichDeal]||'(blank)') + ' \u2192 ' + (values[MC.pendingWhichDeal]||'(blank)'));
     }
+    if((values[MC.noOfRecs]||'') !== (values[MC.pendingNoOfRecs]||'')){
+      noteLines.push('No of RECs: ' + (values[MC.noOfRecs]||'(blank)') + ' \u2192 ' + (values[MC.pendingNoOfRecs]||'(blank)'));
+    }
+    if((values[MC.deliveryDateM]||'') !== (values[MC.pendingDeliveryDateM]||'')){
+      noteLines.push('Delivery date: ' + (values[MC.deliveryDateM]||'(blank)') + ' \u2192 ' + (values[MC.pendingDeliveryDateM]||'(blank)'));
+    }
     const changeNote = 'BD source matching change' + (noteLines.length ? ': ' + noteLines.join(', ') : '');
     values[MC.matching] = values[MC.pendingMatching];
     values[MC.buyerSeller] = values[MC.pendingBuyerSeller];
     values[MC.whichDeal] = values[MC.pendingWhichDeal];
+    values[MC.noOfRecs] = values[MC.pendingNoOfRecs];
+    values[MC.deliveryDateM] = values[MC.pendingDeliveryDateM];
     values[MC.pendingMatching] = '';
     values[MC.pendingBuyerSeller] = '';
     values[MC.pendingWhichDeal] = '';
+    values[MC.pendingNoOfRecs] = '';
+    values[MC.pendingDeliveryDateM] = '';
     values[MC.pendingRequestedBy] = '';
     values[MC.pendingRequestedDate] = '';
     values[MC.status] = STATUS_APPROVED;
@@ -2304,6 +2330,8 @@ async function rejectBdMatchChange(dealId, reason){
     values[MC.pendingMatching] = '';
     values[MC.pendingBuyerSeller] = '';
     values[MC.pendingWhichDeal] = '';
+    values[MC.pendingNoOfRecs] = '';
+    values[MC.pendingDeliveryDateM] = '';
     values[MC.pendingRequestedBy] = '';
     values[MC.pendingRequestedDate] = '';
     values[MC.rejectedBy] = currentAccount.username;
@@ -2464,6 +2492,12 @@ function renderHistoryTable(el, groups, opts){
         }
         if((rv[MC.whichDeal]||'') !== (rv[MC.pendingWhichDeal]||'')){
           lines.push('Which deal: <s>'+escapeHtml(rv[MC.whichDeal]||'(blank)')+'</s> → <strong>'+escapeHtml(rv[MC.pendingWhichDeal]||'(blank)')+'</strong>');
+        }
+        if((rv[MC.noOfRecs]||'') !== (rv[MC.pendingNoOfRecs]||'')){
+          lines.push('No of RECs: <s>'+escapeHtml(rv[MC.noOfRecs]||'(blank)')+'</s> → <strong>'+escapeHtml(rv[MC.pendingNoOfRecs]||'(blank)')+'</strong>');
+        }
+        if((rv[MC.deliveryDateM]||'') !== (rv[MC.pendingDeliveryDateM]||'')){
+          lines.push('Delivery date: <s>'+escapeHtml(rv[MC.deliveryDateM]||'(blank)')+'</s> → <strong>'+escapeHtml(rv[MC.pendingDeliveryDateM]||'(blank)')+'</strong>');
         }
         if(!lines.length) return '';
         return '<div style="margin-top:'+(idx>0?'6px':'0')+';">'+(g.rows.length>1?'<strong>Product '+(idx+1)+':</strong> ':'')+lines.join(' · ')+'</div>';
@@ -2688,9 +2722,10 @@ document.addEventListener('change', (e)=>{
   updateEditRequestDealField(idx);
 });
 // Open Position means there's nothing to match yet, so Buyer/Seller,
-// Source, and Which deal don't apply — hide AND clear them, the same way
-// the main form's handleMatchingChange does, so a stale value from before
-// switching to Open Position can't accidentally get submitted.
+// No of RECs, Source, Which deal, and Delivery date don't apply — hide AND
+// clear them, the same way the main form's handleMatchingChange does, so a
+// stale value from before switching to Open Position can't accidentally
+// get submitted.
 document.addEventListener('change', (e)=>{
   if(!e.target.classList || !e.target.classList.contains('edit-request-matching')) return;
   const idx = e.target.getAttribute('data-idx');
@@ -2700,15 +2735,16 @@ document.addEventListener('change', (e)=>{
     dependent.style.display = 'none';
     dependent.querySelectorAll('input[type="text"]').forEach(el=>{ el.value = ''; });
     dependent.querySelectorAll('input[type="checkbox"]').forEach(cb=>{ cb.checked = false; });
+    dependent.querySelectorAll('input[type="date"]').forEach(el=>{ el.value = ''; updateDateDisplay(el); });
     updateEditRequestDealField(idx);
   } else {
     dependent.style.display = 'flex';
   }
 });
 // Populates one editable block per product on the deal, prefilled from its
-// current (live, already-Approved) Matching/Buyer-Seller/Which deal values.
-// Deliberately only these three fields — the rest of an Approved deal's
-// data stays locked; this is BD source matching only.
+// current (live, already-Approved) Matching/Buyer-Seller/Which deal/No of
+// RECs/Delivery date values. Deliberately only these fields — the rest of
+// an Approved deal's data stays locked; this is BD source matching only.
 function openEditRequestModal(dealId){
   editRequestModalDealId = dealId;
   document.getElementById('edit-request-modal-dealid').textContent = friendlyDealId(dealId);
@@ -2739,6 +2775,8 @@ function openEditRequestModal(dealId){
       '<div id="er-'+idx+'-dependent" style="display:flex;flex-direction:column;gap:8px;'+(active?'':'display:none;')+'">' +
         '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Buyer/Seller</label>' +
           '<input type="text" class="edit-request-buyerseller" data-idx="'+idx+'"'+uidAttr+' value="'+escapeHtml(v[MC.buyerSeller]||'')+'"/></div>' +
+        '<div><label style="margin:0 0 4px;display:block;font-size:12px;">No of RECs</label>' +
+          '<input type="text" class="edit-request-norecs" data-idx="'+idx+'"'+uidAttr+' value="'+escapeHtml(v[MC.noOfRecs]||'')+'"/></div>' +
         '<div>' +
           '<label style="margin:0 0 6px;display:block;font-size:12px;">Source</label>' +
           '<div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:8px;">' +
@@ -2752,10 +2790,16 @@ function openEditRequestModal(dealId){
           '<label style="margin:0 0 4px;display:block;font-size:12px;">Which deal</label>' +
           '<div id="er-'+idx+'-deal-field">'+dealField.fieldHtml+'</div>' +
         '</div>' +
+        '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Delivery date</label>' +
+          '<div class="date-field-wrap">' +
+            '<input type="date" class="edit-request-deliverydate date-native" data-idx="'+idx+'"'+uidAttr+' value="'+escapeHtml(v[MC.deliveryDateM]||'')+'"/>' +
+            '<span class="date-display is-placeholder" data-for="er-'+idx+'-deliverydate">dd/mm/yyyy</span>' +
+          '</div></div>' +
       '</div>' +
       '</div>';
   }).join('');
   document.getElementById('edit-request-modal-overlay').style.display = 'flex';
+  refreshAllDateDisplays(fieldsEl);
 }
 function closeEditRequestModal(){
   document.getElementById('edit-request-modal-overlay').style.display = 'none';
@@ -2788,6 +2832,18 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
     const idx = parseInt(inp.getAttribute('data-idx'), 10);
     edits[idx] = edits[idx] || {};
     edits[idx].whichDeal = inp.value;
+    edits[idx].rowUid = edits[idx].rowUid || inp.getAttribute('data-uid') || '';
+  });
+  document.querySelectorAll('#edit-request-modal-fields .edit-request-norecs').forEach(inp=>{
+    const idx = parseInt(inp.getAttribute('data-idx'), 10);
+    edits[idx] = edits[idx] || {};
+    edits[idx].noOfRecs = inp.value;
+    edits[idx].rowUid = edits[idx].rowUid || inp.getAttribute('data-uid') || '';
+  });
+  document.querySelectorAll('#edit-request-modal-fields .edit-request-deliverydate').forEach(inp=>{
+    const idx = parseInt(inp.getAttribute('data-idx'), 10);
+    edits[idx] = edits[idx] || {};
+    edits[idx].deliveryDateM = inp.value;
     edits[idx].rowUid = edits[idx].rowUid || inp.getAttribute('data-uid') || '';
   });
   btn.disabled = true;
