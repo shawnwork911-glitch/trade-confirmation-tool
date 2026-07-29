@@ -2578,7 +2578,11 @@ function closeViewModal(){
   document.getElementById('view-modal-overlay').style.display = 'none';
 }
 document.getElementById('view-modal-copy').addEventListener('click', async ()=>{
-  await copyToClipboard(viewModalHtml, htmlToPlainFallback(viewModalHtml));
+  // Same internal-vs-external split as the main Copy table button: the View
+  // modal itself (viewModalHtml, rendered above) intentionally still shows
+  // BD source matching for approvers — only the copy strips it out.
+  const cleanHtml = stripBdMatchingHtml(viewModalHtml);
+  await copyToClipboard(cleanHtml, htmlToPlainFallback(cleanHtml));
   const status = document.getElementById('view-modal-copy-status');
   status.style.display = 'block';
   setTimeout(()=>{ status.style.display='none'; }, 2500);
@@ -4087,7 +4091,11 @@ function buildPlainText(data){
 function buildPointFormat(){
   const filled = parseInt(document.getElementById('trade-count').value,10);
   const lines = [];
-  const addField = (label, value) => lines.push({type:'field', label, value});
+  // bd=true marks a line as internal-only BD source matching info: included
+  // in what Level 1/2/3 approvers see via "View", but stripped out by
+  // stripBdMatchingHtml() before anything ever reaches the clipboard (Copy
+  // table / Copy), since that copy is meant for external/counterparty use.
+  const addField = (label, value, bd) => lines.push({type:'field', label, value, bd: !!bd});
   const addBlank = () => lines.push({type:'blank'});
 
   lines.push({type:'title', text:'Details: Transaction Recap'});
@@ -4118,6 +4126,12 @@ function buildPointFormat(){
     addField('Delivery', fmtDateOrdinal(val('t'+i+'-dstart'))+' - '+fmtDateOrdinal(val('t'+i+'-dend')));
     addField('COD (if applicable)', val('t'+i+'-m-cod'));
     addField('Special Remarks Request', remarksVal(i));
+    // Internal-only from here down — see the addField comment above.
+    addField('BD Matching \u2014 Status', matchingDisplayLabel(val('t'+i+'-m-matching')), true);
+    addField('BD Matching \u2014 Buyer/Seller', val('t'+i+'-m-name') || '-', true);
+    addField('BD Matching \u2014 No of RECs', val('t'+i+'-m-recs') || '-', true);
+    addField('BD Matching \u2014 Which deal', dealCodeFor(i) || '-', true);
+    addField('BD Matching \u2014 Delivery Date', fmtDateShort(val('t'+i+'-m-ddate')) || '-', true);
   }
   return lines;
 }
@@ -4131,12 +4145,26 @@ function renderPointFormatHtml(lines){
       html += '<div style="font-weight:bold;">'+escapeHtml(l.text)+'</div>';
     } else if(l.type === 'tradeTitle'){
       html += '<div style="font-weight:bold;">'+escapeHtml(l.text)+'</div>';
+    } else if(l.bd){
+      // Flat, non-nested <div> (no child <div>s inside) so
+      // stripBdMatchingHtml()'s regex can safely remove exactly these blocks
+      // without needing to track nesting depth.
+      html += '<div data-bd="1" style="background:#f2ecf7;color:#4a2d63;padding:2px 6px;border-radius:4px;margin:1px 0;">'+'<strong>'+escapeHtml(l.label)+':</strong> '+escapeHtml(l.value)+'</div>';
     } else {
       html += '<div>'+'<strong>'+escapeHtml(l.label)+':</strong> '+escapeHtml(l.value)+'</div>';
     }
   });
   html += '</div>';
   return html;
+}
+
+// Removes every internal-only BD source matching block (see addField's `bd`
+// flag above) from a rendered point-format HTML string, leaving the
+// customer-facing recap intact. Safe because each flagged block is always a
+// single flat <div data-bd="1">...</div> with no nested <div> inside it —
+// see renderPointFormatHtml.
+function stripBdMatchingHtml(html){
+  return String(html || '').replace(/<div data-bd="1"[^>]*>[\s\S]*?<\/div>/g, '');
 }
 
 function buildPointFormatText(lines){
@@ -4319,12 +4347,18 @@ document.getElementById('generate-btn').addEventListener('click', ()=>{
 });
 
 document.getElementById('copy-btn').addEventListener('click', async ()=>{
+  // lastHtml/lastPlain are the full internal version (includes BD source
+  // matching) — same content shown in the Preview and in "View" for
+  // approvers. Copying strips that out first: this recap is meant to go to
+  // the counterparty/external audience, and BD matching is internal-only.
+  const cleanHtml = stripBdMatchingHtml(lastHtml);
+  const cleanPlain = htmlToPlainFallback(cleanHtml);
   try{
-    const htmlBlob = new Blob([lastHtml], {type:'text/html'});
-    const textBlob = new Blob([lastPlain], {type:'text/plain'});
+    const htmlBlob = new Blob([cleanHtml], {type:'text/html'});
+    const textBlob = new Blob([cleanPlain], {type:'text/plain'});
     await navigator.clipboard.write([new ClipboardItem({'text/html': htmlBlob, 'text/plain': textBlob})]);
   }catch(e){
-    try{ await navigator.clipboard.writeText(lastPlain); }catch(e2){}
+    try{ await navigator.clipboard.writeText(cleanPlain); }catch(e2){}
   }
   const status = document.getElementById('copy-status');
   status.style.display = 'block';
