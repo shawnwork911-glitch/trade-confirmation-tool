@@ -3044,13 +3044,13 @@ function brokerYesHtml(){
       '<input type="checkbox" class="broker-yes-toggle" style="width:auto;margin:0;"> Broker involved'+
     '</label>';
 }
-// Broker Fees type — a hidden h-broker-fee-type field ("Price/RECs" /
+// Broker Fees type — a hidden h-broker-fee-type field ("Price/REC" /
 // "Fixed price" / "") backs two mutually-exclusive tickboxes, same idea.
 function brokerFeeTypeHtml(){
   return '<input type="hidden" id="h-broker-fee-type" value=""/>'+
     '<div style="display:flex;gap:20px;flex-wrap:wrap;">'+
       '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
-        '<input type="checkbox" class="broker-fee-type-toggle" data-value="Price/RECs" style="width:auto;margin:0;"> Price/RECs'+
+        '<input type="checkbox" class="broker-fee-type-toggle" data-value="Price/REC" style="width:auto;margin:0;"> Price/REC'+
       '</label>'+
       '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
         '<input type="checkbox" class="broker-fee-type-toggle" data-value="Fixed price" style="width:auto;margin:0;"> Fixed price'+
@@ -3298,7 +3298,7 @@ document.getElementById('header-fields').innerHTML =
     lockableField('Broker Fees', brokerFeeTypeHtml(), 'h-broker-fee-type')+
     '<div class="grid" id="h-broker-fee-fields-wrap" style="display:none;">'+
       lockableField('Currency', selectHtml('h-broker-fee-currency',CURRENCIES,'USD'),'h-broker-fee-currency')+
-      lockableField('Price / RECs', textHtml('h-broker-fee-price','e.g. 0.10'),'h-broker-fee-price')+
+      lockableField('Price / REC', '<input type="text" inputmode="decimal" class="numeric-decimal-only" id="h-broker-fee-price" placeholder="e.g. 0.10" value=""/>','h-broker-fee-price')+
     '</div>'+
   '</div>'+
   '<div style="grid-column:1 / -1;">'+
@@ -3354,6 +3354,21 @@ refreshRoleDependentUi();
 document.addEventListener('input', (e)=>{
   if(e.target && e.target.id === 'h-dealid-num'){
     const cleaned = e.target.value.replace(/[^0-9]/g,'').slice(0,5);
+    if(cleaned !== e.target.value) e.target.value = cleaned;
+  }
+});
+
+// Broker Fees "Price / REC" / "Fixed price" box (same shared input, label
+// just switches — see updateBrokerFeeUi) accepts numbers only. Digits and at
+// most one decimal point; anything else typed/pasted is stripped as it's
+// entered, same pattern as the Deal ID box above.
+document.addEventListener('input', (e)=>{
+  if(e.target && e.target.classList && e.target.classList.contains('numeric-decimal-only')){
+    let cleaned = e.target.value.replace(/[^0-9.]/g,'');
+    const firstDot = cleaned.indexOf('.');
+    if(firstDot !== -1){
+      cleaned = cleaned.slice(0,firstDot+1) + cleaned.slice(firstDot+1).replace(/\./g,'');
+    }
     if(cleaned !== e.target.value) e.target.value = cleaned;
   }
 });
@@ -3679,7 +3694,7 @@ document.addEventListener('change', (e)=>{
    old default. Broker Fees itself offers two mutually-exclusive fee
    structures (like Own RECs / Proceed Share above) — ticking one clears the
    other, and the shared Currency/Price fields' label switches between
-   "Price / RECs" and "Fixed price" depending on which is picked. */
+   "Price / REC" and "Fixed price" depending on which is picked. */
 // Keeps the hidden h-broker-yes field in sync with the visible tickbox
 // (called on user interaction) — mirrors updateTechValue/updateCodValue.
 function updateBrokerYesValue(){
@@ -3721,7 +3736,7 @@ function updateBrokerFeeUi(){
   const feeType = hidden.value;
   const anyChecked = !!feeType;
   fieldsWrap.style.display = anyChecked ? 'grid' : 'none';
-  if(priceLabel) priceLabel.textContent = feeType === 'Fixed price' ? 'Fixed price' : 'Price / RECs';
+  if(priceLabel) priceLabel.textContent = feeType === 'Fixed price' ? 'Fixed price' : 'Price / REC';
   if(!anyChecked){
     const priceEl = document.getElementById('h-broker-fee-price');
     if(priceEl) priceEl.value = '';
@@ -4179,7 +4194,7 @@ function buildPointFormat(){
     if(brokerFeeType){
       addField('Broker Fees', brokerFeeType, true);
       addField('Broker Fee Currency', val('h-broker-fee-currency'), true);
-      addField('Broker Fee Price / RECs', val('h-broker-fee-price'), true);
+      addField('Broker Fee Price / REC', val('h-broker-fee-price'), true);
     }
   }
 
@@ -4314,7 +4329,7 @@ function detailFieldDefs(requireDealId){
   const brokerYes = document.getElementById('h-broker-yes');
   if(brokerYes && brokerYes.value === 'Yes'){
     defs.push({id:'h-broker', label:'Broker name'});
-    defs.push({id:'h-broker-fee-type', label:'Broker Fees (choose Price/RECs, or Fixed price)',
+    defs.push({id:'h-broker-fee-type', label:'Broker Fees (choose Price/REC, or Fixed price)',
       validate: ()=>!!brokerFeeTypeValue()});
     if(brokerFeeTypeValue()){
       defs.push({id:'h-broker-fee-currency', label:'Broker Fee Currency'});
