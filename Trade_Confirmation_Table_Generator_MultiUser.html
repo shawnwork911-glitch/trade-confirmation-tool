@@ -3358,8 +3358,9 @@ document.addEventListener('input', (e)=>{
   }
 });
 
-// Broker Fees "Price / REC" / "Fixed price" box (same shared input, label
-// just switches — see updateBrokerFeeUi) accepts numbers only. Digits and at
+// Any "Price / REC" box — broker fees' shared field (label switches to
+// "Fixed price" when that's picked — see updateBrokerFeeUi) and each
+// product's own Price / REC field — accepts numbers only. Digits and at
 // most one decimal point; anything else typed/pasted is stripped as it's
 // entered, same pattern as the Deal ID box above.
 document.addEventListener('input', (e)=>{
@@ -3575,7 +3576,7 @@ function tradeBlockHtml(n){
     lockableField('Delivery end date', dateHtml('t'+n+'-dend'),'t'+n+'-dend')+
     lockableField('COD (if applicable)', codHtml(n),'t'+n+'-m-cod')+
     lockableField('Price currency', comboHtml('t'+n+'-currency','t'+n+'-currency-list',CURRENCIES,'USD'),'t'+n+'-currency')+
-    lockableField('Price / REC', textHtml('t'+n+'-price','e.g. 0.27'),'t'+n+'-price')+
+    lockableField('Price / REC', '<input type="text" inputmode="decimal" class="numeric-decimal-only" id="t'+n+'-price" placeholder="e.g. 0.27" value=""/>','t'+n+'-price')+
     lockableField('Payment term', textHtml('t'+n+'-payterm','30 days after invoice','30 days after invoice'),'t'+n+'-payterm')+
     lockableField('Special remarks', '<textarea id="t'+n+'-remarks" placeholder="N/A">N/A</textarea>', 't'+n+'-remarks')
       .replace('<div id=','<div style="grid-column:1 / -1;" id=')+
