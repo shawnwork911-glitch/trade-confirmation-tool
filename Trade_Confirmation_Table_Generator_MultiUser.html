@@ -3279,7 +3279,7 @@ document.getElementById('header-fields').innerHTML =
     '<label style="margin-bottom:6px;">Broker Fees</label>'+
     '<div id="h-broker-fee-type-wrap" style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:10px;">'+
       '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
-        '<input type="checkbox" id="h-broker-fee-per-rec" style="width:auto;margin:0;"> Currency + Price/RECs'+
+        '<input type="checkbox" id="h-broker-fee-per-rec" style="width:auto;margin:0;"> Price/RECs'+
       '</label>'+
       '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
         '<input type="checkbox" id="h-broker-fee-fixed" style="width:auto;margin:0;"> Fixed price'+
@@ -3726,7 +3726,7 @@ function brokerFeeTypeValue(){
   if(!yes || !yes.checked) return '';
   const perRec = document.getElementById('h-broker-fee-per-rec');
   const fixed = document.getElementById('h-broker-fee-fixed');
-  if(perRec && perRec.checked) return 'Currency + Price/RECs';
+  if(perRec && perRec.checked) return 'Price/RECs';
   if(fixed && fixed.checked) return 'Fixed price';
   return '';
 }
@@ -4249,7 +4249,7 @@ function detailFieldDefs(requireDealId){
   const brokerYes = document.getElementById('h-broker-yes');
   if(brokerYes && brokerYes.checked){
     defs.push({id:'h-broker', label:'Broker name'});
-    defs.push({id:'h-broker-fee-type', label:'Broker Fees (choose Currency + Price/RECs, or Fixed price)',
+    defs.push({id:'h-broker-fee-type', label:'Broker Fees (choose Price/RECs, or Fixed price)',
       validate: ()=>!!brokerFeeTypeValue()});
     if(brokerFeeTypeValue()){
       defs.push({id:'h-broker-fee-currency', label:'Broker Fee Currency'});
