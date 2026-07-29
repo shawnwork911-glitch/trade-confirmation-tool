@@ -4141,10 +4141,11 @@ function buildPlainText(data){
 function buildPointFormat(){
   const filled = parseInt(document.getElementById('trade-count').value,10);
   const lines = [];
-  // bd=true marks a line as internal-only BD source matching info: included
-  // in what Level 1/2/3 approvers see via "View", but stripped out by
-  // stripBdMatchingHtml() before anything ever reaches the clipboard (Copy
-  // table / Copy), since that copy is meant for external/counterparty use.
+  // bd=true marks a line as internal-only info (BD source matching, or
+  // broker details below): included in what Level 1/2/3 approvers see via
+  // "View", but stripped out by stripBdMatchingHtml() before anything ever
+  // reaches the clipboard (Copy table / Copy), since that copy is meant for
+  // external/counterparty use.
   const addField = (label, value, bd) => lines.push({type:'field', label, value, bd: !!bd});
   // BD matching fields additionally carry which product they belong to and
   // which specific field they are (product/field) — refreshBdMatchingInHtml()
@@ -4167,6 +4168,20 @@ function buildPointFormat(){
   // Counterparty line: our own side is always "Saxon", shown with whichever
   // role is the opposite of the agreement's Buyer/Seller above.
   addField(currentRole() === 'Seller' ? 'Buyer' : 'Seller', 'Saxon');
+
+  // Broker details — internal-only (see the addField comment above): shown
+  // to Level 1/2/3 approvers via "View", but stripped before Copy table /
+  // Copy since the counterparty doesn't need to see broker involvement.
+  // Only added when a broker is actually involved on this deal ("if have").
+  if(val('h-broker-yes') === 'Yes'){
+    addField('Broker', val('h-broker') || 'NA', true);
+    const brokerFeeType = brokerFeeTypeValue();
+    if(brokerFeeType){
+      addField('Broker Fees', brokerFeeType, true);
+      addField('Broker Fee Currency', val('h-broker-fee-currency'), true);
+      addField('Broker Fee Price / RECs', val('h-broker-fee-price'), true);
+    }
+  }
 
   for(let i=1;i<=filled;i++){
     addBlank();
@@ -4207,8 +4222,12 @@ function renderPointFormatHtml(lines){
       // Flat, non-nested <div> (no child <div>s inside) so
       // stripBdMatchingHtml()'s regex can safely remove exactly these blocks
       // without needing to track nesting depth. data-product/data-field
-      // identify this exact value for refreshBdMatchingInHtml().
-      html += '<div data-bd="1" data-product="'+l.product+'" data-field="'+l.field+'" style="background:#f2ecf7;color:#4a2d63;padding:2px 6px;border-radius:4px;margin:1px 0;">'+'<strong>'+escapeHtml(l.label)+':</strong> '+escapeHtml(l.value)+'</div>';
+      // identify this exact value for refreshBdMatchingInHtml() — only
+      // present for per-product BD matching fields; deal-level bd fields
+      // (e.g. Broker) omit them since there's nothing to live-refresh.
+      const dataAttrs = (l.product !== undefined && l.field !== undefined)
+        ? ' data-product="'+l.product+'" data-field="'+l.field+'"' : '';
+      html += '<div data-bd="1"'+dataAttrs+' style="background:#f2ecf7;color:#4a2d63;padding:2px 6px;border-radius:4px;margin:1px 0;">'+'<strong>'+escapeHtml(l.label)+':</strong> '+escapeHtml(l.value)+'</div>';
     } else {
       html += '<div>'+'<strong>'+escapeHtml(l.label)+':</strong> '+escapeHtml(l.value)+'</div>';
     }
