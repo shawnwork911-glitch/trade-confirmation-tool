@@ -582,13 +582,29 @@ const LOG_TABLE_NAME = "TradeDealLog";        // must match the Excel Table name
 // Rejected By, Rejected Date, Rejection Comment, Agreement File Name,
 // Agreement File URL, Description, Broker Fee Type, Broker Fee Currency,
 // Broker Fee Price, Pending Matching, Pending Buyer/Seller,
-// Pending Which Deal, Change Requested By, Change Requested Date
+// Pending Which Deal, Change Requested By, Change Requested Date,
+// Row Uid, Approved List Item Id
 // NOTE: if you're adding this to an existing workbook, add any new column
-// ("Broker Fee Type"/"Broker Fee Currency"/"Broker Fee Price" included, and
-// now the 5 "Pending ..."/"Change Requested ..." columns used for
-// post-approval BD source matching change requests) at the END of the live
-// TradeDealLog Excel Table — don't insert them in the middle, or every
-// existing column index below will point at the wrong data.
+// ("Broker Fee Type"/"Broker Fee Currency"/"Broker Fee Price" included, the
+// 5 "Pending ..."/"Change Requested ..." columns used for post-approval BD
+// source matching change requests, and now "Row Uid"/"Approved List Item
+// Id") at the END of the live TradeDealLog Excel Table — don't insert them
+// in the middle, or every existing column index below will point at the
+// wrong data.
+// "Row Uid": a permanent, per-TRADE-ROW random ID, stamped once at Save
+// agreement time and never touched again — unlike Deal ID (shared by every
+// row of a multi-product agreement) or the Excel row index (which can shift
+// if rows are ever reordered), this is what uniquely and permanently
+// identifies one physical row, and is copied alongside it into the
+// "Approved" SharePoint list so a row there can always be traced back to
+// its exact TradeDealLog source row.
+// "Approved List Item Id": the SharePoint list item id returned when this
+// row was last copied into the "Approved" list (see addApprovedDealToList) —
+// blank until that first happens at final (Level 3) sign-off, then
+// refreshed every time a later BD source matching change adds another
+// history entry for this row. It's just a pointer for lookup/traceability;
+// the "Approved" list itself is append-only (a fresh row per change, so it
+// keeps a full history), so this always points at the most recent entry.
 const MC = {
   salesPic:0, entity:1, agreementDate:2, dealId:3, supplyDemand:4, company:5,
   broker:6, country:7, registry:8, tech:9, matching:10, volume:11,
@@ -608,9 +624,12 @@ const MC = {
   // — so the currently-approved values stay authoritative and visible
   // everywhere else in the app while a change is pending.
   pendingMatching:47, pendingBuyerSeller:48, pendingWhichDeal:49,
-  pendingRequestedBy:50, pendingRequestedDate:51
+  pendingRequestedBy:50, pendingRequestedDate:51,
+  // ---- Per-row identity / traceability ----
+  // See the column-layout comment above for what these two hold.
+  rowUid:52, approvedListItemId:53
 };
-const COL_COUNT = 52;
+const COL_COUNT = 54;
 const DRAFT_TABLE_NAME = "TradeDealDrafts";   // must match the Excel Table name you create
 // Small generic key/value settings table. Currently holds one row:
 // key="dealIdStart", value=the lowest 5-digit number the next new Deal ID
@@ -1394,7 +1413,13 @@ async function getApprovedListColumnMap(){
   return map;
 }
 
-async function addApprovedDealToList(values){
+// changeNote is optional context describing WHY this entry was added —
+// e.g. the specific Matching/Buyer-Seller/Which-deal diff for a BD source
+// matching change — so the "Approved" list reads as a proper audit log
+// (one row per change, each explaining itself) rather than just a stack of
+// otherwise-identical "Approved" snapshots. Defaults to describing the
+// initial final sign-off when not given.
+async function addApprovedDealToList(values, changeNote){
 
     if(!approvedListId){
         approvedListId = await getSharePointListId(APPROVED_LIST_NAME);
@@ -1437,7 +1462,22 @@ async function addApprovedDealToList(values){
         'Delivery Date': values[MC.deliveryDateM],
         'Status': values[MC.status],
         'Submitted By': values[MC.submittedBy],
-        'Submitted Date': values[MC.submittedDate]
+        'Submitted Date': values[MC.submittedDate],
+        // Who/when actually signed this particular entry off — distinct
+        // from Submitted By/Date above, and what makes each audit-log
+        // entry self-contained rather than needing a join back to
+        // TradeDealLog to know who approved it.
+        'Approved By': values[MC.approvedBy3],
+        'Approved Date': values[MC.approvedDate3],
+        // What this entry represents — the initial final sign-off, or the
+        // specific field-level diff for a later BD source matching change.
+        'Change Note': changeNote || 'Initial Level 3 approval',
+        // Ties this "Approved" list entry back to its exact TradeDealLog
+        // source row — see the Row Uid comment on the MC column-layout
+        // block above. If the "Approved" list has no such column yet this
+        // is just silently skipped (same as any other missing column), so
+        // it's safe to deploy this before that column exists there.
+        'Row Uid': values[MC.rowUid]
         // Agreement File: no matching column on this list — intentionally
         // left out rather than sent-and-skipped. Add a line here (with the
         // exact display name) if a column for it is ever created.
@@ -1458,7 +1498,7 @@ async function addApprovedDealToList(values){
     }
 
     try{
-        await graphFetch(
+        const created = await graphFetch(
             "/sites/" + siteId +
             "/lists/" + approvedListId +
             "/items",
@@ -1467,6 +1507,10 @@ async function addApprovedDealToList(values){
             body:JSON.stringify({ fields })
         }
     );
+    // The created item's SharePoint list item id — callers write this back
+    // onto the TradeDealLog row's "Approved List Item Id" column so the row
+    // stays traceable to where it landed in the "Approved" list.
+    return created && created.id;
     }catch(err){
         // Annotate with exactly what was sent so a failure here is diagnosable
         // from the error alone, without needing another round of screenshots —
@@ -1565,6 +1609,16 @@ async function uploadAgreementFile(dealId, file){
         run (in the *approver's* session) and claim the real 5-digit number,
         overwriting the placeholder in every row of the agreement. The
         submitter is emailed once this happens (see notifyDealIdAssigned). */
+// A permanent, per-trade-row id — separate from Deal ID (shared by every
+// row of a multi-product agreement) — stamped once at Save agreement time
+// so each physical row can always be identified/traced on its own, e.g. to
+// its corresponding entry in the "Approved" SharePoint list. Same
+// crypto.randomUUID-with-fallback pattern as assignPendingDealId() below.
+function generateRowUid(){
+  return (window.crypto && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : (Date.now().toString(36) + Math.random().toString(36).slice(2,10)).toUpperCase();
+}
 function assignPendingDealId(){
   const rand = (window.crypto && crypto.randomUUID)
     ? crypto.randomUUID().replace(/-/g,'').slice(0,10).toUpperCase()
@@ -1737,9 +1791,9 @@ function dealAlreadySubmitted(dealId){
   return myRowsBySubmissionRef().length > 0;
 }
 function submittedDealStatus(dealId){
-  let row = logRowsCache.find(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
-  if(!row) row = myRowsBySubmissionRef()[0];
-  return row ? (row.values[0][MC.status] || STATUS_PENDING_1) : null;
+  let rows = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  if(!rows.length) rows = myRowsBySubmissionRef();
+  return rows.length ? dealGroupStatus(rows) : null;
 }
 function checkSubmittedLock(){
   // Resync currentDealDocId if Level 1 has since assigned the real Deal ID
@@ -1898,6 +1952,8 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
     row[MC.brokerFeeType] = brokerFeeTypeValue();
     row[MC.brokerFeeCurrency] = brokerFeeTypeValue() ? val('h-broker-fee-currency') : '';
     row[MC.brokerFeePrice] = brokerFeeTypeValue() ? val('h-broker-fee-price') : '';
+    row[MC.rowUid] = generateRowUid();
+    row[MC.approvedListItemId] = '';
     rowsToWrite.push(row);
   }
   await addTableRows(LOG_TABLE_NAME, rowsToWrite);
@@ -1992,7 +2048,11 @@ async function approveDeal(dealId, file, transferOverrides){
     // trade, and each write can fail independently of the others.
     if(nextStatus === STATUS_APPROVED){
       try{
-        await addApprovedDealToList(values);
+        const approvedItemId = await addApprovedDealToList(values);
+        if(approvedItemId){
+          values[MC.approvedListItemId] = String(approvedItemId);
+          await updateTableRow(LOG_TABLE_NAME, r.index, values);
+        }
       }catch(err){
         console.error('Could not copy Product ' + tradeNum + ' into the "Approved" list — check that its column internal names match what this app sends (see the fields{} object in addApprovedDealToList).', err);
         approvedListErrors.push('Product ' + tradeNum + ': ' + err.message);
@@ -2055,18 +2115,36 @@ async function rejectDeal(dealId, reason){
    up in the Level 3/Superadmin Approval queue — while the live
    matching/buyerSeller/whichDeal columns (and everything already written to
    the "Approved" SharePoint list) are left untouched until that approval
-   happens. edits is an array of {matching, buyerSeller, whichDeal}, one per
-   product row, in the same order as the deal's rows sorted by index. */
+   happens. edits is an array of {matching, buyerSeller, whichDeal, rowUid},
+   one per product row, in the same order as the deal's rows sorted by
+   index — rowUid is what the modal showed for that product when it was
+   opened, and is checked against a freshly-read row set below (not just
+   trusted by position) before anything is written. */
 async function requestBdMatchChange(dealId, edits){
   if(!dealId) return;
   const rows = await getTableRows(LOG_TABLE_NAME);
   const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
   if(!matching.length) throw new Error('Could not find this deal.');
-  const currentStatus = matching[0].values[0][MC.status];
+  const currentStatus = dealGroupStatus(matching);
   if(currentStatus !== STATUS_APPROVED) throw new Error('You can only request a change to a fully Approved deal.');
   const myEmail = (currentAccount.username || '').toLowerCase();
   if((matching[0].values[0][MC.submittedBy] || '').toLowerCase() !== myEmail){
     throw new Error('Only the original submitter can request a change to this deal.');
+  }
+  // Row Uid identity check: confirms each edit is still landing on the
+  // exact product it was made against, not just "whatever's in this
+  // position now" — matters because the modal was built from a snapshot
+  // (logRowsCache) that could be stale by submit time (e.g. another admin
+  // acted on this deal in between). Only enforced where both sides actually
+  // have a Row Uid — a row saved before this column existed has a blank
+  // Row Uid and falls back to the old position-only matching so it isn't
+  // blocked from ever being edited again.
+  for(let i = 0; i < matching.length; i++){
+    const rowUid = matching[i].values[0][MC.rowUid] || '';
+    const editUid = (edits[i] || {}).rowUid || '';
+    if(rowUid && editUid && rowUid !== editUid){
+      throw new Error('This deal\'s products have changed since you opened the edit form (Product ' + (i+1) + ' no longer matches what was shown). Please close and reopen "Request edit" to refresh, then try again.');
+    }
   }
   const liveColumnCount = await getTableColumnCount(LOG_TABLE_NAME);
   if(liveColumnCount < COL_COUNT){
@@ -2080,7 +2158,7 @@ async function requestBdMatchChange(dealId, edits){
   // write and the email entirely rather than locking the deal into
   // "Pending Change - Level 3" and paging Level 3 for a no-op.
   const changeLines = [];
-  let anyChange = false;
+  const rowChanged = new Array(matching.length).fill(false);
   for(let i = 0; i < matching.length; i++){
     const rv = matching[i].values[0];
     const edit = edits[i] || {};
@@ -2095,15 +2173,21 @@ async function requestBdMatchChange(dealId, edits){
       lines.push('Which deal: ' + (rv[MC.whichDeal]||'(blank)') + ' \u2192 ' + (edit.whichDeal||'(blank)'));
     }
     if(lines.length){
-      anyChange = true;
+      rowChanged[i] = true;
       changeLines.push((matching.length > 1 ? 'Product ' + (i+1) + ' \u2014 ' : '') + lines.join(', '));
     }
   }
-  if(!anyChange){
+  if(!changeLines.length){
     throw new Error('No changes were made — nothing to submit for re-approval.');
   }
   const nowIso = new Date().toISOString();
+  // Only the product(s) that actually changed get staged and flipped to
+  // "Pending Change - Level 3" — an unchanged product in the same deal is
+  // left completely untouched (no write at all), so it stays Approved and
+  // isn't re-queued, re-approved, or re-copied into the "Approved" list
+  // alongside the product that actually needs review.
   for(let i = 0; i < matching.length; i++){
+    if(!rowChanged[i]) continue;
     const r = matching[i];
     const edit = edits[i] || {};
     const values = r.values[0].slice();
@@ -2133,18 +2217,38 @@ async function requestBdMatchChange(dealId, edits){
 async function approveBdMatchChange(dealId){
   if(!dealId) return;
   const rows = await getTableRows(LOG_TABLE_NAME);
-  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
-  if(!matching.length) return;
-  const currentStatus = matching[0].values[0][MC.status];
-  if(currentStatus !== STATUS_PENDING_CHANGE_3) throw new Error('This deal is not awaiting a change approval.');
+  const allMatching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
+  if(!allMatching.length) return;
+  // Only the row(s) actually carrying a pending change get touched here —
+  // a sibling product in the same deal that's still plain "Approved" (i.e.
+  // wasn't part of this change request) is left alone entirely: no status
+  // flip, no re-approval stamp, and no duplicate entry in the "Approved"
+  // list.
+  const matching = allMatching.filter(r => r.values[0][MC.status] === STATUS_PENDING_CHANGE_3);
+  if(!matching.length) throw new Error('This deal is not awaiting a change approval.');
   if(!canActOnStatus(STATUS_PENDING_CHANGE_3)) throw new Error('You are not able to approve this change.');
   const nowIso = new Date().toISOString();
-  const submitterEmail = matching[0].values[0][MC.submittedBy];
+  const submitterEmail = allMatching[0].values[0][MC.submittedBy];
   const approvedListErrors = [];
   let tradeNum = 0;
   for(const r of matching){
     tradeNum++;
     const values = r.values[0].slice();
+    // Captured before the pending* fields are cleared below, so the
+    // "Approved" list entry created from this row explains exactly what
+    // changed — the point of it being an audit log rather than just a
+    // repeated snapshot.
+    const noteLines = [];
+    if((values[MC.matching]||'') !== (values[MC.pendingMatching]||'')){
+      noteLines.push('Matching: ' + matchingDisplayLabel(values[MC.matching]) + ' \u2192 ' + matchingDisplayLabel(values[MC.pendingMatching]));
+    }
+    if((values[MC.buyerSeller]||'') !== (values[MC.pendingBuyerSeller]||'')){
+      noteLines.push('Buyer/Seller: ' + (values[MC.buyerSeller]||'(blank)') + ' \u2192 ' + (values[MC.pendingBuyerSeller]||'(blank)'));
+    }
+    if((values[MC.whichDeal]||'') !== (values[MC.pendingWhichDeal]||'')){
+      noteLines.push('Which deal: ' + (values[MC.whichDeal]||'(blank)') + ' \u2192 ' + (values[MC.pendingWhichDeal]||'(blank)'));
+    }
+    const changeNote = 'BD source matching change' + (noteLines.length ? ': ' + noteLines.join(', ') : '');
     values[MC.matching] = values[MC.pendingMatching];
     values[MC.buyerSeller] = values[MC.pendingBuyerSeller];
     values[MC.whichDeal] = values[MC.pendingWhichDeal];
@@ -2158,7 +2262,13 @@ async function approveBdMatchChange(dealId){
     values[MC.approvedDate3] = nowIso;
     await updateTableRow(LOG_TABLE_NAME, r.index, values);
     try{
-      await addApprovedDealToList(values);
+      const approvedItemId = await addApprovedDealToList(values, changeNote);
+      if(approvedItemId){
+        // "Approved" list is append-only (a fresh entry per change, kept
+        // as history), so this always advances to point at the newest one.
+        values[MC.approvedListItemId] = String(approvedItemId);
+        await updateTableRow(LOG_TABLE_NAME, r.index, values);
+      }
     }catch(err){
       console.error('Could not copy Product ' + tradeNum + '\'s change into the "' + APPROVED_LIST_NAME + '" list — check that its column internal names match what this app sends (see the fields{} object in addApprovedDealToList).', err);
       approvedListErrors.push('Product ' + tradeNum + ': ' + err.message);
@@ -2178,13 +2288,16 @@ async function rejectBdMatchChange(dealId, reason){
   const trimmedReason = (reason || '').trim();
   if(!trimmedReason) throw new Error('A comment is required so the submitter knows why this change was rejected.');
   const rows = await getTableRows(LOG_TABLE_NAME);
-  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
-  if(!matching.length) return;
-  const currentStatus = matching[0].values[0][MC.status];
-  if(currentStatus !== STATUS_PENDING_CHANGE_3) throw new Error('This deal is not awaiting a change approval.');
+  const allMatching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  if(!allMatching.length) return;
+  // Same scoping as approveBdMatchChange: only the product(s) actually
+  // carrying this pending change are reverted — a sibling product that's
+  // still plain "Approved" was never part of the request and stays as-is.
+  const matching = allMatching.filter(r => r.values[0][MC.status] === STATUS_PENDING_CHANGE_3);
+  if(!matching.length) throw new Error('This deal is not awaiting a change approval.');
   if(!canActOnStatus(STATUS_PENDING_CHANGE_3)) throw new Error('You are not able to reject this change.');
   const nowIso = new Date().toISOString();
-  const submitterEmail = matching[0].values[0][MC.submittedBy];
+  const submitterEmail = allMatching[0].values[0][MC.submittedBy];
   for(const r of matching){
     const values = r.values[0].slice();
     values[MC.status] = STATUS_APPROVED;
@@ -2200,6 +2313,21 @@ async function rejectBdMatchChange(dealId, reason){
   }
   await notifyChangeSubmitter(dealId, submitterEmail, 'rejected', trimmedReason);
   await loadHistory();
+}
+// A deal's overall status for display/routing purposes. Normally every row
+// of a deal shares the same Status — the 3-level approval chain always
+// writes it to every row of the deal together — but a BD source matching
+// change request (see requestBdMatchChange below) only moves the row(s)
+// that actually changed into "Pending Change - Level 3", so a multi-product
+// deal can end up with one product still "Approved" while another is
+// "Pending Change - Level 3". Whenever that split exists, the pending
+// status wins for display/routing (approval queue, history badge, which
+// approve/reject handler runs), since that's the state something is
+// actually waiting on — falling back to the first row's status covers the
+// normal case where every row agrees.
+function dealGroupStatus(rows){
+  if(rows.some(r => r.values[0][MC.status] === STATUS_PENDING_CHANGE_3)) return STATUS_PENDING_CHANGE_3;
+  return (rows[0] && rows[0].values[0][MC.status]) || STATUS_PENDING_1;
 }
 function groupByDealId(rows){
   const groups = {};
@@ -2228,7 +2356,7 @@ async function loadHistory(){
         .sort((a,b)=> String(b.rows[0].values[0][MC.submittedDate]||'').localeCompare(String(a.rows[0].values[0][MC.submittedDate]||'')));
 
       const queueEl = document.getElementById('approval-queue-list');
-      const queueGroups = allGroups.filter(g => canActOnStatus(g.rows[0].values[0][MC.status] || STATUS_PENDING_1));
+      const queueGroups = allGroups.filter(g => canActOnStatus(dealGroupStatus(g.rows)));
       renderHistoryTable(queueEl, queueGroups, {showOwner:true, showActions:true, emptyText:'Nothing waiting on your approval right now.'});
 
       const adminListEl = document.getElementById('admin-history-list');
@@ -2284,7 +2412,7 @@ function renderHistoryTable(el, groups, opts){
     '<th style="padding:6px;"></th></tr>';
   groups.forEach(g=>{
     const v = g.rows[0].values[0];
-    const status = v[MC.status] || STATUS_PENDING_1;
+    const status = dealGroupStatus(g.rows);
     const canAct = showActions && canActOnStatus(status);
     const trail = approvalTrailText(v);
     const agreementUrl = v[MC.agreementFileUrl];
@@ -2513,16 +2641,17 @@ let editRequestModalDealId = null;
 // CURRENT live "Which deal" value already matches one of those option
 // lists — same inference editMatchingDealFieldHtml used in the older
 // direct-overwrite version of this flow.
-function editRequestDealFieldHtml(idx, storedValue){
+function editRequestDealFieldHtml(idx, storedValue, rowUid){
+  const uidAttr = ' data-uid="'+escapeHtml(rowUid||'')+'"';
   if(OWN_RECS_OPTIONS.includes(storedValue)){
-    return {own:true, proceed:false, fieldHtml: '<select class="edit-request-whichdeal" data-idx="'+idx+'">'+
+    return {own:true, proceed:false, fieldHtml: '<select class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+'>'+
       OWN_RECS_OPTIONS.map(o=>'<option value="'+escapeHtml(o)+'"'+(o===storedValue?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>'};
   }
   if(PROCEED_SHARE_OPTIONS.includes(storedValue)){
-    return {own:false, proceed:true, fieldHtml: '<select class="edit-request-whichdeal" data-idx="'+idx+'">'+
+    return {own:false, proceed:true, fieldHtml: '<select class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+'>'+
       PROCEED_SHARE_OPTIONS.map(o=>'<option value="'+escapeHtml(o)+'"'+(o===storedValue?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>'};
   }
-  return {own:false, proceed:false, fieldHtml: '<input type="text" class="edit-request-whichdeal" data-idx="'+idx+'" placeholder="Deal Recap ID" value="'+escapeHtml(storedValue||'')+'"/>'};
+  return {own:false, proceed:false, fieldHtml: '<input type="text" class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+' placeholder="Deal Recap ID" value="'+escapeHtml(storedValue||'')+'"/>'};
 }
 // Rebuilds the "Which deal" field for product idx as a text box (default),
 // or a dropdown of Own RECs / Proceed Share options — same pattern as the
@@ -2532,14 +2661,16 @@ function updateEditRequestDealField(idx){
   const proceed = document.getElementById('er-'+idx+'-proceed');
   const target = document.getElementById('er-'+idx+'-deal-field');
   if(!own || !proceed || !target) return;
+  const matchingSel = document.querySelector('.edit-request-matching[data-idx="'+idx+'"]');
+  const uidAttr = ' data-uid="'+escapeHtml((matchingSel && matchingSel.getAttribute('data-uid')) || '')+'"';
   if(own.checked){
-    target.innerHTML = '<select class="edit-request-whichdeal" data-idx="'+idx+'">'+
+    target.innerHTML = '<select class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+'>'+
       OWN_RECS_OPTIONS.map((o,i)=>'<option value="'+escapeHtml(o)+'"'+(i===0?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>';
   } else if(proceed.checked){
-    target.innerHTML = '<select class="edit-request-whichdeal" data-idx="'+idx+'">'+
+    target.innerHTML = '<select class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+'>'+
       PROCEED_SHARE_OPTIONS.map((o,i)=>'<option value="'+escapeHtml(o)+'"'+(i===0?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>';
   } else {
-    target.innerHTML = '<input type="text" class="edit-request-whichdeal" data-idx="'+idx+'" placeholder="Deal Recap ID"/>';
+    target.innerHTML = '<input type="text" class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+' placeholder="Deal Recap ID"/>';
   }
 }
 // Own RECs / Proceed Share are mutually exclusive within a product row.
@@ -2594,14 +2725,20 @@ function openEditRequestModal(dealId){
       '<option value="'+escapeHtml(m)+'"'+(m===matchingVal?' selected':'')+'>'+escapeHtml(MATCHING_DISPLAY_NAMES[m]||m)+'</option>'
     ).join('');
     const label = group.length > 1 ? 'Product ' + (idx+1) : 'Product';
-    const dealField = editRequestDealFieldHtml(idx, v[MC.whichDeal]||'');
+    const dealField = editRequestDealFieldHtml(idx, v[MC.whichDeal]||'', v[MC.rowUid]||'');
+    // data-uid carries this row's permanent Row Uid — requestBdMatchChange
+    // uses it to confirm, at submit time, that it's still writing this
+    // edit onto the exact same physical row the modal showed (rather than
+    // just trusting position-in-list, which could point at the wrong
+    // product if the deal's rows changed shape while the modal was open).
+    const uidAttr = ' data-uid="'+escapeHtml(v[MC.rowUid]||'')+'"';
     return '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;">' +
       '<p style="margin:0;font-size:13px;font-weight:600;">'+escapeHtml(label)+'</p>' +
       '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Matching</label>' +
-        '<select class="edit-request-matching" data-idx="'+idx+'">'+matchOptions+'</select></div>' +
+        '<select class="edit-request-matching" data-idx="'+idx+'"'+uidAttr+'>'+matchOptions+'</select></div>' +
       '<div id="er-'+idx+'-dependent" style="display:flex;flex-direction:column;gap:8px;'+(active?'':'display:none;')+'">' +
         '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Buyer/Seller</label>' +
-          '<input type="text" class="edit-request-buyerseller" data-idx="'+idx+'" value="'+escapeHtml(v[MC.buyerSeller]||'')+'"/></div>' +
+          '<input type="text" class="edit-request-buyerseller" data-idx="'+idx+'"'+uidAttr+' value="'+escapeHtml(v[MC.buyerSeller]||'')+'"/></div>' +
         '<div>' +
           '<label style="margin:0 0 6px;display:block;font-size:12px;">Source</label>' +
           '<div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:8px;">' +
@@ -2639,16 +2776,19 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
     const idx = parseInt(sel.getAttribute('data-idx'), 10);
     edits[idx] = edits[idx] || {};
     edits[idx].matching = sel.value;
+    edits[idx].rowUid = sel.getAttribute('data-uid') || '';
   });
   document.querySelectorAll('#edit-request-modal-fields .edit-request-buyerseller').forEach(inp=>{
     const idx = parseInt(inp.getAttribute('data-idx'), 10);
     edits[idx] = edits[idx] || {};
     edits[idx].buyerSeller = inp.value;
+    edits[idx].rowUid = edits[idx].rowUid || inp.getAttribute('data-uid') || '';
   });
   document.querySelectorAll('#edit-request-modal-fields .edit-request-whichdeal').forEach(inp=>{
     const idx = parseInt(inp.getAttribute('data-idx'), 10);
     edits[idx] = edits[idx] || {};
     edits[idx].whichDeal = inp.value;
+    edits[idx].rowUid = edits[idx].rowUid || inp.getAttribute('data-uid') || '';
   });
   btn.disabled = true;
   btn.textContent = 'Submitting…';
