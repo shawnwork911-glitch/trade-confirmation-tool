@@ -295,6 +295,9 @@
   .warning-box strong{display:block;margin-bottom:6px;font-size:13px;}
   .warning-box ul{margin:0;padding-left:20px;columns:2;-webkit-columns:2;column-gap:24px;}
   .warning-box li{margin:2px 0;break-inside:avoid;}
+  .cod-year-error{display:none;color:#b3261e;font-size:12px;margin-top:4px;}
+  .cod-year-error.show{display:block;}
+  .cod-year.invalid-flash{border-color:#b3261e !important;}
   @media (max-width:600px){
     .warning-box ul{columns:1;}
   }
@@ -1360,7 +1363,12 @@ function coerceForColumnType(raw, colType){
     }
     return str; // already ISO-ish, or unparseable — pass through as-is
   }
-  return raw; // text/choice/boolean/etc — send as given
+  if(colType === 'text') return str; // always send a real string, even if the
+  // source cell held a JS number — e.g. a purely-numeric transfer/account
+  // name like "4567" gets silently auto-converted to a number by Excel when
+  // it's first saved into TradeDealLog; sending that raw number into a
+  // SharePoint Text column can trigger a vague Graph "generalException".
+  return raw; // choice/boolean/etc — send as given
 }
 async function getApprovedListColumnMap(){
   if(approvedListColumnMapCache) return approvedListColumnMapCache;
@@ -2702,7 +2710,7 @@ document.addEventListener('click', (e)=>{
 
 
 const COUNTRIES = ["MY","BN","CN","JP","SA","TH","IN","PH","SG","VN","INDO","AUS","TW"];
-const TECHS = ["ANY","SLR","GEO","BIO","HYD","BGS","SHY","LHY","CC","WND"];
+const TECHS = ["ANY","SLR","GEO","BIO","HYD","BGS","SHY","LHY","WND"];
 
 // Hardcoded code -> full name lookups for the Customer version output (per
 // the reference sheet). Keys are matched case-insensitively; anything not
@@ -2714,7 +2722,7 @@ const COUNTRY_FULLNAMES = {
 };
 const TECH_FULLNAMES = {
   'SLR':'Solar', 'ANY':'Any tech', 'GEO':'Geothermal', 'BIO':'Biomass', 'HYD':'Hydro',
-  'BGS':'Biogas', 'SHY':'Small Hydro', 'LHY':'Large Hydro', 'CC':'Carbon Credit',
+  'BGS':'Biogas', 'SHY':'Small Hydro', 'LHY':'Large Hydro',
   'WND':'Wind', 'SLR/WND':'Solar/Wind', 'S/WND':'Solar/Wind', 'SLR/BIO':'Solar/Biomass',
   'SLR/WND/SHY':'Solar/Wind/Small Hydro', 'SLR/WND/LHY':'Solar/Wind/Large Hydro'
 };
@@ -2926,6 +2934,7 @@ function codHtml(n){
       '</label>'+
       '<div class="cod-year-wrap" id="t'+n+'-cod-year-wrap" style="display:none;margin-top:6px;">'+
         '<input type="text" inputmode="numeric" maxlength="4" placeholder="e.g. 2001" class="cod-year" id="t'+n+'-cod-year" data-trade="'+n+'"/>'+
+        '<div class="cod-year-error" id="t'+n+'-cod-year-error">Please enter numbers only \u2014 a 4-digit year (e.g. 2001).</div>'+
       '</div>'+
     '</div>';
 }
@@ -2958,6 +2967,9 @@ function syncCodUiFromHidden(n){
   const toggle = document.querySelector('.cod-toggle[data-trade="'+n+'"]');
   const yearInput = document.getElementById('t'+n+'-cod-year');
   const yearWrap = document.getElementById('t'+n+'-cod-year-wrap');
+  const errEl = document.getElementById('t'+n+'-cod-year-error');
+  if(errEl) errEl.classList.remove('show');
+  if(yearInput) yearInput.classList.remove('invalid-flash');
   if(!hidden || !toggle) return;
   const m = String(hidden.value||'').match(/^1 Jan (\d{4}) or newer$/);
   if(m){
@@ -2977,9 +2989,26 @@ document.addEventListener('change', (e)=>{
 document.addEventListener('input', (e)=>{
   const yi = e.target.closest('.cod-year');
   if(yi){
+    const n = yi.getAttribute('data-trade');
+    const errEl = document.getElementById('t'+n+'-cod-year-error');
+    const hadNonDigit = /[^0-9]/.test(yi.value);
     const cleaned = yi.value.replace(/[^0-9]/g,'').slice(0,4);
     if(cleaned !== yi.value) yi.value = cleaned;
-    updateCodValue(yi.getAttribute('data-trade'));
+    if(hadNonDigit && errEl){
+      // Flash a warning telling the user only a numeric year is allowed;
+      // auto-hides shortly after so it doesn't linger once they've stopped typing.
+      errEl.classList.add('show');
+      yi.classList.add('invalid-flash');
+      clearTimeout(yi._codErrTimer);
+      yi._codErrTimer = setTimeout(()=>{
+        errEl.classList.remove('show');
+        yi.classList.remove('invalid-flash');
+      }, 2500);
+    } else if(errEl){
+      errEl.classList.remove('show');
+      yi.classList.remove('invalid-flash');
+    }
+    updateCodValue(n);
   }
 });
 function selectWithFullNamesHtml(id, codes, fullNameMap, def){
