@@ -3935,6 +3935,19 @@ function dealCodeFor(n){
   return raw;
 }
 
+// Display value for the preview's "Which deal" line — the raw full name,
+// prefixed with which source it came from ("Own RECs" / "Proceed Share")
+// when one of those tickboxes is checked, e.g. "Own RECs - TIGR MY SLR".
+function dealLabelFor(n){
+  const raw = val('t'+n+'-m-deal');
+  if(!raw) return '';
+  const own = document.getElementById('t'+n+'-m-own');
+  const proceed = document.getElementById('t'+n+'-m-proceed');
+  if(own && own.checked) return 'Own RECs - ' + raw;
+  if(proceed && proceed.checked) return 'Proceed Share - ' + raw;
+  return raw;
+}
+
 function renderTrades(){
   const countEl = document.getElementById('trade-count');
   let n = parseInt(countEl.value, 10);
@@ -4349,7 +4362,7 @@ function buildPointFormat(){
     addBdField(i, 'status', 'BD Matching \u2014 Status', matchingDisplayLabel(val('t'+i+'-m-matching')));
     addBdField(i, 'buyerseller', 'BD Matching \u2014 Buyer/Seller', val('t'+i+'-m-name') || '-');
     addBdField(i, 'norecs', 'BD Matching \u2014 No of RECs', val('t'+i+'-m-recs') || '-');
-    addBdField(i, 'whichdeal', 'BD Matching \u2014 Which deal', val('t'+i+'-m-deal') || '-');
+    addBdField(i, 'whichdeal', 'BD Matching \u2014 Which deal', dealLabelFor(i) || '-');
     addBdField(i, 'deliverydate', 'BD Matching \u2014 Delivery Date', formatStoredDate(val('t'+i+'-m-ddate')) || '-');
   }
   return lines;
@@ -4403,6 +4416,18 @@ function stripBdMatchingHtml(html){
 // stored generatedHtml column itself is intentionally left untouched — the
 // live TradeDealLog columns (MC.matching etc.) remain the single source of
 // truth, this just re-reads them at render time instead of trusting the snapshot.
+// Same "Own RECs - " / "Proceed Share - " labeling as dealLabelFor(), but
+// for a value already pulled from a saved TradeDealLog row (which only ever
+// stored the raw full name, not the label) — inferred by checking which
+// fixed option list the value belongs to, same inference editRequestDealFieldHtml
+// uses to pre-select the right tickbox.
+function dealLabelForStoredValue(raw){
+  if(!raw) return '';
+  if(OWN_RECS_OPTIONS.includes(raw)) return 'Own RECs - ' + raw;
+  if(PROCEED_SHARE_OPTIONS.includes(raw)) return 'Proceed Share - ' + raw;
+  return raw;
+}
+
 function refreshBdMatchingInHtml(html, group){
   if(!html || !group || !group.length) return html;
   let out = html;
@@ -4414,7 +4439,7 @@ function refreshBdMatchingInHtml(html, group){
       status: matchingDisplayLabel(v[MC.matching]),
       buyerseller: v[MC.buyerSeller] || '-',
       norecs: v[MC.noOfRecs] || '-',
-      whichdeal: v[MC.whichDeal] || '-',
+      whichdeal: dealLabelForStoredValue(v[MC.whichDeal]) || '-',
       deliverydate: formatStoredDate(v[MC.deliveryDateM]) || '-'
     };
     Object.keys(fieldValues).forEach(fieldKey=>{
