@@ -200,6 +200,13 @@
     border:1px solid var(--border-strong);
   }
   button.secondary:hover{background:var(--surface-2);}
+  button:disabled{
+    opacity:.45;
+    cursor:not-allowed;
+    background:var(--surface-2);
+    color:var(--text-secondary);
+  }
+  button:disabled:hover{background:var(--surface-2);}
   #output-section{
     display:none;
     flex-direction:column;
@@ -396,14 +403,13 @@
 </style>
 <script>
 // Applied immediately (before body paints) so returning users don't see a
-// flash of the wrong theme. Falls back to the OS-level preference the first
-// time, then remembers whatever the person picks via the toggle button.
+// flash of the wrong theme. Always starts in light mode unless the person
+// has previously switched to dark via the toggle button, in which case
+// that choice is remembered.
 (function(){
   try{
     var saved = localStorage.getItem('theme');
-    var theme = saved === 'dark' || saved === 'light'
-      ? saved
-      : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    var theme = saved === 'dark' ? 'dark' : 'light';
     document.documentElement.setAttribute('data-theme', theme);
   }catch(e){}
 })();
@@ -467,7 +473,7 @@
 
   <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
     <button id="generate-btn">Generate table</button>
-    <button id="save-agreement-btn" class="secondary" type="button">Save agreement</button>
+    <button id="save-agreement-btn" class="secondary" type="button" disabled title="Generate the table first">Save agreement</button>
   </div>
   <p id="save-note" style="font-size:12px;color:var(--text-secondary);margin:-14px 0 0;display:none;"></p>
 
@@ -4300,7 +4306,7 @@ function buildPointFormat(){
   // The 5-digit sequence number isn't claimed until Save agreement succeeds,
   // so opsDealId() before that point is just "trade count" appended to a
   // blank number — showing that here would look like a real (and wrong) Deal ID.
-  addField('Deal ID', currentDealDocId ? opsDealId() : 'Assigned once saved');
+  addField('Deal ID', currentDealDocId ? opsDealId() : 'Assigned once L1 approved');
   addField('Deal Date', fmtDate(val('h-date')));
   addField('Entity', val('h-entity'));
   addField('BD in-charge', val('h-bd'));
@@ -4537,21 +4543,35 @@ function validateVersion(requireDealId){
 function showValidationWarning(missing, versionLabel){
   const box = document.getElementById('validation-warning');
   const items = missing.map(m=>'<li>'+escapeHtml(m.section)+' — '+escapeHtml(m.label)+'</li>').join('');
-  box.innerHTML = '<strong>Table not generated — the '+escapeHtml(versionLabel)+' needs every field below filled in. Please complete the following before generating:</strong><ul>'+items+'</ul>';
+  box.innerHTML = '<strong>Table not generated — Every field below needs to be filled in. Please complete the following before generating or saving:</strong><ul>'+items+'</ul>';
   box.style.display = 'block';
   box.scrollIntoView({behavior:'smooth', block:'nearest'});
 }
 function hideValidationWarning(){
   document.getElementById('validation-warning').style.display = 'none';
 }
-// Clear a field's "missing" outline as soon as the person edits it.
+// Clear a field's "missing" outline as soon as the person edits it, and
+// require the table to be (re)generated before Save agreement can be used
+// again, so a saved agreement always matches what was last generated.
+function setSaveAgreementEnabled(enabled){
+  const btn = document.getElementById('save-agreement-btn');
+  if(!btn) return;
+  btn.disabled = !enabled;
+  btn.title = enabled ? '' : 'Generate the table first';
+}
+function requireRegenerateBeforeSave(){
+  const btn = document.getElementById('save-agreement-btn');
+  if(btn && !btn.disabled) setSaveAgreementEnabled(false);
+}
 document.addEventListener('input', (e)=>{
   const wrap = e.target.closest('[id$="-wrap"]');
   if(wrap) wrap.classList.remove('field-missing');
+  if(e.target.closest('#header-fields, #trades-container') || e.target.id==='trade-count') requireRegenerateBeforeSave();
 });
 document.addEventListener('change', (e)=>{
   const wrap = e.target.closest('[id$="-wrap"]');
   if(wrap) wrap.classList.remove('field-missing');
+  if(e.target.closest('#header-fields, #trades-container') || e.target.id==='trade-count') requireRegenerateBeforeSave();
 });
 
 // Validates and builds the preview. Returns true/false for which version was
@@ -4565,6 +4585,7 @@ function generateOutput(){
   if(missing.length){
     showValidationWarning(missing, includeBD ? 'Ops version' : 'Customer version');
     document.getElementById('output-section').style.display = 'none';
+    setSaveAgreementEnabled(false);
     return null;
   }
   hideValidationWarning();
@@ -4593,6 +4614,7 @@ function generateOutput(){
   document.getElementById('output-section').style.display = 'flex';
   document.getElementById('copy-status').style.display = 'none';
   document.getElementById('output-section').scrollIntoView({behavior:'smooth', block:'nearest'});
+  setSaveAgreementEnabled(true);
   return includeBD;
 }
 
