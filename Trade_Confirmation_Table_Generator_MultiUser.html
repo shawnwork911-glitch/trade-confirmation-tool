@@ -4349,7 +4349,7 @@ function buildPointFormat(){
     addBdField(i, 'status', 'BD Matching \u2014 Status', matchingDisplayLabel(val('t'+i+'-m-matching')));
     addBdField(i, 'buyerseller', 'BD Matching \u2014 Buyer/Seller', val('t'+i+'-m-name') || '-');
     addBdField(i, 'norecs', 'BD Matching \u2014 No of RECs', val('t'+i+'-m-recs') || '-');
-    addBdField(i, 'whichdeal', 'BD Matching \u2014 Which deal', dealCodeFor(i) || '-');
+    addBdField(i, 'whichdeal', 'BD Matching \u2014 Which deal', val('t'+i+'-m-deal') || '-');
     addBdField(i, 'deliverydate', 'BD Matching \u2014 Delivery Date', formatStoredDate(val('t'+i+'-m-ddate')) || '-');
   }
   return lines;
