@@ -1028,6 +1028,35 @@ async function notifyNextApprover(status, dealId, description, changeSummary){
     console.error('Approval notification email failed', err);
   }
 }
+// Emails every OTHER admin holding the same approval level as the one that
+// was just used to approve a deal — e.g. when one of several Level 3
+// admins approves, the remaining Level 3 admins get a heads-up that it's
+// already been actioned, so they don't spend time opening a deal that's
+// already moved past their stage (the app itself already blocks them from
+// approving it again — see canActOnStatus — this is just a courtesy email).
+// levelRole = the role responsible for the stage that was JUST approved
+// (e.g. 'admin3' when a Level 3 approval was just made), not the next
+// approver's role — that's notifyNextApprover's job, called separately.
+// approverEmail is excluded from the recipient list.
+async function notifyOtherApproversAtLevel(levelRole, dealId, description, approverEmail){
+  const approverKey = (approverEmail || '').trim().toLowerCase();
+  const toEmails = emailsForRole(levelRole).filter(e => e.toLowerCase() !== approverKey);
+  if(!toEmails.length) return;
+  const levelLabel = ROLE_LABELS[levelRole] || levelRole;
+  const link = dealDeepLink(dealId);
+  const displayId = friendlyDealId(dealId);
+  const label = isPendingDealId(dealId) ? 'An agreement' : 'Deal ID <strong>' + escapeHtml(displayId) + '</strong>';
+  const descBlock = (description && description.trim()) ? '<p><strong>Description:</strong> ' + escapeHtml(description) + '</p>' : '';
+  const html = '<p>' + label + ' has already been approved at ' + escapeHtml(levelLabel) + ' by ' + escapeHtml(approverEmail || 'another approver') + '.</p>' +
+    '<p>No action is needed from you at this level — it has already moved on.</p>' +
+    descBlock +
+    '<p><a href="' + link + '">Open it in the Trade Confirmation app</a></p>';
+  try{
+    await sendMailGraph(toEmails, 'Already actioned — ' + (isPendingDealId(dealId) ? levelLabel : displayId + ' (' + levelLabel + ')'), html);
+  }catch(err){
+    console.error('Notify-other-approvers email failed', err);
+  }
+}
 
 // Emails the person who submitted the deal if it's Rejected at whatever
 // level it was at. Separate from notifyNextApprover, which only ever emails
@@ -2042,6 +2071,25 @@ async function approveDeal(dealId, file, transferOverrides){
   if(file){
     agreementInfo = await uploadAgreementFile(assignedDealId || dealId, file);
   }
+  // ---- Re-check right before writing ----
+  // Guards against two admins at the SAME level both passing the
+  // canActOnStatus check above (e.g. two Level 3 admins open the queue at
+  // nearly the same moment) and both reaching this point before either
+  // one's write lands. Excel table rows have no built-in optimistic-
+  // concurrency token via this Graph API, so the best available guard is
+  // to re-read the row's live status immediately before committing the
+  // write and abort if someone else has already moved it on in the
+  // meantime. This narrows — though, without a true transaction, can't
+  // fully eliminate — the race window (the file upload / Deal ID
+  // assignment above can take a moment, which is exactly when a second
+  // approver could otherwise sneak in).
+  const recheckRows = await getTableRows(LOG_TABLE_NAME);
+  const recheckMatching = recheckRows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  const recheckStatus = recheckMatching.length ? recheckMatching[0].values[0][MC.status] : undefined;
+  if(recheckStatus !== currentStatus){
+    await loadHistory();
+    throw new Error('This deal was already actioned by someone else a moment ago (it is now at: ' + (recheckStatus || 'an unknown stage') + '). Your approval was not applied — please refresh and check the latest status before trying again.');
+  }
   const approvedListErrors = []; // one entry per trade row that failed to copy, not just the last
   let tradeNum = 0;
   for(const r of matching){
@@ -2084,6 +2132,15 @@ async function approveDeal(dealId, file, transferOverrides){
   }
   const idForNotifications = assignedDealId || dealId;
   await notifyNextApprover(nextStatus, idForNotifications, matching[0].values[0][MC.description]);
+  // Also let the OTHER admins at the level that was just used know it's
+  // already been actioned (e.g. the other Level 3 admins when one Level 3
+  // admin approves), so they don't waste time on a deal that's moved on —
+  // the approverRole here is the role responsible for currentStatus (the
+  // stage that was just approved), not nextStatus's role.
+  const approverRole = APPROVER_ROLE_FOR_STATUS[currentStatus];
+  if(approverRole){
+    await notifyOtherApproversAtLevel(approverRole, idForNotifications, matching[0].values[0][MC.description], currentAccount.username);
+  }
   if(assignedDealId){
     // The creator gets an email the moment their Deal ID exists — but,
     // per policy, no separate email when the deal later reaches final
@@ -2262,6 +2319,19 @@ async function approveBdMatchChange(dealId){
   if(!canActOnStatus(STATUS_PENDING_CHANGE_3)) throw new Error('You are not able to approve this change.');
   const nowIso = new Date().toISOString();
   const submitterEmail = allMatching[0].values[0][MC.submittedBy];
+  // ---- Re-check right before writing ----
+  // Same guard as in approveDeal(): if two Level 3 admins both open this
+  // change request at nearly the same time, re-read the live status
+  // immediately before committing and abort if someone else got there
+  // first (see the longer comment in approveDeal for why this can't be
+  // made fully atomic against this API).
+  const recheckRows = await getTableRows(LOG_TABLE_NAME);
+  const recheckStillPending = recheckRows.some(r =>
+    String(r.values[0][MC.dealId] || '').trim() === dealId && r.values[0][MC.status] === STATUS_PENDING_CHANGE_3);
+  if(!recheckStillPending){
+    await loadHistory();
+    throw new Error('This change request was already actioned by someone else a moment ago. Your approval was not applied — please refresh and check the latest status before trying again.');
+  }
   const approvedListErrors = [];
   let tradeNum = 0;
   for(const r of matching){
@@ -2321,6 +2391,7 @@ async function approveBdMatchChange(dealId){
     }
   }
   await notifyChangeSubmitter(dealId, submitterEmail, 'applied');
+  await notifyOtherApproversAtLevel('admin3', dealId, allMatching[0].values[0][MC.description], currentAccount.username);
   await loadHistory();
   if(approvedListErrors.length){
     alert('The change was approved and applied, but couldn\'t be copied into the "' + APPROVED_LIST_NAME + '" list for:\n' + approvedListErrors.join('\n'));
