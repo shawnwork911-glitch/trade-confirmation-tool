@@ -485,6 +485,7 @@
     <div class="output-header">
       <p class="card-title" style="margin:0;">Preview<span id="preview-dealid-label" style="font-weight:normal;color:var(--text-secondary);"></span></p>
       <span id="preview-agreement-link" style="font-size:13px;"></span>
+      <button type="button" id="preview-edit-btn" class="secondary" style="display:none;" title="Superadmin only - edit the recap details shown above">Edit details</button>
       <button id="copy-btn" class="secondary" style="display:none;" title="Appears once Level 1 approves and a real Deal ID is assigned">Copy table</button>
     </div>
     <div id="table-preview"></div>
@@ -555,6 +556,7 @@
       <p class="card-title" style="margin:0;">Deal ID <span id="view-modal-dealid"></span></p>
       <div style="display:flex;align-items:center;gap:14px;">
         <span id="view-modal-agreement-link" style="font-size:13px;"></span>
+        <button type="button" class="secondary" id="view-modal-edit" style="display:none;" title="Superadmin only - edit the recap details shown above">Edit details</button>
         <button type="button" class="secondary" id="view-modal-copy" style="display:none;" title="Appears once Level 1 approves and a real Deal ID is assigned">Copy table</button>
         <button type="button" class="secondary" id="view-modal-close">Close</button>
       </div>
@@ -1205,7 +1207,7 @@ function tryOpenDealFromUrl(){
   const withHtml = group.find(r => r.values[0][MC.generatedHtml]);
   if(!withHtml) return; // history may not have loaded this deal yet — try again next refresh
   const freshHtml = refreshBdMatchingInHtml(withHtml.values[0][MC.generatedHtml], group);
-  openViewModal(dealId, freshHtml, withHtml.values[0][MC.agreementFileUrl]);
+  openViewModal(dealId, freshHtml, withHtml.values[0][MC.agreementFileUrl], group);
   urlDealOpened = true;
 }
 function renderUserMgmtList(){
@@ -1946,7 +1948,7 @@ function lockSubmittedForm(dealId){
   if(!row) row = myRowsBySubmissionRef().find(r => r.values[0][MC.generatedHtml]);
   if(row){
     const realDealId = String(row.values[0][MC.dealId] || '').trim();
-    const group = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === realDealId);
+    const group = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === realDealId).sort((a,b)=> a.index - b.index);
     lastHtml = refreshBdMatchingInHtml(row.values[0][MC.generatedHtml], group);
     lastPlain = htmlToPlainFallback(lastHtml);
     document.getElementById('table-preview').innerHTML = lastHtml;
@@ -1954,6 +1956,10 @@ function lockSubmittedForm(dealId){
     setPreviewAgreementLink(row.values[0][MC.agreementFileUrl]);
     // Copy table stays hidden until Level 1 approval assigns a real Deal ID.
     document.getElementById('copy-btn').style.display = isPendingDealId(dealId) ? 'none' : 'inline-block';
+    previewDealId = realDealId;
+    previewDealGroup = group;
+    const previewEditBtn = document.getElementById('preview-edit-btn');
+    previewEditBtn.style.display = (!isPendingDealId(dealId) && currentUserRole === 'superadmin' && group.length) ? 'inline-block' : 'none';
     document.getElementById('output-section').style.display = 'flex';
   }
 }
@@ -2048,7 +2054,7 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
     row[MC.paymentTerm] = val('t'+n+'-payterm');
     row[MC.buyerSeller] = matchingActive ? val('t'+n+'-m-name') : '';
     row[MC.noOfRecs] = matchingActive ? val('t'+n+'-m-recs') : '';
-    row[MC.whichDeal] = val('t'+n+'-m-deal');
+    row[MC.whichDeal] = dealCodeFor(n);
     row[MC.deliveryDateM] = val('t'+n+'-m-ddate');
     row[MC.submittedBy] = currentAccount.username;
     row[MC.submittedDate] = nowIso;
@@ -2705,7 +2711,9 @@ function htmlToPlainFallback(html){
   return tmp.textContent || tmp.innerText || '';
 }
 let viewModalHtml = '';
-function openViewModal(dealId, html, agreementUrl){
+let viewModalDealId = '';
+let viewModalGroup = [];
+function openViewModal(dealId, html, agreementUrl, group){
   document.getElementById('view-modal-dealid').textContent = friendlyDealId(dealId);
   document.getElementById('view-modal-table').innerHTML = html;
   document.getElementById('view-modal-agreement-link').innerHTML = agreementUrl
@@ -2713,8 +2721,13 @@ function openViewModal(dealId, html, agreementUrl){
   // Copy table stays hidden until Level 1 approval assigns a real Deal ID —
   // same rule as the main Preview card's Copy button.
   viewModalHtml = html;
+  viewModalDealId = dealId;
+  viewModalGroup = (group || []).slice().sort((a,b)=> a.index - b.index);
   document.getElementById('view-modal-copy').style.display = isPendingDealId(dealId) ? 'none' : 'inline-block';
   document.getElementById('view-modal-copy-status').style.display = 'none';
+  // Editing needs a real Deal ID (rows to write back to) and is superadmin-only.
+  const editBtn = document.getElementById('view-modal-edit');
+  editBtn.style.display = (!isPendingDealId(dealId) && currentUserRole === 'superadmin' && viewModalGroup.length) ? 'inline-block' : 'none';
   document.getElementById('view-modal-overlay').style.display = 'flex';
 }
 function closeViewModal(){
@@ -2731,6 +2744,14 @@ document.getElementById('view-modal-copy').addEventListener('click', async ()=>{
   setTimeout(()=>{ status.style.display='none'; }, 2500);
 });
 document.getElementById('view-modal-close').addEventListener('click', closeViewModal);
+document.getElementById('view-modal-edit').addEventListener('click', ()=>{
+  if(!viewModalDealId || !viewModalGroup.length) return;
+  const container = document.getElementById('view-modal-table');
+  const restoreHtml = viewModalHtml;
+  openRecapEditor(container, viewModalDealId, viewModalGroup, restoreHtml, (finalHtml)=>{
+    viewModalHtml = finalHtml;
+  });
+});
 document.getElementById('view-modal-overlay').addEventListener('click', (e)=>{
   if(e.target.id === 'view-modal-overlay') closeViewModal();
 });
@@ -2847,15 +2868,37 @@ let editRequestModalDealId = null;
 // direct-overwrite version of this flow.
 function editRequestDealFieldHtml(idx, storedValue, rowUid){
   const uidAttr = ' data-uid="'+escapeHtml(rowUid||'')+'"';
-  if(OWN_RECS_OPTIONS.includes(storedValue)){
+  const parsed = parseWhichDealSource(storedValue);
+  if(parsed.source === 'own'){
     return {own:true, proceed:false, fieldHtml: '<select class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+'>'+
-      OWN_RECS_OPTIONS.map(o=>'<option value="'+escapeHtml(o)+'"'+(o===storedValue?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>'};
+      OWN_RECS_OPTIONS.map(o=>'<option value="'+escapeHtml(o)+'"'+(o===parsed.option?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>'};
   }
-  if(PROCEED_SHARE_OPTIONS.includes(storedValue)){
+  if(parsed.source === 'proceed'){
     return {own:false, proceed:true, fieldHtml: '<select class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+'>'+
-      PROCEED_SHARE_OPTIONS.map(o=>'<option value="'+escapeHtml(o)+'"'+(o===storedValue?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>'};
+      PROCEED_SHARE_OPTIONS.map(o=>'<option value="'+escapeHtml(o)+'"'+(o===parsed.option?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>'};
   }
   return {own:false, proceed:false, fieldHtml: '<input type="text" class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+' placeholder="Deal Recap ID" value="'+escapeHtml(storedValue||'')+'"/>'};
+}
+// Keeps the edit-request modal's Buyer/Seller field in lockstep with its
+// Source tickbox — same rule and reason as the main form's
+// syncBuyerSellerName: ticking Own RECs/Proceed Share overwrites it and
+// locks it, since that literal text is what gets written to the Buyer/
+// Seller column; unticking both restores free editing.
+function syncEditRequestBuyerSeller(idx){
+  const own = document.getElementById('er-'+idx+'-own');
+  const proceed = document.getElementById('er-'+idx+'-proceed');
+  const nameEl = document.getElementById('er-'+idx+'-buyerseller');
+  if(!own || !proceed || !nameEl) return;
+  if(own.checked){
+    nameEl.value = 'Own RECs';
+    nameEl.readOnly = true;
+  } else if(proceed.checked){
+    nameEl.value = 'Proceed Share';
+    nameEl.readOnly = true;
+  } else if(nameEl.readOnly){
+    nameEl.value = '';
+    nameEl.readOnly = false;
+  }
 }
 // Rebuilds the "Which deal" field for product idx as a text box (default),
 // or a dropdown of Own RECs / Proceed Share options — same pattern as the
@@ -2876,6 +2919,7 @@ function updateEditRequestDealField(idx){
   } else {
     target.innerHTML = '<input type="text" class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+' placeholder="Deal Recap ID"/>';
   }
+  syncEditRequestBuyerSeller(idx);
 }
 // Own RECs / Proceed Share are mutually exclusive within a product row.
 document.addEventListener('change', (e)=>{
@@ -2944,7 +2988,7 @@ function openEditRequestModal(dealId){
         '<select class="edit-request-matching" data-idx="'+idx+'"'+uidAttr+'>'+matchOptions+'</select></div>' +
       '<div id="er-'+idx+'-dependent" style="display:flex;flex-direction:column;gap:8px;'+(active?'':'display:none;')+'">' +
         '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Buyer/Seller</label>' +
-          '<input type="text" class="edit-request-buyerseller" data-idx="'+idx+'"'+uidAttr+' value="'+escapeHtml(v[MC.buyerSeller]||'')+'"/></div>' +
+          '<input type="text" id="er-'+idx+'-buyerseller" class="edit-request-buyerseller" data-idx="'+idx+'"'+uidAttr+' value="'+escapeHtml(v[MC.buyerSeller]||'')+'"/></div>' +
         '<div><label style="margin:0 0 4px;display:block;font-size:12px;">No of RECs</label>' +
           '<input type="text" class="edit-request-norecs" data-idx="'+idx+'"'+uidAttr+' value="'+escapeHtml(v[MC.noOfRecs]||'')+'"/></div>' +
         '<div>' +
@@ -2979,6 +3023,7 @@ function openEditRequestModal(dealId){
     '</div>';
   document.getElementById('edit-request-modal-overlay').style.display = 'flex';
   refreshAllDateDisplays(fieldsEl);
+  group.forEach((r, idx)=> syncEditRequestBuyerSeller(idx));
 }
 function closeEditRequestModal(){
   document.getElementById('edit-request-modal-overlay').style.display = 'none';
@@ -3010,7 +3055,12 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
   document.querySelectorAll('#edit-request-modal-fields .edit-request-whichdeal').forEach(inp=>{
     const idx = parseInt(inp.getAttribute('data-idx'), 10);
     edits[idx] = edits[idx] || {};
-    edits[idx].whichDeal = inp.value;
+    const ownCb = document.getElementById('er-'+idx+'-own');
+    const proceedCb = document.getElementById('er-'+idx+'-proceed');
+    let wd = inp.value;
+    if(ownCb && ownCb.checked) wd = OWN_RECS_PREFIX + wd;
+    else if(proceedCb && proceedCb.checked) wd = PROCEED_SHARE_CODE_MAP[wd] !== undefined ? PROCEED_SHARE_CODE_MAP[wd] : wd;
+    edits[idx].whichDeal = wd;
     edits[idx].rowUid = edits[idx].rowUid || inp.getAttribute('data-uid') || '';
   });
   document.querySelectorAll('#edit-request-modal-fields .edit-request-norecs').forEach(inp=>{
@@ -3048,7 +3098,7 @@ document.addEventListener('click', (e)=>{
     const withHtml = group.find(r => r.values[0][MC.generatedHtml]);
     if(!withHtml) return;
     const freshHtml = refreshBdMatchingInHtml(withHtml.values[0][MC.generatedHtml], group);
-    openViewModal(dealId, freshHtml, withHtml.values[0][MC.agreementFileUrl]);
+    openViewModal(dealId, freshHtml, withHtml.values[0][MC.agreementFileUrl], group);
     return;
   }
   const approveBtn = e.target.closest('.history-approve-btn');
@@ -3148,6 +3198,25 @@ const PROCEED_SHARE_CODE_MAP = {
   "Aenergy":"Aenergy",
   "PLTM":"PLTM"
 };
+const OWN_RECS_PREFIX = "Own RECs ";
+// Parses a saved "Which deal" value (as stored in TradeDealLog) back into
+// its source + underlying option — needed because dealCodeFor() no longer
+// stores the bare option text for Own RECs, it stores "Own RECs <option>".
+// Proceed Share values are still stored bare (PROCEED_SHARE_CODE_MAP is an
+// identity map), so those still match OWN_RECS_OPTIONS/PROCEED_SHARE_OPTIONS
+// directly. Also falls back to matching the bare option text for Own RECs,
+// so rows saved before this prefix existed still parse correctly.
+function parseWhichDealSource(stored){
+  const raw = String(stored || '');
+  if(raw.indexOf(OWN_RECS_PREFIX) === 0){
+    const opt = raw.slice(OWN_RECS_PREFIX.length);
+    if(OWN_RECS_OPTIONS.includes(opt)) return {source:'own', option:opt};
+  }
+  if(OWN_RECS_OPTIONS.includes(raw)) return {source:'own', option:raw}; // legacy rows, no prefix
+  if(PROCEED_SHARE_OPTIONS.includes(raw)) return {source:'proceed', option:raw};
+  return {source:null, option:raw};
+}
+
 
 
 /* Generic lockable field wrapper — works for a single input/select, or a
@@ -3729,8 +3798,7 @@ function tradeBlockHtml(n){
     '<div id="t'+n+'-matching-dependent-fields" style="display:none;">'+
       '<div class="grid">'+
         lockableField('1. Buyer/Seller name', textHtml('t'+n+'-m-name','Name'),'t'+n+'-m-name')+
-        lockableField('2. No of RECs', textHtml('t'+n+'-m-recs',''),'t'+n+'-m-recs')+
-        '<div id="t'+n+'-m-source-wrap" style="grid-column:1 / -1;">'+
+        '<div id="t'+n+'-m-source-wrap">'+
           '<label style="margin-bottom:6px;">Source</label>'+
           '<div style="display:flex;gap:20px;flex-wrap:wrap;">'+
             '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
@@ -3741,6 +3809,7 @@ function tradeBlockHtml(n){
             '</label>'+
           '</div>'+
         '</div>'+
+        lockableField('2. No of RECs', textHtml('t'+n+'-m-recs',''),'t'+n+'-m-recs')+
         lockableField('3. From which deal', '<div id="t'+n+'-m-deal-field">'+textHtml('t'+n+'-m-deal','Deal Recap ID')+'</div>','t'+n+'-m-deal')+
         lockableField('4. Delivery date', dateHtml('t'+n+'-m-ddate'),'t'+n+'-m-ddate')+
       '</div>'+
@@ -3748,6 +3817,28 @@ function tradeBlockHtml(n){
   '</div>';
 }
 
+// Keeps "1. Buyer/Seller name" in lockstep with the Source tickbox: ticking
+// Own RECs or Proceed Share overwrites it with that literal label and locks
+// it against manual editing (since that's exactly what gets written to the
+// Buyer/Seller column in TradeDealLog / the "Approved" SharePoint list —
+// see saveConfirmationToHistory's row[MC.buyerSeller] = val('...-m-name')).
+// Unticking both restores it to a normal, empty, editable name field.
+function syncBuyerSellerName(n){
+  const own = document.getElementById('t'+n+'-m-own');
+  const proceed = document.getElementById('t'+n+'-m-proceed');
+  const nameEl = document.getElementById('t'+n+'-m-name');
+  if(!own || !proceed || !nameEl) return;
+  if(own.checked){
+    nameEl.value = 'Own RECs';
+    nameEl.readOnly = true;
+  } else if(proceed.checked){
+    nameEl.value = 'Proceed Share';
+    nameEl.readOnly = true;
+  } else if(nameEl.readOnly){
+    nameEl.value = '';
+    nameEl.readOnly = false;
+  }
+}
 // Rebuilds the "From which deal" field for trade n as a text box (default),
 // or a dropdown of Own RECs / Proceed Share options depending on which
 // tickbox (if any) is checked. Re-applies the field's lock state afterward,
@@ -3765,11 +3856,36 @@ function updateDealField(n){
   } else {
     target.innerHTML = textHtml('t'+n+'-m-deal','Deal Recap ID');
   }
+  syncBuyerSellerName(n);
+  updateDeliveryDateVisibility(n);
 
   const key = 't'+n+'-m-deal';
   const state = readLockState();
   const locked = !!(state[key] && state[key].locked);
   applyFieldLockUi(key, locked);
+}
+// "4. Delivery date" only applies to a matched deal with a real counterparty
+// on the other side - Own RECs is Saxon's own inventory, so there's no
+// separate delivery date to record against it. Hides the field and clears
+// whatever was in it whenever Own RECs is ticked, so t{n}-m-ddate (and the
+// Delivery Date column it's written to in TradeDealLog / the "Approved"
+// list - see MC.deliveryDateM) is left genuinely empty rather than showing
+// a stale or meaningless date. Restored (shown again, still required) for
+// Proceed Share and plain "From which deal" matches.
+function updateDeliveryDateVisibility(n){
+  const own = document.getElementById('t'+n+'-m-own');
+  const wrap = document.getElementById('t'+n+'-m-ddate-wrap');
+  if(!own || !wrap) return;
+  if(own.checked){
+    wrap.style.display = 'none';
+    const ddateInput = document.getElementById('t'+n+'-m-ddate');
+    if(ddateInput && ddateInput.value){
+      ddateInput.value = '';
+      updateDateDisplay(ddateInput);
+    }
+  } else {
+    wrap.style.display = '';
+  }
 }
 
 // Handle matching conditional display (Open Position hides fields 1 to 4)
@@ -3796,6 +3912,10 @@ function handleMatchingChange(n) {
   } else {
     // Reveal fields 1-4 when option is not 'Open Position'
     dependentContainer.style.display = 'block';
+    // Own RECs may already be ticked from before (e.g. re-selecting a
+    // non-Open-Position option) - keep the Delivery date field's
+    // visibility in sync rather than defaulting it back to shown.
+    updateDeliveryDateVisibility(n);
   }
 }
 
@@ -3937,20 +4057,21 @@ function dealCodeFor(n){
   if(!raw) return '';
   const own = document.getElementById('t'+n+'-m-own');
   const proceed = document.getElementById('t'+n+'-m-proceed');
-  if(own && own.checked) return 'Own RECs ' + raw;
+  if(own && own.checked) return OWN_RECS_PREFIX + raw;
   if(proceed && proceed.checked) return PROCEED_SHARE_CODE_MAP[raw] !== undefined ? PROCEED_SHARE_CODE_MAP[raw] : raw;
   return raw;
 }
 
 // Display value for the preview's "Which deal" line — the raw full name,
 // prefixed with which source it came from ("Own RECs" / "Proceed Share")
-// when one of those tickboxes is checked, e.g. "Own RECs - TIGR MY SLR".
+// when one of those tickboxes is checked, e.g. "Own RECs TIGR MY SLR" —
+// same format dealCodeFor() actually writes for Own RECs.
 function dealLabelFor(n){
   const raw = val('t'+n+'-m-deal');
   if(!raw) return '';
   const own = document.getElementById('t'+n+'-m-own');
   const proceed = document.getElementById('t'+n+'-m-proceed');
-  if(own && own.checked) return 'Own RECs - ' + raw;
+  if(own && own.checked) return OWN_RECS_PREFIX + raw;
   if(proceed && proceed.checked) return 'Proceed Share - ' + raw;
   return raw;
 }
@@ -4429,10 +4550,10 @@ function stripBdMatchingHtml(html){
 // fixed option list the value belongs to, same inference editRequestDealFieldHtml
 // uses to pre-select the right tickbox.
 function dealLabelForStoredValue(raw){
-  if(!raw) return '';
-  if(OWN_RECS_OPTIONS.includes(raw)) return 'Own RECs - ' + raw;
-  if(PROCEED_SHARE_OPTIONS.includes(raw)) return 'Proceed Share - ' + raw;
-  return raw;
+  const parsed = parseWhichDealSource(raw);
+  if(parsed.source === 'own') return OWN_RECS_PREFIX + parsed.option;
+  if(parsed.source === 'proceed') return 'Proceed Share - ' + parsed.option;
+  return raw || '';
 }
 
 function refreshBdMatchingInHtml(html, group){
@@ -4459,6 +4580,250 @@ function refreshBdMatchingInHtml(html, group){
   return out;
 }
 
+/* ---- Superadmin recap editing (see openRecapEditForm / saveRecapEdits) ----
+   Every field in the "Details: Transaction Recap" EXCEPT the 5 BD Matching
+   fields (handled above by refreshBdMatchingInHtml) is baked into the saved
+   "Generated HTML" snapshot once, at submission time, and never revisited -
+   editing the live TradeDealLog/SharePoint value directly (e.g. changing
+   Registry in Excel from IREC to IREC/TIGR) has no effect on what's shown
+   here, because nothing ever re-reads those columns and re-renders. This is
+   the one legitimate way to fix that: a superadmin edits the fields, this
+   rebuilds the recap the same way buildTableData()+renderPointFormatHtml()
+   do for a fresh submission (just sourced from saved row values instead of
+   the live DOM form), and the result is written back over the stored
+   Generated HTML so every future view (Preview / History "View") reflects
+   it - not just this one session. */
+function fmtDateOrdinalStored(v){
+  if(v === '' || v === null || v === undefined) return '';
+  const str = String(v).trim();
+  if(!str) return '';
+  // Same Excel-serial-number gotcha as formatStoredDate(): a "YYYY-MM-DD"
+  // string written to the workbook comes back from Graph as a plain number.
+  if(/^-?\d+(\.\d+)?$/.test(str)){
+    const ms = Math.round((Number(str) - 25569) * 86400 * 1000);
+    const d = new Date(ms);
+    if(isNaN(d.getTime())) return str;
+    return d.getUTCDate()+ordinalSuffix(d.getUTCDate())+' '+MONTH_ABBR[d.getUTCMonth()]+' '+d.getUTCFullYear();
+  }
+  if(/^\d{4}-\d{2}-\d{2}/.test(str)){
+    const [y,m,d] = str.split('-').map(Number);
+    return d+ordinalSuffix(d)+' '+MONTH_ABBR[m-1]+' '+y;
+  }
+  return str;
+}
+// sortedGroup: that deal's TradeDealLog rows (as from getTableRows), sorted
+// by row index so Product 1/2/3... lines up with row 1/2/3... - same
+// convention used everywhere else in the file (refreshBdMatchingInHtml,
+// approveBdMatchChange, etc).
+function buildRecapLinesFromRows(dealId, sortedGroup){
+  const lines = [];
+  const addField = (label, value, bd) => lines.push({type:'field', label, value, bd: !!bd});
+  const addBdField = (product, field, label, value) => lines.push({type:'field', label, value, bd:true, product, field});
+  const addBlank = () => lines.push({type:'blank'});
+  const head = sortedGroup[0].values[0];
+  const role = roleFromOrderType(head[MC.supplyDemand]);
+
+  lines.push({type:'title', text:'Details: Transaction Recap'});
+  addBlank();
+  addField('Deal ID', friendlyDealId(dealId));
+  addField('Deal Date', formatStoredDate(head[MC.agreementDate]));
+  addField('Entity', head[MC.entity]);
+  addField('BD in-charge', head[MC.salesPic]);
+  addField(role, head[MC.company]);
+  addField(role === 'Seller' ? 'Buyer' : 'Seller', 'Saxon');
+
+  if(head[MC.broker]){
+    addField('Broker', head[MC.broker] || 'NA', true);
+    if(head[MC.brokerFeeType]){
+      addField('Broker Fees', head[MC.brokerFeeType], true);
+      addField('Broker Fee Currency', head[MC.brokerFeeCurrency], true);
+      addField('Broker Fee Price / REC', head[MC.brokerFeePrice], true);
+    }
+  }
+
+  sortedGroup.forEach((r, idx)=>{
+    const v = r.values[0];
+    const i = idx + 1;
+    addBlank();
+    lines.push({type:'tradeTitle', text:'Product '+i});
+    addField('Registry', v[MC.registry]);
+    addField(transferAccountLabel(role), v[MC.tigrsIrecName]);
+    addField('Vintage', (v[MC.vFromMM]||'')+' '+(v[MC.vFromYY]||'')+' - '+(v[MC.vToMM]||'')+' '+(v[MC.vToYY]||''));
+    addField('Tech', techFullName(v[MC.tech]) || v[MC.tech] || '');
+    addField('Country', countryFullName(v[MC.country]) || v[MC.country] || '');
+    addField('Volume (RECs)', v[MC.volume]);
+    addField('Price / RECs', (v[MC.currency]||'')+' '+(v[MC.unitPrice]||''));
+    addField('Payment Term', v[MC.paymentTerm]);
+    addField('Delivery', fmtDateOrdinalStored(v[MC.deliveryStart])+' - '+fmtDateOrdinalStored(v[MC.deliveryEnd]));
+    addField('COD (if applicable)', v[MC.cod]);
+    addField('Special Remarks Request', v[MC.specialReq] || 'N/A');
+    addBdField(i, 'status', 'BD Matching \u2014 Status', matchingDisplayLabel(v[MC.matching]));
+    addBdField(i, 'buyerseller', 'BD Matching \u2014 Buyer/Seller', v[MC.buyerSeller] || '-');
+    addBdField(i, 'norecs', 'BD Matching \u2014 No of RECs', v[MC.noOfRecs] || '-');
+    addBdField(i, 'whichdeal', 'BD Matching \u2014 Which deal', dealLabelForStoredValue(v[MC.whichDeal]) || '-');
+    addBdField(i, 'deliverydate', 'BD Matching \u2014 Delivery Date', formatStoredDate(v[MC.deliveryDateM]) || '-');
+  });
+  return lines;
+}
+
+/* ---- Superadmin recap editor UI ---- */
+// Converts a stored TradeDealLog date value (ISO string or Excel serial
+// number - see formatStoredDate's comment) into the "YYYY-MM-DD" shape a
+// native <input type="date"> needs for its value.
+function toDateInputValue(v){
+  if(v === '' || v === null || v === undefined) return '';
+  const str = String(v).trim();
+  if(!str) return '';
+  if(/^-?\d+(\.\d+)?$/.test(str)){
+    const ms = Math.round((Number(str) - 25569) * 86400 * 1000);
+    const d = new Date(ms);
+    if(isNaN(d.getTime())) return '';
+    return d.getUTCFullYear()+'-'+String(d.getUTCMonth()+1).padStart(2,'0')+'-'+String(d.getUTCDate()).padStart(2,'0');
+  }
+  if(/^\d{4}-\d{2}-\d{2}/.test(str)) return str.slice(0,10);
+  return '';
+}
+function recapEditFieldHtml(label, inputHtml){
+  return '<div><label>'+escapeHtml(label)+'</label>'+inputHtml+'</div>';
+}
+// dealId/sortedGroup: same shape as everywhere else in the file - the
+// TradeDealLog rows for one deal, sorted by index so Product 1/2/3... lines
+// up with row 1/2/3.... Builds one editable field per non-BD-matching recap
+// line (see buildRecapLinesFromRows) - BD source matching itself is
+// deliberately left out here; that has its own approval-gated "Request
+// edit" flow (requestBdMatchChange/approveBdMatchChange) and shouldn't be
+// bypassable from this shortcut.
+function recapEditFormHtml(dealId, sortedGroup){
+  const head = sortedGroup[0].values[0];
+  const role = roleFromOrderType(head[MC.supplyDemand]);
+  let html = '<div id="recap-edit-form" style="display:flex;flex-direction:column;gap:16px;">'+
+    '<p style="font-size:12px;color:var(--text-secondary);margin:0;">Superadmin edit — saves straight to the live TradeDealLog row(s) and regenerates the saved recap immediately, with no separate approval step. BD source matching isn\'t editable here; use "Request edit" for that.</p>'+
+    '<div class="grid">'+
+      recapEditFieldHtml('Deal Date', '<input type="date" id="re-h-date" value="'+escapeHtml(toDateInputValue(head[MC.agreementDate]))+'"/>')+
+      recapEditFieldHtml('Entity', '<input type="text" id="re-h-entity" value="'+escapeHtml(head[MC.entity]||'')+'"/>')+
+      recapEditFieldHtml('BD in-charge', '<input type="text" id="re-h-bd" value="'+escapeHtml(head[MC.salesPic]||'')+'"/>')+
+      recapEditFieldHtml(role+' Full Name', '<input type="text" id="re-h-company" value="'+escapeHtml(head[MC.company]||'')+'"/>')+
+    '</div>';
+  sortedGroup.forEach((r, idx)=>{
+    const v = r.values[0];
+    const i = idx+1;
+    const idp = 're-t'+i+'-';
+    html += '<div class="trade-block"><p class="trade-title">Product '+i+'</p><div class="grid">'+
+      recapEditFieldHtml('Registry', comboHtml(idp+'registry', idp+'registry-list', REGISTRIES, v[MC.registry]||''))+
+      recapEditFieldHtml(transferAccountLabel(role), '<input type="text" id="'+idp+'transfer" value="'+escapeHtml(v[MC.tigrsIrecName]||'')+'"/>')+
+      recapEditFieldHtml('Tech', comboHtml(idp+'tech', idp+'tech-list', TECHS, v[MC.tech]||''))+
+      recapEditFieldHtml('Country', comboHtml(idp+'country', idp+'country-list', COUNTRIES, v[MC.country]||''))+
+      recapEditFieldHtml('Vintage start month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vstart-m', MONTHS, v[MC.vFromMM]||'Jan')+comboHtml(idp+'vstart-y', idp+'vstart-y-list', YEARS, v[MC.vFromYY]||'')+'</div>')+
+      recapEditFieldHtml('Vintage end month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vend-m', MONTHS, v[MC.vToMM]||'Dec')+comboHtml(idp+'vend-y', idp+'vend-y-list', YEARS, v[MC.vToYY]||'')+'</div>')+
+      recapEditFieldHtml('Volume (RECs)', '<input type="text" id="'+idp+'volume" value="'+escapeHtml(v[MC.volume]||'')+'"/>')+
+      recapEditFieldHtml('Price currency', comboHtml(idp+'currency', idp+'currency-list', CURRENCIES, v[MC.currency]||''))+
+      recapEditFieldHtml('Price / REC', '<input type="text" id="'+idp+'price" value="'+escapeHtml(v[MC.unitPrice]||'')+'"/>')+
+      recapEditFieldHtml('Payment term', '<input type="text" id="'+idp+'payterm" value="'+escapeHtml(v[MC.paymentTerm]||'')+'"/>')+
+      recapEditFieldHtml('Delivery start date', '<input type="date" id="'+idp+'dstart" value="'+escapeHtml(toDateInputValue(v[MC.deliveryStart]))+'"/>')+
+      recapEditFieldHtml('Delivery end date', '<input type="date" id="'+idp+'dend" value="'+escapeHtml(toDateInputValue(v[MC.deliveryEnd]))+'"/>')+
+      recapEditFieldHtml('COD (if applicable)', '<input type="text" id="'+idp+'cod" value="'+escapeHtml(v[MC.cod]||'')+'"/>')+
+      recapEditFieldHtml('Special remarks', '<textarea id="'+idp+'remarks">'+escapeHtml(v[MC.specialReq]||'')+'</textarea>')+
+    '</div></div>';
+  });
+  html += '<div id="recap-edit-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>'+
+    '<div style="display:flex;gap:8px;justify-content:flex-end;">'+
+      '<button type="button" class="secondary" id="recap-edit-cancel">Cancel</button>'+
+      '<button type="button" id="recap-edit-save">Save changes</button>'+
+    '</div>'+
+  '</div>';
+  return html;
+}
+// Swaps containerEl's content for the edit form. restoreHtml is whatever
+// was showing before (so Cancel can put it straight back with no re-fetch),
+// onSaved(finalHtml) lets the caller update its own cached copy (lastHtml /
+// viewModalHtml) once a save succeeds.
+function openRecapEditor(containerEl, dealId, sortedGroup, restoreHtml, onSaved){
+  containerEl.innerHTML = recapEditFormHtml(dealId, sortedGroup);
+  document.getElementById('recap-edit-cancel').addEventListener('click', ()=>{
+    containerEl.innerHTML = restoreHtml;
+  });
+  document.getElementById('recap-edit-save').addEventListener('click', ()=>{
+    saveRecapEdits(dealId, sortedGroup, containerEl, onSaved);
+  });
+}
+async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
+  const btn = document.getElementById('recap-edit-save');
+  const cancelBtn = document.getElementById('recap-edit-cancel');
+  const errEl = document.getElementById('recap-edit-error');
+  errEl.style.display = 'none';
+  const rv = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+
+  const hDate = rv('re-h-date'), hEntity = rv('re-h-entity'), hBd = rv('re-h-bd'), hCompany = rv('re-h-company');
+  if(!hDate || !hEntity || !hBd || !hCompany){
+    errEl.textContent = 'Deal Date, Entity, BD in-charge and the Buyer/Seller full name can\'t be blank.';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  const updatedRows = [];
+  for(let idx = 0; idx < sortedGroup.length; idx++){
+    const i = idx + 1;
+    const idp = 're-t'+i+'-';
+    const registry = rv(idp+'registry');
+    const volume = rv(idp+'volume');
+    if(!registry || !volume){
+      errEl.textContent = 'Product '+i+': Registry and Volume (RECs) can\'t be blank.';
+      errEl.style.display = 'block';
+      return;
+    }
+    const values = sortedGroup[idx].values[0].slice();
+    values[MC.agreementDate] = hDate;
+    values[MC.entity] = hEntity;
+    values[MC.salesPic] = hBd;
+    values[MC.company] = hCompany;
+    values[MC.registry] = registry;
+    values[MC.tigrsIrecName] = rv(idp+'transfer');
+    values[MC.tech] = rv(idp+'tech');
+    values[MC.country] = rv(idp+'country');
+    values[MC.vFromMM] = rv(idp+'vstart-m');
+    values[MC.vFromYY] = rv(idp+'vstart-y');
+    values[MC.vToMM] = rv(idp+'vend-m');
+    values[MC.vToYY] = rv(idp+'vend-y');
+    values[MC.volume] = volume;
+    values[MC.currency] = rv(idp+'currency');
+    values[MC.unitPrice] = rv(idp+'price');
+    values[MC.paymentTerm] = rv(idp+'payterm');
+    values[MC.deliveryStart] = rv(idp+'dstart');
+    values[MC.deliveryEnd] = rv(idp+'dend');
+    values[MC.cod] = rv(idp+'cod');
+    const remarksRaw = rv(idp+'remarks');
+    values[MC.specialReq] = (!remarksRaw || remarksRaw.toUpperCase() === 'NA') ? 'N/A' : remarksRaw;
+    updatedRows.push({ index: sortedGroup[idx].index, values: [values] });
+  }
+
+  // Regenerate the recap the same way a fresh submission does, from the
+  // values just entered (not yet written) - then stash it on the first
+  // row, the only row that ever carries the Generated HTML column (see
+  // saveConfirmationToHistory).
+  const freshHtml = renderPointFormatHtml(buildRecapLinesFromRows(dealId, updatedRows));
+  updatedRows[0].values[0][MC.generatedHtml] = freshHtml;
+
+  btn.disabled = true; cancelBtn.disabled = true;
+  btn.textContent = 'Saving\u2026';
+  try{
+    for(const r of updatedRows){
+      await updateTableRow(LOG_TABLE_NAME, r.index, r.values[0]);
+    }
+    await loadHistory(); // refresh logRowsCache so every other view of this deal picks up the edit too
+    const refreshedGroup = logRowsCache
+      .filter(r => String(r.values[0][MC.dealId]||'').trim() === dealId)
+      .sort((a,b)=> a.index - b.index);
+    const finalHtml = refreshedGroup.length ? refreshBdMatchingInHtml(freshHtml, refreshedGroup) : freshHtml;
+    containerEl.innerHTML = finalHtml;
+    if(onSaved) onSaved(finalHtml);
+  }catch(err){
+    errEl.textContent = 'Save failed: ' + err.message;
+    errEl.style.display = 'block';
+    btn.disabled = false; cancelBtn.disabled = false;
+    btn.textContent = 'Save changes';
+  }
+}
+
 function buildPointFormatText(lines){
   return lines.map(l=>{
     if(l.type === 'blank') return '';
@@ -4468,6 +4833,7 @@ function buildPointFormatText(lines){
 }
 
 let lastHtml = '', lastPlain = '';
+let previewDealId = '', previewDealGroup = [];
 
 /* ---- Ops version validation ----
    The Ops version table (with BD Source Matching) must not be generated with
@@ -4531,13 +4897,17 @@ function tradeFieldDefs(i){
     return baseDefs;
   }
 
-  // If anything other than 'Open Position' is selected, matching fields 1-4 are mandatory.
-  return baseDefs.concat([
+  // If anything other than 'Open Position' is selected, matching fields 1-4 are mandatory -
+  // except "4. Delivery date", which is hidden and intentionally left blank for Own RECs
+  // (see updateDeliveryDateVisibility): there's no counterparty delivery to date there.
+  const isOwnRecs = !!(document.getElementById('t'+i+'-m-own') && document.getElementById('t'+i+'-m-own').checked);
+  const matchDefs = [
     {ids:['t'+i+'-m-name'], label:'1. Buyer/Seller name'},
     {ids:['t'+i+'-m-recs'], label:'2. No of RECs'},
-    {ids:['t'+i+'-m-deal'], label:'3. From which deal'},
-    {ids:['t'+i+'-m-ddate'], label:'4. Delivery date'}
-  ]);
+    {ids:['t'+i+'-m-deal'], label:'3. From which deal'}
+  ];
+  if(!isOwnRecs) matchDefs.push({ids:['t'+i+'-m-ddate'], label:'4. Delivery date'});
+  return baseDefs.concat(matchDefs);
 }
 function clearMissingHighlights(){
   document.querySelectorAll('.field-missing').forEach(el=>el.classList.remove('field-missing'));
@@ -4652,6 +5022,16 @@ function generateOutput(){
 
 document.getElementById('generate-btn').addEventListener('click', ()=>{
   generateOutput();
+});
+
+document.getElementById('preview-edit-btn').addEventListener('click', ()=>{
+  if(!previewDealId || !previewDealGroup.length) return;
+  const container = document.getElementById('table-preview');
+  const restoreHtml = lastHtml;
+  openRecapEditor(container, previewDealId, previewDealGroup, restoreHtml, (finalHtml)=>{
+    lastHtml = finalHtml;
+    lastPlain = htmlToPlainFallback(finalHtml);
+  });
 });
 
 document.getElementById('copy-btn').addEventListener('click', async ()=>{
