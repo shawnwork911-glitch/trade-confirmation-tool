@@ -498,7 +498,7 @@
 
   <div class="card" id="approval-queue-card" style="display:none;">
     <p class="card-title">Approval queue</p>
-    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Confirmations currently waiting on your approval level. Superadmins see every pending stage.</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Every confirmation currently pending at any approval level. Approve/Reject only appear on the rows waiting on your own level — the rest are visible for awareness only.</p>
     <div id="approval-queue-list"><p style="font-size:13px;color:var(--text-secondary);">Loading...</p></div>
   </div>
 
@@ -752,6 +752,12 @@ const STATUS_REJECTED = "Rejected";
 // Level 3 approver applies (or rejects) the request; see
 // requestBdMatchChange/approveBdMatchChange/rejectBdMatchChange.
 const STATUS_PENDING_CHANGE_3 = "Pending Change - Level 3";
+// Every "still in flight" status, regardless of which level it's currently
+// sitting at. Used to decide what shows up in the Approval queue list —
+// all admin levels (1/2/3) and the superadmin see every pending deal here,
+// not just the stage they can personally act on (see canActOnStatus for
+// the separate, narrower check that gates the Approve/Reject buttons).
+const PENDING_STATUSES = [STATUS_PENDING_1, STATUS_PENDING_2, STATUS_PENDING_3, STATUS_PENDING_CHANGE_3];
 
 /* ---- Deal ID is now only assigned once Level 1 approval happens ----
    Before that, a submitted agreement is tracked internally with a temporary
@@ -2533,8 +2539,14 @@ async function loadHistory(){
         .sort((a,b)=> String(b.rows[0].values[0][MC.submittedDate]||'').localeCompare(String(a.rows[0].values[0][MC.submittedDate]||'')));
 
       const queueEl = document.getElementById('approval-queue-list');
-      const queueGroups = allGroups.filter(g => canActOnStatus(dealGroupStatus(g.rows)));
-      renderHistoryTable(queueEl, queueGroups, {showOwner:true, showActions:true, emptyText:'Nothing waiting on your approval right now.'});
+      // Visibility is intentionally wider than actionability: every admin
+      // level (and superadmin) sees the whole approval queue — every deal
+      // still pending at any level — so people can see what's coming and
+      // where things stand. Whether the Approve/Reject buttons actually
+      // render for a given row is still gated separately by canActOnStatus
+      // inside renderHistoryTable (via its own showActions+canAct check).
+      const queueGroups = allGroups.filter(g => PENDING_STATUSES.includes(dealGroupStatus(g.rows)));
+      renderHistoryTable(queueEl, queueGroups, {showOwner:true, showActions:true, emptyText:'Nothing pending right now.'});
 
       const adminListEl = document.getElementById('admin-history-list');
       renderHistoryTable(adminListEl, allGroups, {showOwner:true, showActions:false});
