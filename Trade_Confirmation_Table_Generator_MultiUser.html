@@ -3136,26 +3136,19 @@ const YEARS = ["2025","2026","2027","2028","2029","2030"];
 
 /* ---- "From which deal" tickbox + dropdown (BD source matching) ----
    Ticking "Own RECs" or "Proceed Share" swaps the "From which deal" text
-   box for a dropdown of the relevant options, and the generated table fills
-   in a short code for that selection rather than the option's display text. */
+   box for a dropdown of the relevant options. The generated table (and
+   everything written to TradeDealLog / the "Approved" SharePoint list)
+   uses the full "Own RECs <option>" name for Own RECs selections — e.g.
+   "Own RECs TIGR/I-REC MY SLR" — never a short code. */
 const OWN_RECS_OPTIONS = ["TIGR/I-REC MY SLR","TIGR/I-REC SG SLR","TIGR MY SLR","TIGR SG SLR","I-REC MY SLR","I-REC SG SLR","I-REC MY LHY","I-REC MY BGS"];
 const PROCEED_SHARE_OPTIONS = ["Tadau","IS Energy","Aenergy","PLTM"];
-const OWN_RECS_CODE_MAP = {
-  "TIGR/I-REC MY SLR":"OR-TI-MY-SLR",
-  "TIGR/I-REC SG SLR":"OR-TI-SG-SLR",
-  "TIGR MY SLR":"OR-TIGR-MY-SLR",
-  "TIGR SG SLR":"OR-TIGR-SG-SLR",
-  "I-REC MY SLR":"OR-IREC-MY-SLR",
-  "I-REC SG SLR":"OR-IREC-SG-SLR",
-  "I-REC MY LHY":"OR-IREC-MY-LHY",
-  "I-REC MY BGS":"OR-IREC-MY-BGS"
-};
 const PROCEED_SHARE_CODE_MAP = {
   "Tadau":"Tadau",
   "IS Energy":"IS Energy",
   "Aenergy":"Aenergy",
   "PLTM":"PLTM"
 };
+
 
 /* Generic lockable field wrapper — works for a single input/select, or a
    compound field made of several inputs sharing one lock button (e.g. a
@@ -3935,14 +3928,16 @@ function brokerFeeTypeValue(){
 }
 
 // Returns the value to fill into the generated table's "From which deal"
-// row: the mapped short code when Own RECs / Proceed Share is ticked and an
-// option is selected, or the raw typed value otherwise.
+// row (and, from there, TradeDealLog / the "Approved" SharePoint list):
+// the full "Own RECs <option>" name when Own RECs is ticked and an option
+// is selected, the Proceed Share code map for Proceed Share, or the raw
+// typed value otherwise.
 function dealCodeFor(n){
   const raw = val('t'+n+'-m-deal');
   if(!raw) return '';
   const own = document.getElementById('t'+n+'-m-own');
   const proceed = document.getElementById('t'+n+'-m-proceed');
-  if(own && own.checked) return OWN_RECS_CODE_MAP[raw] !== undefined ? OWN_RECS_CODE_MAP[raw] : raw;
+  if(own && own.checked) return 'Own RECs ' + raw;
   if(proceed && proceed.checked) return PROCEED_SHARE_CODE_MAP[raw] !== undefined ? PROCEED_SHARE_CODE_MAP[raw] : raw;
   return raw;
 }
