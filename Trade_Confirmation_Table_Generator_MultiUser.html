@@ -3791,13 +3791,12 @@ function tradeBlockHtml(n){
     
     '<!-- Matching dropdown is now at the top of BD Source Matching section -->'+
     '<div class="grid" style="margin-bottom: 12px;">'+
-      lockableField('5. Matching', selectWithFullNamesHtml('t'+n+'-m-matching',MATCHING,MATCHING_DISPLAY_NAMES,'Open Position'),'t'+n+'-m-matching')+
+      lockableField('Matching', selectWithFullNamesHtml('t'+n+'-m-matching',MATCHING,MATCHING_DISPLAY_NAMES,'Open Position'),'t'+n+'-m-matching')+
     '</div>'+
 
     '<!-- Wrapper for matching dependent fields -->'+
     '<div id="t'+n+'-matching-dependent-fields" style="display:none;">'+
       '<div class="grid">'+
-        lockableField('1. Buyer/Seller name', textHtml('t'+n+'-m-name','Name'),'t'+n+'-m-name')+
         '<div id="t'+n+'-m-source-wrap">'+
           '<label style="margin-bottom:6px;">Source</label>'+
           '<div style="display:flex;gap:20px;flex-wrap:wrap;">'+
@@ -3809,9 +3808,10 @@ function tradeBlockHtml(n){
             '</label>'+
           '</div>'+
         '</div>'+
-        lockableField('2. No of RECs', textHtml('t'+n+'-m-recs',''),'t'+n+'-m-recs')+
-        lockableField('3. From which deal', '<div id="t'+n+'-m-deal-field">'+textHtml('t'+n+'-m-deal','Deal Recap ID')+'</div>','t'+n+'-m-deal')+
-        lockableField('4. Delivery date', dateHtml('t'+n+'-m-ddate'),'t'+n+'-m-ddate')+
+        lockableField('Buyer/Seller name', textHtml('t'+n+'-m-name','Name'),'t'+n+'-m-name')+
+        lockableField('No of RECs', textHtml('t'+n+'-m-recs',''),'t'+n+'-m-recs')+
+        lockableField('From which deal', '<div id="t'+n+'-m-deal-field">'+textHtml('t'+n+'-m-deal','Deal Recap ID')+'</div>','t'+n+'-m-deal')+
+        lockableField('Delivery date', dateHtml('t'+n+'-m-ddate'),'t'+n+'-m-ddate')+
       '</div>'+
     '</div>'+
   '</div>';
