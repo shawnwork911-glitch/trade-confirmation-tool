@@ -3158,6 +3158,15 @@ function countryFullName(code){
   const key = String(code||'').trim().toUpperCase();
   return COUNTRY_FULLNAMES[key] || code;
 }
+// Our own side of the deal is always "Saxon" internally, but the preview
+// should show the full legal entity name tied to the deal's Entity field
+// (SG vs MY). Falls back to the plain "Saxon" if Entity isn't one of those.
+function saxonEntityName(entity){
+  const key = String(entity||'').trim().toUpperCase();
+  if(key === 'SG') return 'Saxon Renewables Pte Ltd';
+  if(key === 'MY') return 'Saxon Renewable Energy Sdn Bhd';
+  return 'Saxon';
+}
 function techFullName(code){
   const raw = String(code||'').trim();
   if(!raw) return raw;
@@ -4449,12 +4458,12 @@ function buildPointFormat(){
   // blank number — showing that here would look like a real (and wrong) Deal ID.
   addField('Deal ID', currentDealDocId ? opsDealId() : 'Assigned once L1 approved');
   addField('Deal Date', fmtDate(val('h-date')));
-  addField('Entity', val('h-entity'));
   addField('BD in-charge', val('h-bd'));
   addField(currentRole(), val('h-buyer'));
-  // Counterparty line: our own side is always "Saxon", shown with whichever
-  // role is the opposite of the agreement's Buyer/Seller above.
-  addField(currentRole() === 'Seller' ? 'Buyer' : 'Seller', 'Saxon');
+  // Counterparty line: our own side is always "Saxon" internally, shown here
+  // with its full legal entity name (SG vs MY), with whichever role is the
+  // opposite of the agreement's Buyer/Seller above.
+  addField(currentRole() === 'Seller' ? 'Buyer' : 'Seller', saxonEntityName(val('h-entity')));
 
   // Broker details — internal-only (see the addField comment above): shown
   // to Level 1/2/3 approvers via "View", but stripped before Copy table /
@@ -4476,10 +4485,10 @@ function buildPointFormat(){
     addField('Registry', val('t'+i+'-registry'));
     addField(transferAccountLabel(currentRole()), val('t'+i+'-transfer'));
     addField('Vintage', val('t'+i+'-vintage-start-month')+' '+val('t'+i+'-vintage-start-year')+' - '+val('t'+i+'-vintage-end-month')+' '+val('t'+i+'-vintage-end-year'));
-    addField('Tech', techFullName(val('t'+i+'-tech')));
+    addField('Technology', techFullName(val('t'+i+'-tech')));
     addField('Country', countryFullName(val('t'+i+'-country')));
     addField('Volume (RECs)', val('t'+i+'-volume'));
-    addField('Price / RECs', val('t'+i+'-currency')+' '+val('t'+i+'-price'));
+    addField('Price / REC', val('t'+i+'-currency')+' '+val('t'+i+'-price'));
     addField('Payment Term', val('t'+i+'-payterm'));
     addField('Delivery', fmtDateOrdinal(val('t'+i+'-dstart'))+' - '+fmtDateOrdinal(val('t'+i+'-dend')));
     addField('COD (if applicable)', val('t'+i+'-m-cod'));
@@ -4627,10 +4636,9 @@ function buildRecapLinesFromRows(dealId, sortedGroup){
   addBlank();
   addField('Deal ID', friendlyDealId(dealId));
   addField('Deal Date', formatStoredDate(head[MC.agreementDate]));
-  addField('Entity', head[MC.entity]);
   addField('BD in-charge', head[MC.salesPic]);
   addField(role, head[MC.company]);
-  addField(role === 'Seller' ? 'Buyer' : 'Seller', 'Saxon');
+  addField(role === 'Seller' ? 'Buyer' : 'Seller', saxonEntityName(head[MC.entity]));
 
   if(head[MC.broker]){
     addField('Broker', head[MC.broker] || 'NA', true);
@@ -4649,10 +4657,10 @@ function buildRecapLinesFromRows(dealId, sortedGroup){
     addField('Registry', v[MC.registry]);
     addField(transferAccountLabel(role), v[MC.tigrsIrecName]);
     addField('Vintage', (v[MC.vFromMM]||'')+' '+(v[MC.vFromYY]||'')+' - '+(v[MC.vToMM]||'')+' '+(v[MC.vToYY]||''));
-    addField('Tech', techFullName(v[MC.tech]) || v[MC.tech] || '');
+    addField('Technology', techFullName(v[MC.tech]) || v[MC.tech] || '');
     addField('Country', countryFullName(v[MC.country]) || v[MC.country] || '');
     addField('Volume (RECs)', v[MC.volume]);
-    addField('Price / RECs', (v[MC.currency]||'')+' '+(v[MC.unitPrice]||''));
+    addField('Price / REC', (v[MC.currency]||'')+' '+(v[MC.unitPrice]||''));
     addField('Payment Term', v[MC.paymentTerm]);
     addField('Delivery', fmtDateOrdinalStored(v[MC.deliveryStart])+' - '+fmtDateOrdinalStored(v[MC.deliveryEnd]));
     addField('COD (if applicable)', v[MC.cod]);
