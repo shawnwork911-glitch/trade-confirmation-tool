@@ -3176,6 +3176,19 @@ function saxonEntityName(entity){
   if(key === 'MY') return 'Saxon Renewable Energy Sdn Bhd';
   return 'Saxon';
 }
+// Display-only formatting for the Registry field in the preview/output —
+// "IREC" is stored and typed without the hyphen (matches REGISTRIES/the
+// datalist suggestions and whatever's already saved to SharePoint), but the
+// preview should show it as "I-REC" (and "IREC/TIGR" as "I-REC/TIGR"). Only
+// touches those two exact known forms; anything else passes through as-is.
+const REGISTRY_DISPLAY_NAMES = {
+  'IREC':'I-REC', 'IREC/TIGR':'I-REC/TIGR'
+};
+function registryDisplayName(value){
+  const raw = String(value||'');
+  const key = raw.trim().toUpperCase();
+  return REGISTRY_DISPLAY_NAMES[key] || raw;
+}
 function techFullName(code){
   const raw = String(code||'').trim();
   if(!raw) return raw;
@@ -3777,7 +3790,7 @@ function tradeBlockHtml(n){
   return '<div class="trade-block" data-trade-num="'+n+'">'+
     '<p class="trade-title">Product '+n+'</p>'+
     '<div class="grid">'+
-    lockableField('Country', comboHtml('t'+n+'-country','t'+n+'-country-list',countryComboOptions(),'MY'),'t'+n+'-country')+
+    lockableField('Country (Full Name)', comboHtml('t'+n+'-country','t'+n+'-country-list',countryComboOptions(),'MY'),'t'+n+'-country')+
     lockableField('Registry', comboHtml('t'+n+'-registry','t'+n+'-registry-list',REGISTRIES,'IREC'),'t'+n+'-registry')+
     lockableField('Tech', techCheckboxesHtml(n,'SLR'),'t'+n+'-tech')
       .replace('<div id=','<div style="grid-column:1 / -1;" id=')+
@@ -4230,7 +4243,7 @@ function buildTradeGroup(startIdx, filled){
     }
   }
   addRow('Product', tradeNos);
-  addRow('Registry', registries);
+  addRow('Registry', registries.map(registryDisplayName));
   addRow(transferAccountLabel(currentRole()), transfers);
   addRow('Vintage', vintages, false, vintageParts);
   addRow('Tech', techs);
@@ -4491,7 +4504,7 @@ function buildPointFormat(){
   for(let i=1;i<=filled;i++){
     addBlank();
     lines.push({type:'tradeTitle', text:'Product '+i});
-    addField('Registry', val('t'+i+'-registry'));
+    addField('Registry', registryDisplayName(val('t'+i+'-registry')));
     addField(transferAccountLabel(currentRole()), val('t'+i+'-transfer'));
     addField('Vintage', val('t'+i+'-vintage-start-month')+' '+val('t'+i+'-vintage-start-year')+' - '+val('t'+i+'-vintage-end-month')+' '+val('t'+i+'-vintage-end-year'));
     addField('Technology', techFullName(val('t'+i+'-tech')));
@@ -4663,7 +4676,7 @@ function buildRecapLinesFromRows(dealId, sortedGroup){
     const i = idx + 1;
     addBlank();
     lines.push({type:'tradeTitle', text:'Product '+i});
-    addField('Registry', v[MC.registry]);
+    addField('Registry', registryDisplayName(v[MC.registry]));
     addField(transferAccountLabel(role), v[MC.tigrsIrecName]);
     addField('Vintage', (v[MC.vFromMM]||'')+' '+(v[MC.vFromYY]||'')+' - '+(v[MC.vToMM]||'')+' '+(v[MC.vToYY]||''));
     addField('Technology', techFullName(v[MC.tech]) || v[MC.tech] || '');
@@ -4729,7 +4742,7 @@ function recapEditFormHtml(dealId, sortedGroup){
       recapEditFieldHtml('Registry', comboHtml(idp+'registry', idp+'registry-list', REGISTRIES, v[MC.registry]||''))+
       recapEditFieldHtml(transferAccountLabel(role), '<input type="text" id="'+idp+'transfer" value="'+escapeHtml(v[MC.tigrsIrecName]||'')+'"/>')+
       recapEditFieldHtml('Tech', comboHtml(idp+'tech', idp+'tech-list', TECHS, v[MC.tech]||''))+
-      recapEditFieldHtml('Country', comboHtml(idp+'country', idp+'country-list', countryComboOptions(), v[MC.country]||''))+
+      recapEditFieldHtml('Country (Full Name)', comboHtml(idp+'country', idp+'country-list', countryComboOptions(), v[MC.country]||''))+
       recapEditFieldHtml('Vintage start month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vstart-m', MONTHS, v[MC.vFromMM]||'Jan')+comboHtml(idp+'vstart-y', idp+'vstart-y-list', YEARS, v[MC.vFromYY]||'')+'</div>')+
       recapEditFieldHtml('Vintage end month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vend-m', MONTHS, v[MC.vToMM]||'Dec')+comboHtml(idp+'vend-y', idp+'vend-y-list', YEARS, v[MC.vToYY]||'')+'</div>')+
       recapEditFieldHtml('Volume (RECs)', '<input type="text" id="'+idp+'volume" value="'+escapeHtml(v[MC.volume]||'')+'"/>')+
@@ -4898,7 +4911,7 @@ function tradeFieldDefs(i){
     {ids:['t'+i+'-vintage-start-month','t'+i+'-vintage-start-year'], label:'Vintage start month & year'},
     {ids:['t'+i+'-vintage-end-month','t'+i+'-vintage-end-year'], label:'Vintage end month & year'},
     {ids:['t'+i+'-tech'], label:'Tech'},
-    {ids:['t'+i+'-country'], label:'Country'},
+    {ids:['t'+i+'-country'], label:'Country (Full Name)'},
     {ids:['t'+i+'-volume'], label:'Volume (RECs)'},
     {ids:['t'+i+'-currency'], label:'Price currency'},
     {ids:['t'+i+'-price'], label:'Price / REC'},
