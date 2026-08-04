@@ -3158,6 +3158,15 @@ function countryFullName(code){
   const key = String(code||'').trim().toUpperCase();
   return COUNTRY_FULLNAMES[key] || code;
 }
+// Suggestions for the free-typing Country combo box: every known code plus
+// its full name (e.g. "MY" and "Malaysia"), deduplicated, so the datalist
+// helps whether the user starts typing a code or a country name — while the
+// field stays a plain text input, so anything not on the list can still be
+// typed in freely.
+function countryComboOptions(){
+  const names = COUNTRIES.map(c => COUNTRY_FULLNAMES[c]).filter(Boolean);
+  return [...new Set([...COUNTRIES, ...names])];
+}
 // Our own side of the deal is always "Saxon" internally, but the preview
 // should show the full legal entity name tied to the deal's Entity field
 // (SG vs MY). Falls back to the plain "Saxon" if Entity isn't one of those.
@@ -3768,7 +3777,7 @@ function tradeBlockHtml(n){
   return '<div class="trade-block" data-trade-num="'+n+'">'+
     '<p class="trade-title">Product '+n+'</p>'+
     '<div class="grid">'+
-    lockableField('Country', selectWithFullNamesHtml('t'+n+'-country',COUNTRIES,COUNTRY_FULLNAMES,'MY'),'t'+n+'-country')+
+    lockableField('Country', comboHtml('t'+n+'-country','t'+n+'-country-list',countryComboOptions(),'MY'),'t'+n+'-country')+
     lockableField('Registry', comboHtml('t'+n+'-registry','t'+n+'-registry-list',REGISTRIES,'IREC'),'t'+n+'-registry')+
     lockableField('Tech', techCheckboxesHtml(n,'SLR'),'t'+n+'-tech')
       .replace('<div id=','<div style="grid-column:1 / -1;" id=')+
@@ -4231,7 +4240,7 @@ function buildTradeGroup(startIdx, filled){
   addRow('Payment Term', payterms);
   addRow('Delivery Start Date', dstarts);
   addRow('Delivery End Date', dends);
-  addRow('COD (if applicable)', mCods);
+  addRow('License Commencement Date (if applicable)', mCods);
   addRow('Special Remarks Request', remarks);
   addRow('BD Source Matching: 1. Buyer/Seller', mNames);
   addRow('2. No of RECs', mRecs);
@@ -4254,7 +4263,7 @@ function buildTable(){
   const addHeaderRow = (label, cells) => headerRows.push({label, cells, span:true});
   addHeaderRow('Deal Date', [fmtDate(val('h-date'))]);
   addHeaderRow('Entity', [val('h-entity')]);
-  addHeaderRow('BD in-charge', [val('h-bd')]);
+  addHeaderRow('Commercial Executive', [val('h-bd')]);
   addHeaderRow(currentRole(), [val('h-buyer')]);
   addHeaderRow('Order Type', [val('h-order')]);
   addHeaderRow('Broker (if any)', [val('h-broker')]);
@@ -4458,7 +4467,7 @@ function buildPointFormat(){
   // blank number — showing that here would look like a real (and wrong) Deal ID.
   addField('Deal ID', currentDealDocId ? opsDealId() : 'Assigned once L1 approved');
   addField('Deal Date', fmtDate(val('h-date')));
-  addField('BD in-charge', val('h-bd'));
+  addField('Commercial Executive', val('h-bd'));
   addField(currentRole(), val('h-buyer'));
   // Counterparty line: our own side is always "Saxon" internally, shown here
   // with its full legal entity name (SG vs MY), with whichever role is the
@@ -4491,7 +4500,7 @@ function buildPointFormat(){
     addField('Price / REC', val('t'+i+'-currency')+' '+val('t'+i+'-price'));
     addField('Payment Term', val('t'+i+'-payterm'));
     addField('Delivery', fmtDateOrdinal(val('t'+i+'-dstart'))+' - '+fmtDateOrdinal(val('t'+i+'-dend')));
-    addField('COD (if applicable)', val('t'+i+'-m-cod'));
+    addField('License Commencement Date (if applicable)', val('t'+i+'-m-cod'));
     addField('Special Remarks Request', remarksVal(i));
     // Internal-only from here down — see the addField comment above. Product
     // number is this trade's position (i), 1-based, matching the order
@@ -4636,7 +4645,7 @@ function buildRecapLinesFromRows(dealId, sortedGroup){
   addBlank();
   addField('Deal ID', friendlyDealId(dealId));
   addField('Deal Date', formatStoredDate(head[MC.agreementDate]));
-  addField('BD in-charge', head[MC.salesPic]);
+  addField('Commercial Executive', head[MC.salesPic]);
   addField(role, head[MC.company]);
   addField(role === 'Seller' ? 'Buyer' : 'Seller', saxonEntityName(head[MC.entity]));
 
@@ -4663,7 +4672,7 @@ function buildRecapLinesFromRows(dealId, sortedGroup){
     addField('Price / REC', (v[MC.currency]||'')+' '+(v[MC.unitPrice]||''));
     addField('Payment Term', v[MC.paymentTerm]);
     addField('Delivery', fmtDateOrdinalStored(v[MC.deliveryStart])+' - '+fmtDateOrdinalStored(v[MC.deliveryEnd]));
-    addField('COD (if applicable)', v[MC.cod]);
+    addField('License Commencement Date (if applicable)', v[MC.cod]);
     addField('Special Remarks Request', v[MC.specialReq] || 'N/A');
     addBdField(i, 'status', 'BD Matching \u2014 Status', matchingDisplayLabel(v[MC.matching]));
     addBdField(i, 'buyerseller', 'BD Matching \u2014 Buyer/Seller', v[MC.buyerSeller] || '-');
@@ -4720,7 +4729,7 @@ function recapEditFormHtml(dealId, sortedGroup){
       recapEditFieldHtml('Registry', comboHtml(idp+'registry', idp+'registry-list', REGISTRIES, v[MC.registry]||''))+
       recapEditFieldHtml(transferAccountLabel(role), '<input type="text" id="'+idp+'transfer" value="'+escapeHtml(v[MC.tigrsIrecName]||'')+'"/>')+
       recapEditFieldHtml('Tech', comboHtml(idp+'tech', idp+'tech-list', TECHS, v[MC.tech]||''))+
-      recapEditFieldHtml('Country', comboHtml(idp+'country', idp+'country-list', COUNTRIES, v[MC.country]||''))+
+      recapEditFieldHtml('Country', comboHtml(idp+'country', idp+'country-list', countryComboOptions(), v[MC.country]||''))+
       recapEditFieldHtml('Vintage start month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vstart-m', MONTHS, v[MC.vFromMM]||'Jan')+comboHtml(idp+'vstart-y', idp+'vstart-y-list', YEARS, v[MC.vFromYY]||'')+'</div>')+
       recapEditFieldHtml('Vintage end month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vend-m', MONTHS, v[MC.vToMM]||'Dec')+comboHtml(idp+'vend-y', idp+'vend-y-list', YEARS, v[MC.vToYY]||'')+'</div>')+
       recapEditFieldHtml('Volume (RECs)', '<input type="text" id="'+idp+'volume" value="'+escapeHtml(v[MC.volume]||'')+'"/>')+
