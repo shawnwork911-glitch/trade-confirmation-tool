@@ -2108,6 +2108,20 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
     row[MC.brokerFeePrice] = brokerFeeTypeValue() ? val('h-broker-fee-price') : '';
     row[MC.rowUid] = generateRowUid();
     row[MC.approvedListItemId] = '';
+    // Optional 60th column (see the regTechReminderSentDate comment on MC) —
+    // only stamp it if the live table actually has it, and only when this
+    // product's Registry and/or Tech is genuinely ambiguous at save time.
+    // Stamping it with the row's own Delivery End Date (rather than
+    // "today") lets the external Power Automate reminder flow dedupe
+    // against the CURRENT Delivery End Date: if that date is later edited
+    // (see saveRecapEdits), the stamp no longer matches it and the flow's
+    // own comparison naturally treats this as not-yet-reminded again — no
+    // extra clearing logic needed here for that case. The existing
+    // "cleared once Registry/Tech is actually fixed" logic in
+    // approveBdMatchChange is unaffected by this and still applies.
+    if(liveColumnCount > MC.regTechReminderSentDate && needsRegistryTechFix(row[MC.registry], row[MC.tech])){
+      row[MC.regTechReminderSentDate] = row[MC.deliveryEnd];
+    }
     rowsToWrite.push(row);
   }
   await addTableRows(LOG_TABLE_NAME, rowsToWrite);
@@ -5077,6 +5091,16 @@ async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
     values[MC.cod] = rv(idp+'cod');
     const remarksRaw = rv(idp+'remarks');
     values[MC.specialReq] = (!remarksRaw || remarksRaw.toUpperCase() === 'NA') ? 'N/A' : remarksRaw;
+    // Same optional-column stamping as saveConfirmationToHistory (see the
+    // comment there) — this editor can also change Registry, Tech, and/or
+    // Delivery End Date directly, so re-derive the stamp here too: set it
+    // to the (possibly just-edited) Delivery End Date if still ambiguous,
+    // or clear it if this edit just fixed the ambiguity (mirrors the
+    // clear-on-fix logic in approveBdMatchChange).
+    if(values.length > MC.regTechReminderSentDate){
+      values[MC.regTechReminderSentDate] = needsRegistryTechFix(values[MC.registry], values[MC.tech])
+        ? values[MC.deliveryEnd] : '';
+    }
     updatedRows.push({ index: sortedGroup[idx].index, values: [values] });
   }
 
