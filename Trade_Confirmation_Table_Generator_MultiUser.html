@@ -478,6 +478,7 @@
   <p id="save-note" style="font-size:12px;color:var(--text-secondary);margin:-14px 0 0;display:none;"></p>
 
   <div id="validation-warning" class="warning-box"></div>
+  <div id="regtech-warning" class="warning-box" style="display:none;"></div>
 
   </div>
 
@@ -644,6 +645,11 @@ const LOG_TABLE_NAME = "TradeDealLog";        // must match the Excel Table name
 // Pending Which Deal, Pending No of RECs, Pending Delivery Date,
 // Change Requested By, Change Requested Date,
 // Row Uid, Approved List Item Id, Pending Registry, Pending Tech
+// OPTIONAL 60th column, only needed if a Power Automate flow uses this app's
+// dedupe convention for the 1-month-before-Delivery-End-Date Registry/Tech
+// reminder email (that flow runs outside this app — see the
+// regTechReminderSentDate comment on the MC object below); not required for
+// anything else in this app to work: Reg/Tech Reminder Sent Date.
 // NOTE: if you're adding this to an existing workbook, add any new column
 // ("Broker Fee Type"/"Broker Fee Currency"/"Broker Fee Price" included, the
 // 7 "Pending ..."/"Change Requested ..." columns used for post-approval BD
@@ -712,7 +718,22 @@ const MC = {
   // needsRegistryTechFix/openEditRequestModal/requestBdMatchChange. Nothing
   // here touches the live Registry/Tech columns until a Level 3 approver
   // signs off, exactly like the other pending* columns.
-  pendingRegistry:57, pendingTech:58
+  pendingRegistry:57, pendingTech:58,
+  // Optional column for the "1 month before Delivery End Date" Registry/
+  // Tech reminder email — that reminder is sent by an external, separately
+  // configured Power Automate flow (scheduled/timer-triggered, so it can
+  // fire on the right day regardless of whether anyone has this app open —
+  // this app itself has no server/cron and can't do that), NOT by any code
+  // in this file. This column exists purely so that flow has somewhere to
+  // stamp "last reminded" for its own dedupe/resend logic, and so this app
+  // can clear it once a row's Registry/Tech is actually fixed (see
+  // approveBdMatchChange) — a fresh ambiguity later then starts a clean
+  // reminder cycle rather than inheriting a stale timestamp. Deliberately
+  // NOT counted in COL_COUNT below — it's optional/additive, so a workbook
+  // that hasn't added this one extra column yet doesn't get blocked out of
+  // any OTHER feature that guards on COL_COUNT (saving, approving, BD
+  // source matching changes).
+  regTechReminderSentDate:59
 };
 const COL_COUNT = 59;
 const DRAFT_TABLE_NAME = "TradeDealDrafts";   // must match the Excel Table name you create
@@ -2477,6 +2498,15 @@ async function approveBdMatchChange(dealId){
     // an already-correct Registry/Tech.
     if(values[MC.pendingRegistry]) values[MC.registry] = values[MC.pendingRegistry];
     if(values[MC.pendingTech]) values[MC.tech] = values[MC.pendingTech];
+    // Fixed now (or was never ambiguous) — clear any reminder-sent stamp
+    // so a future, unrelated ambiguity on this row starts its own fresh
+    // reminder window rather than inheriting an old timestamp. Guarded on
+    // values.length since the "Reg/Tech Reminder Sent Date" column is
+    // optional (see MC.regTechReminderSentDate) — on a table that hasn't
+    // added it yet, this row's values array simply won't reach that index.
+    if(values.length > MC.regTechReminderSentDate && !needsRegistryTechFix(values[MC.registry], values[MC.tech])){
+      values[MC.regTechReminderSentDate] = '';
+    }
     values[MC.pendingMatching] = '';
     values[MC.pendingBuyerSeller] = '';
     values[MC.pendingWhichDeal] = '';
@@ -2679,6 +2709,28 @@ function renderHistoryTable(el, groups, opts){
         (canRequestEdit ? ' <button type="button" class="secondary history-request-edit-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;">Request edit</button>' : '') +
       '</td>' +
     '</tr>';
+    // Shown to whoever's looking at this table — including admin
+    // Level 1/2/3 in the Approval queue, not just after the deal is
+    // already Approved — so an ambiguous Registry/Tech can be caught
+    // (or at least flagged to the submitter) as early as possible, before
+    // it ever needs the heavier post-approval "Request edit" + fresh
+    // Level 3 sign-off round-trip. See needsRegistryTechFix.
+    const regTechFlags = g.rows.map((r, idx)=>{
+      const rv = r.values[0];
+      if(!needsRegistryTechFix(rv[MC.registry], rv[MC.tech])) return '';
+      const label = g.rows.length > 1 ? 'Product '+(idx+1)+': ' : '';
+      return label + registryDisplayName(rv[MC.registry]) + ' / ' + techFullName(rv[MC.tech]);
+    }).filter(Boolean);
+    if(regTechFlags.length){
+      html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
+        '<div style="background:#fdecea;border:1px solid #e2a49a;color:#8a2d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
+        '<strong>⚠ Registry/Tech needs confirmation:</strong> '+escapeHtml(regTechFlags.join(' · '))+
+        ' — each product should only ever have one Registry and one Tech (not a combination, and not "Any"). '+
+        (status === STATUS_APPROVED
+          ? 'The submitter can fix this via "Request edit" (needs a fresh Level 3 sign-off).'
+          : 'Worth flagging to the submitter before approving, if it can still be corrected at this stage.') +
+        '</div></td></tr>';
+    }
     if(status === STATUS_REJECTED && v[MC.rejectReason]){
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
         '<div style="background:#fdecea;border:1px solid #e2a49a;color:#8a2d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
@@ -3658,10 +3710,20 @@ document.addEventListener('input', (e)=>{
     updateCodValue(n);
   }
 });
+// Falls back to also including `def` as its own option (labeled with
+// whatever's in fullNameMap for it, or itself if not found there) when it
+// isn't already one of `codes` — so editing a row whose stored value is
+// something outside the current fixed list (a legacy/free-typed value from
+// before this field was a dropdown, or just a typo) shows and keeps that
+// exact value instead of a <select> silently defaulting to the first
+// option and swapping the value out from under the person editing it.
 function selectWithFullNamesHtml(id, codes, fullNameMap, def){
-  const o = codes.map(code => {
+  const hasDef = def !== undefined && def !== null && def !== '' &&
+    codes.some(code => code === def);
+  const extra = (def && !hasDef) ? [def] : [];
+  const o = extra.concat(codes).map(code => {
     const label = fullNameMap[code] || code;
-    return '<option value="'+code+'"'+(code===def?' selected':'')+'>'+label+'</option>';
+    return '<option value="'+escapeHtml(code)+'"'+(code===def?' selected':'')+'>'+escapeHtml(label)+'</option>';
   }).join('');
   return '<select id="'+id+'">'+o+'</select>';
 }
@@ -3943,7 +4005,7 @@ function tradeBlockHtml(n){
     '<p class="trade-title">Product '+n+'</p>'+
     '<div class="grid">'+
     lockableField('Country (Full Name)', comboHtml('t'+n+'-country','t'+n+'-country-list',countryComboOptions(),'MY'),'t'+n+'-country')+
-    lockableField('Registry', comboHtml('t'+n+'-registry','t'+n+'-registry-list',REGISTRIES,'IREC'),'t'+n+'-registry')+
+    lockableField('Registry', selectWithFullNamesHtml('t'+n+'-registry', REGISTRIES, REGISTRY_DISPLAY_NAMES, 'IREC'),'t'+n+'-registry')+
     lockableField('Tech', techCheckboxesHtml(n,'SLR'),'t'+n+'-tech')
       .replace('<div id=','<div style="grid-column:1 / -1;" id=')+
     lockableField('Vintage start month &amp; year',
@@ -4306,6 +4368,30 @@ function formatStoredDate(v){
     return d+'/'+m+'/'+y;
   }
   return str;
+}
+// Same "Excel serial number OR ISO-ish string" handling as formatStoredDate
+// above, but returns an actual Date (UTC midnight) instead of a display
+// string — for comparing/measuring a stored date against "today". Not
+// currently called anywhere in this file (the "1 month before Delivery End
+// Date" Registry/Tech reminder is sent by an external Power Automate flow,
+// not this app — see the regTechReminderSentDate comment on MC); kept here
+// as a ready-made utility for that or any future date-math need. Returns
+// null if v is blank or unparseable.
+function parseStoredDateToDate(v){
+  if(v === '' || v === null || v === undefined) return null;
+  const str = String(v).trim();
+  if(!str) return null;
+  if(/^-?\d+(\.\d+)?$/.test(str)){
+    const ms = Math.round((Number(str) - 25569) * 86400 * 1000);
+    const d = new Date(ms);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  const m = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(m){
+    const d = new Date(Date.UTC(Number(m[1]), Number(m[2])-1, Number(m[3])));
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return null;
 }
 function fmtDateShort(v){
   if(!v) return '';
@@ -4891,7 +4977,7 @@ function recapEditFormHtml(dealId, sortedGroup){
     const i = idx+1;
     const idp = 're-t'+i+'-';
     html += '<div class="trade-block"><p class="trade-title">Product '+i+'</p><div class="grid">'+
-      recapEditFieldHtml('Registry', comboHtml(idp+'registry', idp+'registry-list', REGISTRIES, v[MC.registry]||''))+
+      recapEditFieldHtml('Registry', selectWithFullNamesHtml(idp+'registry', REGISTRIES, REGISTRY_DISPLAY_NAMES, v[MC.registry]||'IREC'))+
       recapEditFieldHtml(transferAccountLabel(role), '<input type="text" id="'+idp+'transfer" value="'+escapeHtml(v[MC.tigrsIrecName]||'')+'"/>')+
       recapEditFieldHtml('Tech', comboHtml(idp+'tech', idp+'tech-list', TECHS, v[MC.tech]||''))+
       recapEditFieldHtml('Country (Full Name)', comboHtml(idp+'country', idp+'country-list', countryComboOptions(), v[MC.country]||''))+
@@ -5134,6 +5220,36 @@ function showValidationWarning(missing, versionLabel){
 function hideValidationWarning(){
   document.getElementById('validation-warning').style.display = 'none';
 }
+// Doesn't block generating/saving (Registry and Tech are both technically
+// filled in) — this is a heads-up to the submitter, shown alongside the
+// generated table, for any product whose Registry and/or Tech currently
+// holds more than one value (e.g. "IREC/TIGR") or an unspecified Tech
+// ("Any tech"). Mirrors the "⚠ Registry/Tech needs confirmation" flag shown
+// to the Level 3 approver (see the regTechFlags block) so both the
+// submitter and the admin get told to pick exactly one Registry and one
+// Tech per product, at their respective points in the flow.
+function regTechWarningItems(filled){
+  const items = [];
+  for(let i=1;i<=filled;i++){
+    const registry = val('t'+i+'-registry');
+    const tech = val('t'+i+'-tech');
+    if(needsRegistryTechFix(registry, tech)){
+      items.push('Product '+i+': '+registryDisplayName(registry)+' / '+techFullName(tech));
+    }
+  }
+  return items;
+}
+function showRegTechWarning(items){
+  const box = document.getElementById('regtech-warning');
+  if(!box) return;
+  box.innerHTML = '<strong>⚠ Registry/Tech needs confirmation:</strong> Each product should only ever have one Registry and one Tech (not a combination, and not "Any"). Please go back and select a single value for each below:<ul>'+
+    items.map(t=>'<li>'+escapeHtml(t)+'</li>').join('')+'</ul>';
+  box.style.display = 'block';
+}
+function hideRegTechWarning(){
+  const box = document.getElementById('regtech-warning');
+  if(box) box.style.display = 'none';
+}
 // Clear a field's "missing" outline as soon as the person edits it, and
 // require the table to be (re)generated before Save agreement can be used
 // again, so a saved agreement always matches what was last generated.
@@ -5147,6 +5263,16 @@ function requireRegenerateBeforeSave(){
   const btn = document.getElementById('save-agreement-btn');
   if(btn && !btn.disabled) setSaveAgreementEnabled(false);
 }
+// Live version of the regTechWarningItems check used inside generateOutput()
+// — re-runs it immediately whenever a Registry dropdown or Tech checkbox
+// changes, so the submitter sees the warning the moment they pick an
+// ambiguous value rather than only after clicking Generate table.
+function liveRegTechCheck(){
+  const filled = parseInt(document.getElementById('trade-count').value,10) || 0;
+  const items = regTechWarningItems(filled);
+  if(items.length) showRegTechWarning(items);
+  else hideRegTechWarning();
+}
 document.addEventListener('input', (e)=>{
   const wrap = e.target.closest('[id$="-wrap"]');
   if(wrap) wrap.classList.remove('field-missing');
@@ -5156,6 +5282,7 @@ document.addEventListener('change', (e)=>{
   const wrap = e.target.closest('[id$="-wrap"]');
   if(wrap) wrap.classList.remove('field-missing');
   if(e.target.closest('#header-fields, #trades-container') || e.target.id==='trade-count') requireRegenerateBeforeSave();
+  if(/-registry$/.test(e.target.id) || e.target.classList.contains('tech-checkbox') || e.target.id==='trade-count') liveRegTechCheck();
 });
 
 // Validates and builds the preview. Returns true/false for which version was
@@ -5169,10 +5296,16 @@ function generateOutput(){
   if(missing.length){
     showValidationWarning(missing, includeBD ? 'Ops version' : 'Customer version');
     document.getElementById('output-section').style.display = 'none';
+    hideRegTechWarning();
     setSaveAgreementEnabled(false);
     return null;
   }
   hideValidationWarning();
+
+  const filledCount = parseInt(document.getElementById('trade-count').value,10);
+  const regTechItems = regTechWarningItems(filledCount);
+  if(regTechItems.length) showRegTechWarning(regTechItems);
+  else hideRegTechWarning();
 
   if(includeBD){
     const tableData = buildTable();
