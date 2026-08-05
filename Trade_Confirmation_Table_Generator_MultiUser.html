@@ -2762,6 +2762,12 @@ function renderHistoryTable(el, groups, opts){
         if((rv[MC.deliveryDateM]||'') !== (rv[MC.pendingDeliveryDateM]||'')){
           lines.push('Delivery date: <s>'+escapeHtml(rv[MC.deliveryDateM]||'(blank)')+'</s> → <strong>'+escapeHtml(rv[MC.pendingDeliveryDateM]||'(blank)')+'</strong>');
         }
+        if((rv[MC.registry]||'') !== (rv[MC.pendingRegistry]||'')){
+          lines.push('Registry: <s>'+escapeHtml(registryDisplayName(rv[MC.registry])||'(blank)')+'</s> → <strong>'+escapeHtml(registryDisplayName(rv[MC.pendingRegistry])||'(blank)')+'</strong>');
+        }
+        if((rv[MC.tech]||'') !== (rv[MC.pendingTech]||'')){
+          lines.push('Tech: <s>'+escapeHtml(techFullName(rv[MC.tech])||'(blank)')+'</s> → <strong>'+escapeHtml(techFullName(rv[MC.pendingTech])||'(blank)')+'</strong>');
+        }
         if(!lines.length) return '';
         return '<div style="margin-top:'+(idx>0?'6px':'0')+';">'+(g.rows.length>1?'<strong>Product '+(idx+1)+':</strong> ':'')+lines.join(' · ')+'</div>';
       }).join('');
