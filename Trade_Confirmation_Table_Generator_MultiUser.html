@@ -4739,6 +4739,13 @@ function buildPointFormat(){
   // the live TradeDealLog row, whenever a BD source matching change is
   // approved after this HTML was first generated and saved.
   const addBdField = (product, field, label, value) => lines.push({type:'field', label, value, bd:true, product, field});
+  // Registry/Tech are customer-facing (never bd:true, so they're never
+  // stripped from Copy table / Copy) but — same as the BD matching fields —
+  // can be corrected after the fact via the Level 3 "Request edit" flow
+  // (requestBdMatchChange/approveBdMatchChange), so they also carry
+  // product/field markers purely so refreshBdMatchingInHtml() can find and
+  // live-update just these two values in place.
+  const addLiveField = (product, field, label, value) => lines.push({type:'field', label, value, bd:false, product, field});
   const addBlank = () => lines.push({type:'blank'});
 
   lines.push({type:'title', text:'Details: Transaction Recap'});
@@ -4772,10 +4779,10 @@ function buildPointFormat(){
   for(let i=1;i<=filled;i++){
     addBlank();
     lines.push({type:'tradeTitle', text:'Product '+i});
-    addField('Registry', registryDisplayName(val('t'+i+'-registry')));
+    addLiveField(i, 'registry', 'Registry', registryDisplayName(val('t'+i+'-registry')));
     addField(transferAccountLabel(currentRole()), val('t'+i+'-transfer'));
     addField('Vintage', val('t'+i+'-vintage-start-month')+' '+val('t'+i+'-vintage-start-year')+' - '+val('t'+i+'-vintage-end-month')+' '+val('t'+i+'-vintage-end-year'));
-    addField('Technology', techFullName(val('t'+i+'-tech')));
+    addLiveField(i, 'tech', 'Technology', techFullName(val('t'+i+'-tech')));
     addField('Country', countryFullName(val('t'+i+'-country')));
     addField('Volume (RECs)', val('t'+i+'-volume'));
     addField('Price / REC', val('t'+i+'-currency')+' '+val('t'+i+'-price'));
@@ -4815,7 +4822,14 @@ function renderPointFormatHtml(lines){
         ? ' data-product="'+l.product+'" data-field="'+l.field+'"' : '';
       html += '<div data-bd="1"'+dataAttrs+' style="background:#f2ecf7;color:#4a2d63;padding:2px 6px;border-radius:4px;margin:1px 0;">'+'<strong>'+escapeHtml(l.label)+':</strong> '+escapeHtml(l.value)+'</div>';
     } else {
-      html += '<div>'+'<strong>'+escapeHtml(l.label)+':</strong> '+escapeHtml(l.value)+'</div>';
+      // Non-bd fields that still carry product/field (currently just
+      // Registry/Tech — see addLiveField) get a data-live marker instead of
+      // data-bd, so refreshBdMatchingInHtml() can still locate them for a
+      // live update, but stripBdMatchingHtml() (which only matches
+      // data-bd="1") leaves them untouched in the customer-facing copy.
+      const liveAttrs = (l.product !== undefined && l.field !== undefined)
+        ? ' data-live="1" data-product="'+l.product+'" data-field="'+l.field+'"' : '';
+      html += '<div'+liveAttrs+'>'+'<strong>'+escapeHtml(l.label)+':</strong> '+escapeHtml(l.value)+'</div>';
     }
   });
   html += '</div>';
@@ -4830,19 +4844,22 @@ function renderPointFormatHtml(lines){
 function stripBdMatchingHtml(html){
   return String(html || '').replace(/<div data-bd="1"[^>]*>[\s\S]*?<\/div>/g, '');
 }
-// The BD Matching values baked into a deal's saved "Generated HTML" are a
-// snapshot from whenever it was last (re)generated — they go stale the
-// moment a BD source matching change is later requested and approved at
-// Level 3, since that flow updates the live TradeDealLog columns directly
-// and never touches this stored HTML. This patches just those 5-per-product
-// values in place, straight from `group` (that deal's current TradeDealLog
-// rows, sorted by row index so product 1/2/3... lines up with row 1/2/3...),
-// so every place this HTML is displayed always shows live matching info —
-// exactly what Level 1/2/3 need when reviewing an already-Approved deal that
-// later got its matching corrected. Only ever called for display; the
-// stored generatedHtml column itself is intentionally left untouched — the
-// live TradeDealLog columns (MC.matching etc.) remain the single source of
-// truth, this just re-reads them at render time instead of trusting the snapshot.
+// The BD Matching values (plus Registry/Tech — see below) baked into a
+// deal's saved "Generated HTML" are a snapshot from whenever it was last
+// (re)generated — they go stale the moment a BD source matching change (or
+// a Registry/Tech correction) is later requested and approved at Level 3,
+// since that flow updates the live TradeDealLog columns directly and never
+// touches this stored HTML. This patches just those per-product values in
+// place, straight from `group` (that deal's current TradeDealLog rows,
+// sorted by row index so product 1/2/3... lines up with row 1/2/3...), so
+// every place this HTML is displayed always shows live info — exactly what
+// Level 1/2/3 need when reviewing an already-Approved deal that later got
+// its matching, or its Registry/Tech (see needsRegistryTechFix/
+// requestBdMatchChange/approveBdMatchChange), corrected. Only ever called
+// for display; the stored generatedHtml column itself is intentionally left
+// untouched — the live TradeDealLog columns (MC.matching, MC.registry,
+// MC.tech, etc.) remain the single source of truth, this just re-reads them
+// at render time instead of trusting the snapshot.
 // Same "Own RECs - " / "Proceed Share - " labeling as dealLabelFor(), but
 // for a value already pulled from a saved TradeDealLog row (which only ever
 // stored the raw full name, not the label) — inferred by checking which
@@ -4867,11 +4884,18 @@ function refreshBdMatchingInHtml(html, group){
       buyerseller: v[MC.buyerSeller] || '-',
       norecs: v[MC.noOfRecs] || '-',
       whichdeal: dealLabelForStoredValue(v[MC.whichDeal]) || '-',
-      deliverydate: formatStoredDate(v[MC.deliveryDateM]) || '-'
+      deliverydate: formatStoredDate(v[MC.deliveryDateM]) || '-',
+      // Registry/Tech are rendered by addLiveField/renderPointFormatHtml
+      // with a data-live="1" marker instead of data-bd="1" (see those
+      // comments) — the regex below matches on data-product/data-field
+      // regardless of which marker attribute precedes them, so it finds
+      // both kinds of block.
+      registry: registryDisplayName(v[MC.registry]) || '-',
+      tech: techFullName(v[MC.tech]) || '-'
     };
     Object.keys(fieldValues).forEach(fieldKey=>{
       const re = new RegExp(
-        '(<div data-bd="1" data-product="'+product+'" data-field="'+fieldKey+'"[^>]*><strong>[^<]*<\\/strong>\\s*)([^<]*)(<\\/div>)'
+        '(<div[^>]*data-product="'+product+'"[^>]*data-field="'+fieldKey+'"[^>]*><strong>[^<]*<\\/strong>\\s*)([^<]*)(<\\/div>)'
       );
       out = out.replace(re, (m, pre, oldVal, post) => pre + escapeHtml(fieldValues[fieldKey]) + post);
     });
@@ -4918,6 +4942,13 @@ function buildRecapLinesFromRows(dealId, sortedGroup){
   const lines = [];
   const addField = (label, value, bd) => lines.push({type:'field', label, value, bd: !!bd});
   const addBdField = (product, field, label, value) => lines.push({type:'field', label, value, bd:true, product, field});
+  // Same reasoning as addLiveField in buildPointFormat() — Registry/Tech
+  // stay customer-facing (bd:false) but still carry product/field markers so
+  // a later BD-matching-change or Registry/Tech-fix approval can find and
+  // live-update these values via refreshBdMatchingInHtml(), even though this
+  // particular HTML was generated by the superadmin recap editor rather than
+  // a fresh submission.
+  const addLiveField = (product, field, label, value) => lines.push({type:'field', label, value, bd:false, product, field});
   const addBlank = () => lines.push({type:'blank'});
   const head = sortedGroup[0].values[0];
   const role = roleFromOrderType(head[MC.supplyDemand]);
@@ -4944,10 +4975,10 @@ function buildRecapLinesFromRows(dealId, sortedGroup){
     const i = idx + 1;
     addBlank();
     lines.push({type:'tradeTitle', text:'Product '+i});
-    addField('Registry', registryDisplayName(v[MC.registry]));
+    addLiveField(i, 'registry', 'Registry', registryDisplayName(v[MC.registry]));
     addField(transferAccountLabel(role), v[MC.tigrsIrecName]);
     addField('Vintage', (v[MC.vFromMM]||'')+' '+(v[MC.vFromYY]||'')+' - '+(v[MC.vToMM]||'')+' '+(v[MC.vToYY]||''));
-    addField('Technology', techFullName(v[MC.tech]) || v[MC.tech] || '');
+    addLiveField(i, 'tech', 'Technology', techFullName(v[MC.tech]) || v[MC.tech] || '');
     addField('Country', countryFullName(v[MC.country]) || v[MC.country] || '');
     addField('Volume (RECs)', v[MC.volume]);
     addField('Price / REC', (v[MC.currency]||'')+' '+(v[MC.unitPrice]||''));
