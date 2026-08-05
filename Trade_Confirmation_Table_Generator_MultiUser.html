@@ -2725,10 +2725,7 @@ function renderHistoryTable(el, groups, opts){
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
         '<div style="background:#fdecea;border:1px solid #e2a49a;color:#8a2d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
         '<strong>⚠ Registry/Tech needs confirmation:</strong> '+escapeHtml(regTechFlags.join(' · '))+
-        ' — each product should only ever have one Registry and one Tech (not a combination, and not "Any"). '+
-        (status === STATUS_APPROVED
-          ? 'The submitter can fix this via "Request edit" (needs a fresh Level 3 sign-off).'
-          : 'Worth flagging to the submitter before approving, if it can still be corrected at this stage.') +
+        '. Please edit to the correct Registry/Tech. Dateline 1 month before the Delivery End Date.' +
         '</div></td></tr>';
     }
     if(status === STATUS_REJECTED && v[MC.rejectReason]){
