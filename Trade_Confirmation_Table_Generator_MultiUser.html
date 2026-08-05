@@ -597,7 +597,7 @@
 
 <div id="edit-request-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
   <div style="width:100%;max-width:640px;max-height:85vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:12px;">
-    <h2 style="margin:0;font-size:16px;">Request post-approval product change — Deal ID <span id="edit-request-modal-dealid"></span></h2>
+    <h2 style="margin:0;font-size:16px;">Request a correction — Deal ID <span id="edit-request-modal-dealid"></span></h2>
     <p style="margin:0;font-size:13px;color:var(--text-secondary);">This deal is already Approved, so any correction here needs a fresh Level 3 sign-off before it takes effect. The current, live values stay in place everywhere until that happens.</p>
     <div id="edit-request-modal-fields" style="display:flex;flex-direction:column;gap:16px;"></div>
     <div id="edit-request-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
@@ -643,18 +643,18 @@ const LOG_TABLE_NAME = "TradeDealLog";        // must match the Excel Table name
 // Broker Fee Price, Pending Matching, Pending Buyer/Seller,
 // Pending Which Deal, Pending No of RECs, Pending Delivery Date,
 // Change Requested By, Change Requested Date,
-// Row Uid, Approved List Item Id, Pending Matching Note,
-// Pending Registry, Pending Tech
+// Row Uid, Approved List Item Id, Pending Registry, Pending Tech
 // NOTE: if you're adding this to an existing workbook, add any new column
 // ("Broker Fee Type"/"Broker Fee Currency"/"Broker Fee Price" included, the
-// 7 "Pending ..."/"Change Requested ..." columns used for post-approval
+// 7 "Pending ..."/"Change Requested ..." columns used for post-approval BD
 // source matching change requests (Pending Matching, Pending Buyer/Seller,
 // Pending Which Deal, Pending No of RECs, Pending Delivery Date, Change
-// Requested By, Change Requested Date), "Row Uid"/"Approved List Item Id",
-// "Pending Matching Note", and now "Pending Registry"/"Pending Tech") at
-// the END of the live TradeDealLog Excel Table — don't insert them
-// in the middle, or every existing column index below will point at the
-// wrong data.
+// Requested By, Change Requested Date), "Row Uid"/"Approved List Item
+// Id", and now "Pending Registry"/"Pending Tech" (staging columns for a
+// post-approval Registry/Tech correction — see the pendingRegistry/
+// pendingTech comment on the MC object below)) at the END of the live
+// TradeDealLog Excel Table — don't insert them in the middle, or every
+// existing column index below will point at the wrong data.
 // "Row Uid": a permanent, per-TRADE-ROW random ID, stamped once at Save
 // agreement time and never touched again — unlike Deal ID (shared by every
 // row of a multi-product agreement) or the Excel row index (which can shift
@@ -680,11 +680,10 @@ const MC = {
   approvedBy3:36, approvedDate3:37, rejectedBy:38, rejectedDate:39,
   rejectReason:40, agreementFileName:41, agreementFileUrl:42, description:43,
   brokerFeeType:44, brokerFeeCurrency:45, brokerFeePrice:46,
-  // ---- Post-approval product change requests ----
+  // ---- Post-approval BD source matching change requests ----
   // Staging area for an edit the original submitter has requested after the
   // deal already reached Approved. Nothing here touches the live
-  // matching/buyerSeller/whichDeal/noOfRecs/deliveryDateM/registry/tech
-  // columns until a
+  // matching/buyerSeller/whichDeal/noOfRecs/deliveryDateM columns until a
   // Level 3 approver signs off (see
   // requestBdMatchChange/approveBdMatchChange/rejectBdMatchChange) — so the
   // currently-approved values stay authoritative and visible everywhere
@@ -697,17 +696,22 @@ const MC = {
   // ---- Per-row identity / traceability ----
   // See the column-layout comment above for what these two hold.
   rowUid:54, approvedListItemId:55,
-  // Freeform context the submitter types when requesting a post-approval
-  // product change (e.g. why the correction is needed) — shown to the
+  // Freeform context the submitter types when requesting a BD source
+  // matching change (e.g. why the correction is needed) — shown to the
   // Level 3 approver alongside the field-level diff, and carried through
   // into the "Approved" list's own "Pending Matching Note" column once
   // applied. Cleared on approve or reject, same lifecycle as the other
   // pending* columns.
   pendingMatchNote:56,
-  // Registry and Tech are only offered for a fully Approved product whose
-  // current Registry contains "/" and whose current Tech is either ANY or
-  // contains more than one selected code. Like the matching fields above,
-  // these stay staged until Level 3 approves the request.
+  // Staging area for a Registry/Tech correction on an already-Approved
+  // product — same "Pending Change - Level 3" pattern as the BD source
+  // matching fields above, added on so a product whose Registry got saved
+  // holding more than one registry (e.g. "IREC/TIGR") or whose Tech got
+  // saved holding more than one tech (e.g. "SLR/WND") or "ANY" can be
+  // corrected down to a single Registry and a single, specific Tech. See
+  // needsRegistryTechFix/openEditRequestModal/requestBdMatchChange. Nothing
+  // here touches the live Registry/Tech columns until a Level 3 approver
+  // signs off, exactly like the other pending* columns.
   pendingRegistry:57, pendingTech:58
 };
 const COL_COUNT = 59;
@@ -754,11 +758,12 @@ const STATUS_PENDING_2 = "Pending Level 2";
 const STATUS_PENDING_3 = "Pending Level 3";
 const STATUS_APPROVED = "Approved";
 const STATUS_REJECTED = "Rejected";
-// A fully Approved deal's original submitter can request a change to its BD
-// source matching fields and, for qualifying products, Registry/Tech — this
-// status means that request is sitting in the Level 3 queue. The deal's live
-// values are untouched and stay visible everywhere until a Level 3 approver
-// applies (or rejects) the request; see
+// A fully Approved deal's original submitter can request a change to just
+// its BD source matching fields (Matching, Buyer/Seller, Which deal, No of
+// RECs, Delivery date) — this status means that request is sitting in the
+// Level 3 queue. The deal's live matching/buyerSeller/whichDeal/noOfRecs/
+// deliveryDateM values are untouched and stay visible everywhere until a
+// Level 3 approver applies (or rejects) the request; see
 // requestBdMatchChange/approveBdMatchChange/rejectBdMatchChange.
 const STATUS_PENDING_CHANGE_3 = "Pending Change - Level 3";
 // Every "still in flight" status, regardless of which level it's currently
@@ -1071,7 +1076,7 @@ async function sendMailGraph(toEmails, subject, htmlBody){
 // status = the deal's status *after* this submit/approve just happened —
 // looks up which role is now responsible and emails everyone holding it.
 // changeSummary is optional — used when a fully Approved deal is sent back
-// to Level 3 with a post-approval product change requested (see
+// to Level 3 with only a BD source matching change requested (see
 // requestBdMatchChange), so the approver sees exactly what's being asked to
 // change without having to open the app and compare fields by eye.
 async function notifyNextApprover(status, dealId, description, changeSummary){
@@ -1088,7 +1093,7 @@ async function notifyNextApprover(status, dealId, description, changeSummary){
   const label = isPendingDealId(dealId) ? 'An agreement' : 'Deal ID <strong>' + escapeHtml(displayId) + '</strong>';
   const descBlock = (description && description.trim()) ? '<p><strong>Description:</strong> ' + escapeHtml(description) + '</p>' : '';
   const changeBlock = (changeSummary && changeSummary.trim())
-    ? '<p><strong>What changed (post-approval product change request):</strong><br>' + escapeHtml(changeSummary).replace(/\n/g,'<br>') + '</p>'
+    ? '<p><strong>What changed (BD source matching change request):</strong><br>' + escapeHtml(changeSummary).replace(/\n/g,'<br>') + '</p>'
     : '';
   const html = '<p>' + label + ' is waiting on your ' + escapeHtml(levelLabel) + ' approval.</p>' +
     descBlock +
@@ -1158,7 +1163,7 @@ async function notifySubmitter(status, dealId, submitterEmail, reason){
   }
 }
 
-// Emails the original submitter once their post-approval product
+// Emails the original submitter once their post-approval BD source matching
 // change request is resolved — either applied (Level 3 approved it) or
 // rejected. Separate from notifySubmitter, which only covers the original
 // 3-level approval chain.
@@ -1173,7 +1178,7 @@ async function notifyChangeSubmitter(dealId, submitterEmail, outcome, reason){
   const label = 'Deal ID <strong>' + escapeHtml(displayId) + '</strong>';
   const applied = outcome === 'applied';
   const subject = (applied ? 'Change approved — ' : 'Change rejected — ') + displayId;
-  const html = '<p>Your requested product change for ' + label + ' has been ' +
+  const html = '<p>Your requested BD source matching change for ' + label + ' has been ' +
       (applied ? 'approved and applied.' : 'rejected.') + '</p>' +
     (!applied && reason ? '<p><strong>Reason:</strong> ' + escapeHtml(reason) + '</p>' : '') +
     '<p><a href="' + link + '">View it in the Trade Confirmation app</a></p>';
@@ -2026,7 +2031,7 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
   // save instead of failing loudly. Fail loudly instead.
   const liveColumnCount = await getTableColumnCount(LOG_TABLE_NAME);
   if(liveColumnCount < COL_COUNT){
-    throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated to the required ' + COL_COUNT + ' columns. Append the missing columns in the order documented at the top of this file (ending with "Pending Registry" and "Pending Tech"), then try again.');
+    throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing the "Broker Fee Type", "Broker Fee Currency" and "Broker Fee Price" columns. Ask an admin to add those three columns at the end of the table, then try again.');
   }
   const nowIso = submittedDateIso || new Date().toISOString();
   const tradeCount = parseInt(document.getElementById('trade-count').value, 10) || 1;
@@ -2262,21 +2267,28 @@ async function rejectDeal(dealId, reason){
   await notifySubmitter(STATUS_REJECTED, dealId, matching[0].values[0][MC.submittedBy], trimmedReason);
   await loadHistory();
 }
-/* ---- Post-approval product change requests ----
+/* ---- Post-approval BD source matching change requests ----
    Only the original submitter, and only once a deal is fully Approved, can
-   ask to correct its Matching / Buyer-Seller / Which deal fields and, for a
-   qualifying product, Registry / Tech (see the "Request edit" button on
-   "My saved confirmations"). The new values are staged in the pending*
-   columns and the deal's Status moves to
+   ask to correct its Matching / Buyer-Seller / Which deal fields (see the
+   "Request edit" button on "My saved confirmations"). The new values are
+   staged in the pending* columns and the deal's Status moves to
    "Pending Change - Level 3" — exactly like a normal pending stage, it shows
    up in the Level 3/Superadmin Approval queue — while the live
-   live columns (and everything already written to the "Approved" SharePoint
-   list) are left untouched until that approval happens. edits is an array
-   of {matching, buyerSeller, whichDeal, registry, tech, rowUid},
-   one per product row, in the same order as the deal's rows sorted by
-   index — rowUid is what the modal showed for that product when it was
-   opened, and is checked against a freshly-read row set below (not just
-   trusted by position) before anything is written. */
+   matching/buyerSeller/whichDeal columns (and everything already written to
+   the "Approved" SharePoint list) are left untouched until that approval
+   happens. Also doubles as the vehicle for a Registry/Tech correction (see
+   needsRegistryTechFix/openEditRequestModal) — when a product's Registry
+   holds more than one registry or its Tech holds more than one tech (or
+   "ANY"), the modal lets the submitter pick a single Registry and a single
+   Tech for it, staged here exactly the same way and requiring the same
+   Level 3 sign-off. edits is an array of {matching, buyerSeller, whichDeal,
+   noOfRecs, deliveryDateM, registry, tech, rowUid}, one per product row, in
+   the same order as the deal's rows sorted by index — rowUid is what the
+   modal showed for that product when it was opened, and is checked against
+   a freshly-read row set below (not just trusted by position) before
+   anything is written. registry/tech are always included (even for
+   products that didn't need a fix) carrying that product's current,
+   unchanged value, so the diff below only picks up a real change. */
 async function requestBdMatchChange(dealId, edits, matchNote){
   if(!dealId) return;
   const rows = await getTableRows(LOG_TABLE_NAME);
@@ -2305,7 +2317,7 @@ async function requestBdMatchChange(dealId, edits, matchNote){
   }
   const liveColumnCount = await getTableColumnCount(LOG_TABLE_NAME);
   if(liveColumnCount < COL_COUNT){
-    throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it must end with "Pending Matching", "Pending Buyer/Seller", "Pending Which Deal", "Pending No of RECs", "Pending Delivery Date", "Change Requested By", "Change Requested Date", "Row Uid", "Approved List Item Id", "Pending Matching Note", "Pending Registry" and "Pending Tech". Ask an admin to append any missing columns in that order, then try again.');
+    throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing the "Pending Matching", "Pending Buyer/Seller", "Pending Which Deal", "Pending No of RECs", "Pending Delivery Date", "Change Requested By", "Change Requested Date", "Pending Matching Note", "Pending Registry" and "Pending Tech" columns. Ask an admin to add those ten columns at the end of the table, then try again.');
   }
   // Build the per-product diff up front, using the same wording the
   // in-app Approval queue shows (see the STATUS_PENDING_CHANGE_3 block in
@@ -2320,25 +2332,6 @@ async function requestBdMatchChange(dealId, edits, matchNote){
     const rv = matching[i].values[0];
     const edit = edits[i] || {};
     const lines = [];
-    // Registry/Tech eligibility is checked again against the fresh live row,
-    // not trusted from the modal snapshot. This prevents a stale or modified
-    // client from staging those fields for a product that doesn't qualify.
-    const registryTechEditable = approvedRegistryTechEditEligible(rv[MC.registry], rv[MC.tech]);
-    edit.registry = registryTechEditable
-      ? String(edit.registry === undefined ? (rv[MC.registry] || '') : edit.registry).trim()
-      : (rv[MC.registry] || '');
-    edit.tech = registryTechEditable
-      ? normalizeTechSelection(edit.tech === undefined ? (rv[MC.tech] || '') : edit.tech)
-      : (rv[MC.tech] || '');
-    if(registryTechEditable && (!edit.registry || !edit.tech)){
-      throw new Error('Product ' + (i+1) + ': Registry and Tech can\'t be blank.');
-    }
-    if((rv[MC.registry]||'') !== edit.registry){
-      lines.push('Registry: ' + (rv[MC.registry]||'(blank)') + ' \u2192 ' + edit.registry);
-    }
-    if((rv[MC.tech]||'') !== edit.tech){
-      lines.push('Tech: ' + (rv[MC.tech]||'(blank)') + ' \u2192 ' + edit.tech);
-    }
     if((rv[MC.matching]||'') !== (edit.matching||'')){
       lines.push('Matching: ' + matchingDisplayLabel(rv[MC.matching]) + ' \u2192 ' + matchingDisplayLabel(edit.matching));
     }
@@ -2353,6 +2346,12 @@ async function requestBdMatchChange(dealId, edits, matchNote){
     }
     if((rv[MC.deliveryDateM]||'') !== (edit.deliveryDateM||'')){
       lines.push('Delivery date: ' + (rv[MC.deliveryDateM]||'(blank)') + ' \u2192 ' + (edit.deliveryDateM||'(blank)'));
+    }
+    if((rv[MC.registry]||'') !== (edit.registry||'')){
+      lines.push('Registry: ' + registryDisplayName(rv[MC.registry]) + ' \u2192 ' + registryDisplayName(edit.registry));
+    }
+    if((rv[MC.tech]||'') !== (edit.tech||'')){
+      lines.push('Tech: ' + techFullName(rv[MC.tech]) + ' \u2192 ' + techFullName(edit.tech));
     }
     if(lines.length){
       rowChanged[i] = true;
@@ -2395,8 +2394,8 @@ async function requestBdMatchChange(dealId, edits, matchNote){
   await notifyNextApprover(STATUS_PENDING_CHANGE_3, dealId, matching[0].values[0][MC.description], notifyBody);
   await loadHistory();
 }
-// Applies a pending post-approval product change: copies all pending values
-// (including Registry/Tech when eligible) into the live columns, clears the
+// Applies a pending BD source matching change: copies pendingMatching/
+// pendingBuyerSeller/pendingWhichDeal into the live columns, clears the
 // staging columns, puts Status back to Approved, and — same as the original
 // final sign-off — appends a fresh row to the "Approved" SharePoint list
 // (APPROVED_LIST_NAME) for each product so that list keeps a full history of
@@ -2440,17 +2439,6 @@ async function approveBdMatchChange(dealId){
     // changed — the point of it being an audit log rather than just a
     // repeated snapshot.
     const noteLines = [];
-    // A request staged by an older copy of this app has no Pending Registry/
-    // Pending Tech cells. Preserve its live values instead of blanking them
-    // when that older matching-only request is eventually approved.
-    const nextRegistry = values[MC.pendingRegistry] || values[MC.registry] || '';
-    const nextTech = values[MC.pendingTech] || values[MC.tech] || '';
-    if((values[MC.registry]||'') !== nextRegistry){
-      noteLines.push('Registry: ' + (values[MC.registry]||'(blank)') + ' \u2192 ' + (nextRegistry||'(blank)'));
-    }
-    if((values[MC.tech]||'') !== nextTech){
-      noteLines.push('Tech: ' + (values[MC.tech]||'(blank)') + ' \u2192 ' + (nextTech||'(blank)'));
-    }
     if((values[MC.matching]||'') !== (values[MC.pendingMatching]||'')){
       noteLines.push('Matching: ' + matchingDisplayLabel(values[MC.matching]) + ' \u2192 ' + matchingDisplayLabel(values[MC.pendingMatching]));
     }
@@ -2466,16 +2454,29 @@ async function approveBdMatchChange(dealId){
     if((values[MC.deliveryDateM]||'') !== (values[MC.pendingDeliveryDateM]||'')){
       noteLines.push('Delivery date: ' + (values[MC.deliveryDateM]||'(blank)') + ' \u2192 ' + (values[MC.pendingDeliveryDateM]||'(blank)'));
     }
+    if((values[MC.registry]||'') !== (values[MC.pendingRegistry]||'')){
+      noteLines.push('Registry: ' + registryDisplayName(values[MC.registry]) + ' \u2192 ' + registryDisplayName(values[MC.pendingRegistry]));
+    }
+    if((values[MC.tech]||'') !== (values[MC.pendingTech]||'')){
+      noteLines.push('Tech: ' + techFullName(values[MC.tech]) + ' \u2192 ' + techFullName(values[MC.pendingTech]));
+    }
     const submitterNote = values[MC.pendingMatchNote] || '';
-    const changeNote = 'Post-approval product change' + (noteLines.length ? ': ' + noteLines.join(', ') : '') +
+    const changeNote = 'BD source matching change' + (noteLines.length ? ': ' + noteLines.join(', ') : '') +
       (submitterNote ? ' \u2014 Note: ' + submitterNote : '');
-    values[MC.registry] = nextRegistry;
-    values[MC.tech] = nextTech;
     values[MC.matching] = values[MC.pendingMatching];
     values[MC.buyerSeller] = values[MC.pendingBuyerSeller];
     values[MC.whichDeal] = values[MC.pendingWhichDeal];
     values[MC.noOfRecs] = values[MC.pendingNoOfRecs];
     values[MC.deliveryDateM] = values[MC.pendingDeliveryDateM];
+    // Only ever overwritten with a non-blank value when this product
+    // actually went through the Registry/Tech fix flow (edits always carry
+    // the product's current value through when no fix was needed — see the
+    // requestBdMatchChange comment — so pendingRegistry/pendingTech are
+    // never blank for a row that reached here); guard anyway so a legacy
+    // pending row staged before these two columns existed can't blank out
+    // an already-correct Registry/Tech.
+    if(values[MC.pendingRegistry]) values[MC.registry] = values[MC.pendingRegistry];
+    if(values[MC.pendingTech]) values[MC.tech] = values[MC.pendingTech];
     values[MC.pendingMatching] = '';
     values[MC.pendingBuyerSeller] = '';
     values[MC.pendingWhichDeal] = '';
@@ -2503,18 +2504,6 @@ async function approveBdMatchChange(dealId){
       approvedListErrors.push('Product ' + tradeNum + ': ' + err.message);
     }
   }
-  // Registry and Tech are baked into Generated HTML, unlike the five BD
-  // matching fields that are refreshed at display time. Rebuild and persist
-  // the recap only now, after Level 3 has applied the live values.
-  const refreshedRows = (await getTableRows(LOG_TABLE_NAME))
-    .filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId)
-    .sort((a,b)=> a.index - b.index);
-  if(refreshedRows.length){
-    const recapHtml = renderPointFormatHtml(buildRecapLinesFromRows(dealId, refreshedRows));
-    const firstValues = refreshedRows[0].values[0].slice();
-    firstValues[MC.generatedHtml] = recapHtml;
-    await updateTableRow(LOG_TABLE_NAME, refreshedRows[0].index, firstValues);
-  }
   await notifyChangeSubmitter(dealId, submitterEmail, 'applied');
   await notifyOtherApproversAtLevel('admin3', dealId, allMatching[0].values[0][MC.description], currentAccount.username);
   await loadHistory();
@@ -2522,7 +2511,7 @@ async function approveBdMatchChange(dealId){
     alert('The change was approved and applied, but couldn\'t be copied into the "' + APPROVED_LIST_NAME + '" list for:\n' + approvedListErrors.join('\n'));
   }
 }
-// Rejects a pending post-approval product change: discards the staged pending*
+// Rejects a pending BD source matching change: discards the staged pending*
 // values (the live, already-Approved data was never touched) and puts
 // Status back to Approved with a comment the submitter can see.
 async function rejectBdMatchChange(dealId, reason){
@@ -2708,14 +2697,7 @@ function renderHistoryTable(el, groups, opts){
     if(status === STATUS_PENDING_CHANGE_3){
       const rows = g.rows.map((r, idx)=>{
         const rv = r.values[0];
-        if(rv[MC.status] !== STATUS_PENDING_CHANGE_3) return '';
         const lines = [];
-        if(rv[MC.pendingRegistry] && (rv[MC.registry]||'') !== rv[MC.pendingRegistry]){
-          lines.push('Registry: <s>'+escapeHtml(rv[MC.registry]||'(blank)')+'</s> → <strong>'+escapeHtml(rv[MC.pendingRegistry]||'(blank)')+'</strong>');
-        }
-        if(rv[MC.pendingTech] && (rv[MC.tech]||'') !== rv[MC.pendingTech]){
-          lines.push('Tech: <s>'+escapeHtml(rv[MC.tech]||'(blank)')+'</s> → <strong>'+escapeHtml(rv[MC.pendingTech]||'(blank)')+'</strong>');
-        }
         if((rv[MC.matching]||'') !== (rv[MC.pendingMatching]||'')){
           lines.push('Matching: <s>'+escapeHtml(matchingDisplayLabel(rv[MC.matching]))+'</s> → <strong>'+escapeHtml(matchingDisplayLabel(rv[MC.pendingMatching]))+'</strong>');
         }
@@ -2734,14 +2716,15 @@ function renderHistoryTable(el, groups, opts){
         if(!lines.length) return '';
         return '<div style="margin-top:'+(idx>0?'6px':'0')+';">'+(g.rows.length>1?'<strong>Product '+(idx+1)+':</strong> ':'')+lines.join(' · ')+'</div>';
       }).join('');
-      const pendingValues = (g.rows.find(r=>r.values[0][MC.status] === STATUS_PENDING_CHANGE_3) || g.rows[0]).values[0];
-      const requestedBy = pendingValues[MC.pendingRequestedBy] ? ' by '+escapeHtml(pendingValues[MC.pendingRequestedBy]) : '';
-      const noteHtml = pendingValues[MC.pendingMatchNote]
-        ? '<div style="margin-top:6px;"><strong>Note:</strong> '+escapeHtml(pendingValues[MC.pendingMatchNote])+'</div>'
+      const requestedBy = v[MC.pendingRequestedBy] ? ' by '+escapeHtml(v[MC.pendingRequestedBy]) : '';
+      // The note is written onto every changed row identically (see
+      // requestBdMatchChange), so the first row in the group always has it.
+      const noteHtml = v[MC.pendingMatchNote]
+        ? '<div style="margin-top:6px;"><strong>Note:</strong> '+escapeHtml(v[MC.pendingMatchNote])+'</div>'
         : '';
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
         '<div style="background:#f2ecf7;border:1px solid #d3bfe6;color:#4a2d63;border-radius:6px;padding:8px 10px;font-size:12px;">' +
-        '<strong>Post-approval product change requested'+requestedBy+':</strong>' + rows + noteHtml +
+        '<strong>BD source matching change requested'+requestedBy+':</strong>' + rows + noteHtml +
         '</div></td></tr>';
     }
     if(v[MC.description] && status === STATUS_PENDING_1){
@@ -3019,62 +3002,55 @@ document.addEventListener('change', (e)=>{
     dependent.style.display = 'flex';
   }
 });
-// Registry/Tech become editable after full approval only for the product
-// shape requested by Operations: a multi-registry value (contains "/") and
-// either ANY tech or more than one selected tech code.
-function techSelectionCodes(value){
-  return [...new Set(String(value || '').split('/').map(s=>s.trim().toUpperCase()).filter(Boolean))];
-}
-function normalizeTechSelection(value){
-  const codes = techSelectionCodes(value);
-  if(codes.includes('ANY')) return 'ANY';
-  const known = TECHS.filter(code => codes.includes(code) && code !== 'ANY');
-  const unknown = codes.filter(code => code !== 'ANY' && !TECHS.includes(code));
-  return known.concat(unknown).join('/');
-}
-function approvedRegistryTechEditEligible(registry, tech){
-  const codes = techSelectionCodes(tech);
-  return String(registry || '').includes('/') && (codes.includes('ANY') || codes.length > 1);
-}
-function editRequestTechCheckboxesHtml(idx, storedValue, rowUid){
-  const selected = techSelectionCodes(storedValue);
-  const options = TECHS.concat(selected.filter(code=>!TECHS.includes(code)));
+// Builds the Registry/Tech block for one product row in the Request-edit
+// modal. Only ever rendered as live, editable <select> fields (plus a
+// required confirmation checkbox) when needsRegistryTechFix() says this
+// product's Registry and/or Tech currently holds more than one value (or
+// Tech is "ANY") — otherwise it's a pair of hidden inputs carrying the
+// product's current, unchanged Registry/Tech through to submit so
+// requestBdMatchChange's diff doesn't mistake "wasn't shown" for "cleared".
+// The <select> lists (SINGLE_REGISTRIES/SINGLE_TECHS) deliberately exclude
+// combo/"ANY" options — the whole point of this fix is landing on exactly
+// one Registry and exactly one, specific Tech.
+function editRequestRegistryTechHtml(idx, registry, tech, rowUid){
   const uidAttr = ' data-uid="'+escapeHtml(rowUid||'')+'"';
-  const boxes = options.map(code=>
-    '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;font-weight:400;">' +
-      '<input type="checkbox" class="edit-request-tech-checkbox" data-idx="'+idx+'" value="'+escapeHtml(code)+'"'+uidAttr+
-        (selected.includes(code)?' checked':'')+' style="width:auto;margin:0;"> '+escapeHtml(TECH_FULLNAMES[code]||code)+
-    '</label>'
-  ).join('');
-  return '<div class="edit-request-tech-group" data-idx="'+idx+'"'+uidAttr+' style="display:flex;flex-wrap:wrap;gap:8px 16px;">'+boxes+'</div>';
-}
-function applyEditRequestTechExclusivityUi(idx){
-  const group = document.querySelector('.edit-request-tech-group[data-idx="'+idx+'"]');
-  if(!group) return;
-  const anyCb = group.querySelector('.edit-request-tech-checkbox[value="ANY"]');
-  if(!anyCb) return;
-  const specificChecked = Array.from(group.querySelectorAll('.edit-request-tech-checkbox')).some(cb=>cb !== anyCb && cb.checked);
-  group.querySelectorAll('.edit-request-tech-checkbox').forEach(cb=>{
-    cb.disabled = cb === anyCb ? specificChecked : anyCb.checked;
-  });
-}
-document.addEventListener('change', (e)=>{
-  if(!e.target.classList || !e.target.classList.contains('edit-request-tech-checkbox')) return;
-  const idx = e.target.getAttribute('data-idx');
-  const group = document.querySelector('.edit-request-tech-group[data-idx="'+idx+'"]');
-  const anyCb = group && group.querySelector('.edit-request-tech-checkbox[value="ANY"]');
-  if(!group || !anyCb) return;
-  if(e.target === anyCb && anyCb.checked){
-    group.querySelectorAll('.edit-request-tech-checkbox').forEach(cb=>{ if(cb !== anyCb) cb.checked = false; });
-  }else if(e.target !== anyCb && e.target.checked){
-    anyCb.checked = false;
+  if(!needsRegistryTechFix(registry, tech)){
+    return '<input type="hidden" class="edit-request-registry" data-idx="'+idx+'"'+uidAttr+' value="'+escapeHtml(registry||'')+'"/>' +
+      '<input type="hidden" class="edit-request-tech" data-idx="'+idx+'"'+uidAttr+' value="'+escapeHtml(tech||'')+'"/>';
   }
-  applyEditRequestTechExclusivityUi(idx);
-});
+  // Pre-select a starting point where a sensible one exists (first listed
+  // registry, and the first specific — i.e. non-"ANY" — ticked tech) so the
+  // submitter isn't forced to pick from scratch when the fix is obvious,
+  // but they still have to actively confirm it via the checkbox below.
+  const regParts = String(registry||'').split('/').map(s=>s.trim()).filter(Boolean);
+  const preselectReg = SINGLE_REGISTRIES.find(r => r.toUpperCase() === (regParts[0]||'').toUpperCase()) || '';
+  const techParts = String(tech||'').split('/').map(s=>s.trim().toUpperCase()).filter(Boolean);
+  const preselectTech = SINGLE_TECHS.find(t => techParts.indexOf(t) !== -1) || '';
+  const regOptions = '<option value="">— Select single Registry —</option>' +
+    SINGLE_REGISTRIES.map(r => '<option value="'+escapeHtml(r)+'"'+(r===preselectReg?' selected':'')+'>'+escapeHtml(registryDisplayName(r))+'</option>').join('');
+  const techOptions = '<option value="">— Select single Tech —</option>' +
+    SINGLE_TECHS.map(t => '<option value="'+escapeHtml(t)+'"'+(t===preselectTech?' selected':'')+'>'+escapeHtml(TECH_FULLNAMES[t]||t)+'</option>').join('');
+  return '<div style="border:1px solid #e2a49a;background:#fdecea;border-radius:6px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;">' +
+      '<p style="margin:0;font-size:12px;color:#8a2d1f;font-weight:600;">Registry/Tech needs confirmation</p>' +
+      '<p style="margin:0;font-size:12px;color:#8a2d1f;">This product\'s Registry and/or Tech is currently saved with more than one value ('+
+        escapeHtml(registryDisplayName(registry))+' / '+escapeHtml(techFullName(tech))+
+        '). Each product should only ever have ONE Registry and ONE Tech — please select a single value for each below and confirm before submitting.</p>' +
+      '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Registry</label>' +
+        '<select class="edit-request-registry edit-request-regtech-fix" data-idx="'+idx+'"'+uidAttr+'>'+regOptions+'</select></div>' +
+      '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Tech</label>' +
+        '<select class="edit-request-tech edit-request-regtech-fix" data-idx="'+idx+'"'+uidAttr+'>'+techOptions+'</select></div>' +
+      '<label style="display:flex;align-items:flex-start;gap:6px;font-size:12px;color:#8a2d1f;cursor:pointer;">' +
+        '<input type="checkbox" class="edit-request-regtech-confirm" data-idx="'+idx+'" style="width:auto;margin:2px 0 0;"> ' +
+        'I confirm the Registry and Tech selected above are correct — each is a single value, not a combination.' +
+      '</label>' +
+    '</div>';
+}
 // Populates one editable block per product on the deal, prefilled from its
-// current (live, already-Approved) matching values. Registry/Tech are added
-// only for products that pass approvedRegistryTechEditEligible(); all other
-// Approved product fields stay locked.
+// current (live, already-Approved) Matching/Buyer-Seller/Which deal/No of
+// RECs/Delivery date values, plus — only for a product whose Registry
+// and/or Tech currently holds more than one value — a Registry/Tech fix
+// block (see editRequestRegistryTechHtml/needsRegistryTechFix). Deliberately
+// only these fields; the rest of an Approved deal's data stays locked.
 function openEditRequestModal(dealId){
   editRequestModalDealId = dealId;
   document.getElementById('edit-request-modal-dealid').textContent = friendlyDealId(dealId);
@@ -3092,26 +3068,15 @@ function openEditRequestModal(dealId){
     ).join('');
     const label = group.length > 1 ? 'Product ' + (idx+1) : 'Product';
     const dealField = editRequestDealFieldHtml(idx, v[MC.whichDeal]||'', v[MC.rowUid]||'');
+    const regTechHtml = editRequestRegistryTechHtml(idx, v[MC.registry]||'', v[MC.tech]||'', v[MC.rowUid]||'');
     // data-uid carries this row's permanent Row Uid — requestBdMatchChange
     // uses it to confirm, at submit time, that it's still writing this
     // edit onto the exact same physical row the modal showed (rather than
     // just trusting position-in-list, which could point at the wrong
     // product if the deal's rows changed shape while the modal was open).
     const uidAttr = ' data-uid="'+escapeHtml(v[MC.rowUid]||'')+'"';
-    const registryTechFields = approvedRegistryTechEditEligible(v[MC.registry], v[MC.tech])
-      ? '<div style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:8px;">' +
-          '<p style="margin:0;font-size:12px;color:var(--text-secondary);">This product qualifies for post-approval Registry and Tech editing.</p>' +
-          '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Registry</label>' +
-            '<input type="text" class="edit-request-registry" data-idx="'+idx+'"'+uidAttr+' list="er-'+idx+'-registry-list" value="'+escapeHtml(v[MC.registry]||'')+'"/>' +
-            '<datalist id="er-'+idx+'-registry-list">'+REGISTRIES.map(reg=>'<option value="'+escapeHtml(reg)+'">').join('')+'</datalist></div>' +
-          '<div><label style="margin:0 0 6px;display:block;font-size:12px;">Tech</label>' +
-            editRequestTechCheckboxesHtml(idx, v[MC.tech]||'', v[MC.rowUid]||'') +
-          '</div>' +
-        '</div>'
-      : '';
     return '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;">' +
       '<p style="margin:0;font-size:13px;font-weight:600;">'+escapeHtml(label)+'</p>' +
-      registryTechFields +
       '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Matching</label>' +
         '<select class="edit-request-matching" data-idx="'+idx+'"'+uidAttr+'>'+matchOptions+'</select></div>' +
       '<div id="er-'+idx+'-dependent" style="display:flex;flex-direction:column;gap:8px;'+(active?'':'display:none;')+'">' +
@@ -3138,6 +3103,7 @@ function openEditRequestModal(dealId){
             '<span class="date-display is-placeholder" data-for="er-'+idx+'-deliverydate">dd/mm/yyyy</span>' +
           '</div></div>' +
       '</div>' +
+      regTechHtml +
       '</div>';
   }).join('') +
     // Single note shared across every product on this deal — explains WHY
@@ -3145,16 +3111,13 @@ function openEditRequestModal(dealId){
     // Approved deal has no pending note left over (approve/reject always
     // clears it), so this always starts blank for a fresh request.
     '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;">' +
-      '<label style="margin:0;font-size:13px;font-weight:600;" for="edit-request-match-note">Edit Note</label>' +
+      '<label style="margin:0;font-size:13px;font-weight:600;" for="edit-request-match-note">Matching Edit Note</label>' +
       '<p style="margin:0;font-size:12px;color:var(--text-secondary);">Explain why this correction is needed — shown to the Level 3 approver alongside the changes above.</p>' +
       '<textarea id="edit-request-match-note" rows="3" placeholder="e.g. BD confirmed wrong buyer name was entered at submission"></textarea>' +
     '</div>';
   document.getElementById('edit-request-modal-overlay').style.display = 'flex';
   refreshAllDateDisplays(fieldsEl);
-  group.forEach((r, idx)=>{
-    syncEditRequestBuyerSeller(idx);
-    applyEditRequestTechExclusivityUi(idx);
-  });
+  group.forEach((r, idx)=> syncEditRequestBuyerSeller(idx));
 }
 function closeEditRequestModal(){
   document.getElementById('edit-request-modal-overlay').style.display = 'none';
@@ -3171,19 +3134,6 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
   const btn = document.getElementById('edit-request-modal-submit');
   errEl.style.display = 'none';
   const edits = [];
-  document.querySelectorAll('#edit-request-modal-fields .edit-request-registry').forEach(inp=>{
-    const idx = parseInt(inp.getAttribute('data-idx'), 10);
-    edits[idx] = edits[idx] || {};
-    edits[idx].registry = inp.value.trim();
-    edits[idx].rowUid = inp.getAttribute('data-uid') || '';
-  });
-  document.querySelectorAll('#edit-request-modal-fields .edit-request-tech-group').forEach(group=>{
-    const idx = parseInt(group.getAttribute('data-idx'), 10);
-    edits[idx] = edits[idx] || {};
-    const selected = Array.from(group.querySelectorAll('.edit-request-tech-checkbox:checked')).map(cb=>cb.value);
-    edits[idx].tech = normalizeTechSelection(selected.join('/'));
-    edits[idx].rowUid = edits[idx].rowUid || group.getAttribute('data-uid') || '';
-  });
   document.querySelectorAll('#edit-request-modal-fields .edit-request-matching').forEach(sel=>{
     const idx = parseInt(sel.getAttribute('data-idx'), 10);
     edits[idx] = edits[idx] || {};
@@ -3219,6 +3169,44 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
     edits[idx].deliveryDateM = inp.value;
     edits[idx].rowUid = edits[idx].rowUid || inp.getAttribute('data-uid') || '';
   });
+  document.querySelectorAll('#edit-request-modal-fields .edit-request-registry').forEach(el=>{
+    const idx = parseInt(el.getAttribute('data-idx'), 10);
+    edits[idx] = edits[idx] || {};
+    edits[idx].registry = el.value;
+    edits[idx].rowUid = edits[idx].rowUid || el.getAttribute('data-uid') || '';
+  });
+  document.querySelectorAll('#edit-request-modal-fields .edit-request-tech').forEach(el=>{
+    const idx = parseInt(el.getAttribute('data-idx'), 10);
+    edits[idx] = edits[idx] || {};
+    edits[idx].tech = el.value;
+    edits[idx].rowUid = edits[idx].rowUid || el.getAttribute('data-uid') || '';
+  });
+  // A product flagged with needsRegistryTechFix renders its Registry/Tech
+  // as live <select> fields (class edit-request-regtech-fix) plus a
+  // required confirmation checkbox — block submit here until both are
+  // properly filled in and ticked, same idea as any other required-field
+  // guard, but checked client-side so the person gets an immediate,
+  // specific error rather than a vague failure from requestBdMatchChange.
+  const regTechErrors = [];
+  const fixIdxSeen = new Set();
+  document.querySelectorAll('#edit-request-modal-fields .edit-request-regtech-fix').forEach(el=>{
+    fixIdxSeen.add(el.getAttribute('data-idx'));
+  });
+  fixIdxSeen.forEach(idx=>{
+    const productLabel = fixIdxSeen.size > 1 || document.querySelectorAll('#edit-request-modal-fields .edit-request-matching').length > 1
+      ? 'Product ' + (parseInt(idx,10)+1) : 'this product';
+    const regSel = document.querySelector('#edit-request-modal-fields .edit-request-registry[data-idx="'+idx+'"]');
+    const techSel = document.querySelector('#edit-request-modal-fields .edit-request-tech[data-idx="'+idx+'"]');
+    const confirmCb = document.querySelector('#edit-request-modal-fields .edit-request-regtech-confirm[data-idx="'+idx+'"]');
+    if(!regSel || !regSel.value) regTechErrors.push('Select a single Registry for ' + productLabel + '.');
+    if(!techSel || !techSel.value) regTechErrors.push('Select a single Tech for ' + productLabel + '.');
+    if(!confirmCb || !confirmCb.checked) regTechErrors.push('Confirm the Registry/Tech selection for ' + productLabel + '.');
+  });
+  if(regTechErrors.length){
+    errEl.textContent = regTechErrors.join(' ');
+    errEl.style.display = 'block';
+    return;
+  }
   const noteEl = document.getElementById('edit-request-match-note');
   const matchNote = noteEl ? noteEl.value.trim() : '';
   btn.disabled = true;
@@ -3254,7 +3242,7 @@ document.addEventListener('click', (e)=>{
       return;
     }
     if(dealStatus === STATUS_PENDING_CHANGE_3){
-      if(confirm('Approve this post-approval product change for Deal ID ' + friendlyDealId(dealId) + '? The new values will be applied immediately to TradeDealLog and copied into the "' + APPROVED_LIST_NAME + '" list.')){
+      if(confirm('Approve this BD source matching change for Deal ID ' + friendlyDealId(dealId) + '? The new values will be applied immediately and copied into the "' + APPROVED_LIST_NAME + '" list.')){
         approveBtn.disabled = true;
         approveBdMatchChange(dealId)
           .catch(err=>{ console.error('Change approval failed', err); alert('Change approval failed: ' + err.message); })
@@ -3347,6 +3335,26 @@ function techFullName(code){
   }).join('/');
 }
 const REGISTRIES = ["IREC","TIGR","IREC/TIGR","GEC","Rehash","JEPX","BCX","Verra","LGC","T-REC","K-REC"];
+// Registry options offered when fixing a product's Registry down to a
+// single value (see needsRegistryTechFix/openEditRequestModal) — same list
+// as REGISTRIES minus any combo entry (currently just "IREC/TIGR"), since a
+// combo is exactly what this flow exists to resolve into one registry.
+const SINGLE_REGISTRIES = REGISTRIES.filter(r => r.indexOf('/') === -1);
+// Tech options offered by that same fix flow — every specific tech, minus
+// "ANY", since "ANY" (unspecified/any tech) is one of the two states this
+// flow exists to resolve into one specific tech.
+const SINGLE_TECHS = TECHS.filter(t => t !== 'ANY');
+// A product's Registry and Tech should each only ever hold exactly one
+// value. True if this product's Registry currently holds more than one
+// (stored as e.g. "IREC/TIGR") or its Tech currently holds more than one
+// (stored as e.g. "SLR/WND") or is "ANY" (unspecified) — either condition,
+// independently, is reason enough to let the submitter fix that product's
+// Registry/Tech via the "Request edit" flow (see openEditRequestModal).
+function needsRegistryTechFix(registry, tech){
+  const reg = String(registry||'').trim();
+  const t = String(tech||'').trim().toUpperCase();
+  return reg.indexOf('/') !== -1 || t.indexOf('/') !== -1 || t === 'ANY';
+}
 const ORDER_TYPES = ["Stock-In (T)","Stock-Out (T)","Stock-Out (R)"];
 const CURRENCIES = ["USD","SGD","MYR"];
 const MATCHING = ["Partially Matched","Open Position","Matched","V-Matched"];
