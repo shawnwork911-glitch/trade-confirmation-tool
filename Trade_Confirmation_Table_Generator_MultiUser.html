@@ -2719,7 +2719,7 @@ function renderHistoryTable(el, groups, opts){
       const rv = r.values[0];
       if(!needsRegistryTechFix(rv[MC.registry], rv[MC.tech])) return '';
       const label = g.rows.length > 1 ? 'Product '+(idx+1)+': ' : '';
-      return label + registryDisplayName(rv[MC.registry]) + ' / ' + techFullName(rv[MC.tech]);
+      return label + regTechIssueText(rv[MC.registry], rv[MC.tech]);
     }).filter(Boolean);
     if(regTechFlags.length){
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
@@ -3406,6 +3406,19 @@ function needsRegistryTechFix(registry, tech){
   const reg = String(registry||'').trim();
   const t = String(tech||'').trim().toUpperCase();
   return reg.indexOf('/') !== -1 || t.indexOf('/') !== -1 || t === 'ANY';
+}
+// Registry and Tech are independent conditions inside needsRegistryTechFix —
+// a product can fail on just one of them (e.g. Registry still "IREC/TIGR"
+// while Tech is already down to a single "Hydro"). Reporting both values
+// together made it look like Tech was also part of the problem even when it
+// wasn't, so this spells out exactly which field(s) still need fixing.
+function regTechIssueText(registry, tech){
+  const reg = String(registry||'').trim();
+  const t = String(tech||'').trim().toUpperCase();
+  const issues = [];
+  if(reg.indexOf('/') !== -1) issues.push('Registry is '+registryDisplayName(registry)+' (needs to select one)');
+  if(t.indexOf('/') !== -1 || t === 'ANY') issues.push('Tech is '+techFullName(tech)+' (needs to select one)');
+  return issues.join('; ');
 }
 const ORDER_TYPES = ["Stock-In (T)","Stock-Out (T)","Stock-Out (R)"];
 const CURRENCIES = ["USD","SGD","MYR"];
@@ -5234,7 +5247,7 @@ function regTechWarningItems(filled){
     const registry = val('t'+i+'-registry');
     const tech = val('t'+i+'-tech');
     if(needsRegistryTechFix(registry, tech)){
-      items.push('Product '+i+': '+registryDisplayName(registry)+' / '+techFullName(tech));
+      items.push('Product '+i+': '+regTechIssueText(registry, tech));
     }
   }
   return items;
@@ -5242,7 +5255,7 @@ function regTechWarningItems(filled){
 function showRegTechWarning(items){
   const box = document.getElementById('regtech-warning');
   if(!box) return;
-  box.innerHTML = '<strong>⚠ Registry/Tech needs confirmation:</strong> Each product should only ever have one Registry and one Tech (not a combination, and not "Any"). Please go back and select a single value for each below:<ul>'+
+  box.innerHTML = '<strong>⚠ Registry/Tech needs confirmation:</strong> Each product should only ever have one Registry and one Tech (not a combination, and not "Any"). Please remember to edit for each below once confirmation done:<ul>'+
     items.map(t=>'<li>'+escapeHtml(t)+'</li>').join('')+'</ul>';
   box.style.display = 'block';
 }
