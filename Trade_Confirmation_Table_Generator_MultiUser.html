@@ -599,7 +599,7 @@
 <div id="edit-request-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
   <div style="width:100%;max-width:640px;max-height:85vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:12px;">
     <h2 style="margin:0;font-size:16px;">Request a correction — Deal ID <span id="edit-request-modal-dealid"></span></h2>
-    <p style="margin:0;font-size:13px;color:var(--text-secondary);">This deal is already Approved, so any correction here needs a fresh Level 3 sign-off before it takes effect. The current, live values stay in place everywhere until that happens.</p>
+    <p id="edit-request-modal-intro" style="margin:0;font-size:13px;color:var(--text-secondary);"></p>
     <div id="edit-request-modal-fields" style="display:flex;flex-direction:column;gap:16px;"></div>
     <div id="edit-request-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
@@ -612,7 +612,7 @@
 <div id="full-edit-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
   <div style="width:100%;max-width:640px;max-height:85vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:12px;">
     <h2 style="margin:0;font-size:16px;">Edit agreement — Deal ID <span id="full-edit-modal-dealid"></span></h2>
-    <p style="margin:0;font-size:13px;color:var(--text-secondary);">Admin Level 1 has already signed off on this deal, so changing its details or products here will send it back through the approval chain: the Status resets to <strong>Pending Level 1</strong>, any Level 2/Level 3 sign-offs (and the Level 2 agreement attachment) already recorded are cleared, and Admin Level 1 gets a fresh approval email. The Deal ID itself does not change.</p>
+    <p style="margin:0;font-size:13px;color:var(--text-secondary);">Admin Level 1 has already signed off on this deal, so changing its details or products here will send it back through the approval chain: the Status resets to <strong>Pending Level 1</strong>, any Level 2 sign-off already recorded (and the Level 2 agreement attachment) is cleared, and Admin Level 1 gets a fresh approval email along with your justification below. The Deal ID itself does not change. This full-details edit is only available before Level 2 acts — once Level 2 or Level 3 has approved, only Registry, Tech, and BD source matching can still be corrected, via "Request edit".</p>
     <div id="full-edit-modal-fields" style="display:flex;flex-direction:column;gap:16px;"></div>
   </div>
 </div>
@@ -2392,7 +2392,13 @@ async function requestBdMatchChange(dealId, edits, matchNote){
   const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
   if(!matching.length) throw new Error('Could not find this deal.');
   const currentStatus = dealGroupStatus(matching);
-  if(currentStatus !== STATUS_APPROVED) throw new Error('You can only request a change to a fully Approved deal.');
+  // Allowed once Level 2 has signed off (Pending Level 3) or once the deal
+  // is fully Approved — i.e. any time after Level 2's approval. Before
+  // that (Pending Level 1/2), the full "Edit & resend" flow is the right
+  // tool instead (see canFullyEditAfterLevel1).
+  if(currentStatus !== STATUS_APPROVED && currentStatus !== STATUS_PENDING_3){
+    throw new Error('You can only request this correction once Level 2 has approved the deal.');
+  }
   const myEmail = (currentAccount.username || '').toLowerCase();
   if((matching[0].values[0][MC.submittedBy] || '').toLowerCase() !== myEmail){
     throw new Error('Only the original submitter can request a change to this deal.');
@@ -2637,7 +2643,13 @@ async function rejectBdMatchChange(dealId, reason){
   const submitterEmail = allMatching[0].values[0][MC.submittedBy];
   for(const r of matching){
     const values = r.values[0].slice();
-    values[MC.status] = STATUS_APPROVED;
+    // requestBdMatchChange never touches approvedBy3/approvedDate3 when
+    // staging a pending change, so it still reflects whichever state the
+    // row was actually in beforehand: blank if this deal was Pending Level
+    // 3 (Level 3 hadn't signed off yet) or filled in if it was already
+    // fully Approved. Reject should put the row back exactly where it was,
+    // not skip it straight to Approved.
+    values[MC.status] = values[MC.approvedBy3] ? STATUS_APPROVED : STATUS_PENDING_3;
     values[MC.pendingMatching] = '';
     values[MC.pendingBuyerSeller] = '';
     values[MC.pendingWhichDeal] = '';
@@ -2768,13 +2780,15 @@ function renderHistoryTable(el, groups, opts){
     const agreementLink = agreementUrl
       ? '<div style="font-size:11px;margin-top:2px;"><a href="'+escapeHtml(agreementUrl)+'" target="_blank" rel="noopener">📄 View agreement</a></div>'
       : '';
-    const canRequestEdit = showRequestEdit && status === STATUS_APPROVED;
-    // Full details/products edit — available once Admin Level 1 has
-    // approved (Pending Level 2, Pending Level 3, or fully Approved).
-    // Deliberately separate from canRequestEdit above: this covers
-    // everything EXCEPT BD source matching (which stays "Request edit"'s
-    // job), and resubmits the whole deal back through Level 1 rather than
-    // just asking Level 3 to sign off on a small correction.
+    const canRequestEdit = showRequestEdit && (status === STATUS_APPROVED || status === STATUS_PENDING_3);
+    // Full details/products edit — only available in the window right
+    // after Admin Level 1 approves, before Level 2 acts (Pending Level 2 —
+    // see canFullyEditAfterLevel1). Deliberately separate from
+    // canRequestEdit above: this covers everything EXCEPT Registry, Tech,
+    // and BD source matching (which stays "Request edit"'s job once Level 2
+    // or Level 3 has approved), and resubmits the whole deal back through
+    // Level 1 rather than just asking Level 3 to sign off on a small
+    // correction.
     const canFullEdit = showFullEdit && canFullyEditAfterLevel1(status);
     html += '<tr style="border-top:1px solid var(--border);">' +
       (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[MC.salesPic]||'')+'</td>' : '') +
@@ -2820,9 +2834,10 @@ function renderHistoryTable(el, groups, opts){
         '</div></td></tr>';
     }
     // A resolved change request's rejection note — status is back to
-    // Approved by the time this shows, so it doesn't collide with the block
-    // above (which only fires for a fully Rejected deal).
-    if(status === STATUS_APPROVED && v[MC.rejectReason]){
+    // Approved or Pending Level 3 by the time this shows (see
+    // rejectBdMatchChange), so it doesn't collide with the block above
+    // (which only fires for a fully Rejected deal).
+    if((status === STATUS_APPROVED || status === STATUS_PENDING_3) && v[MC.rejectReason]){
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
         '<div style="background:#fdecea;border:1px solid #e2a49a;color:#8a2d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
         '<strong>Change request rejected'+(v[MC.rejectedBy]?(' by '+escapeHtml(v[MC.rejectedBy])):'')+':</strong> '+escapeHtml(v[MC.rejectReason]) +
@@ -3214,6 +3229,10 @@ function openEditRequestModal(dealId){
   const group = logRowsCache
     .filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId)
     .sort((a,b)=> a.index - b.index);
+  const currentStatus = group.length ? dealGroupStatus(group) : STATUS_APPROVED;
+  document.getElementById('edit-request-modal-intro').textContent = currentStatus === STATUS_APPROVED
+    ? 'This deal is already Approved, so any correction here needs a fresh Level 3 sign-off before it takes effect. The current, live values stay in place everywhere until that happens.'
+    : 'Level 2 has already approved this deal, so any correction here needs a fresh Level 3 sign-off before it takes effect. The current, live values stay in place everywhere until that happens.';
   const fieldsEl = document.getElementById('edit-request-modal-fields');
   fieldsEl.innerHTML = group.map((r, idx)=>{
     const v = r.values[0];
@@ -5256,12 +5275,20 @@ async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
 }
 
 /* ---- Post-Level-1 "Edit & resend" (full submitter self-edit) ----
-   Once Admin Level 1 has approved a deal (Status is Pending Level 2,
-   Pending Level 3, or fully Approved), the original submitter can still
-   correct its details/products themselves — unlike the permanent lock that
-   applies to everything else on the main form (see lockSubmittedForm), and
-   unlike the lighter "Request edit" flow above, which is scoped to just the
-   BD source matching fields and only ever needs a fresh Level 3 sign-off.
+   Only available in the narrow window right after Admin Level 1 has
+   approved a deal and before Admin Level 2 has acted (Status is
+   STATUS_PENDING_2 — see canFullyEditAfterLevel1). Once Level 2 or Level 3
+   has signed off, this is no longer offered — the submitter can still
+   correct Registry, Tech, and BD source matching via the lighter "Request
+   edit" flow above (canRequestEdit/openEditRequestModal/
+   requestBdMatchChange), which only needs a fresh Level 3 sign-off, but the
+   full details/products are locked until then, same as everything else on
+   the main form (see lockSubmittedForm).
+   A justification note is required every time this is used (see
+   fe-justification below) — it's prepended to the auto-generated
+   field-by-field diff and shown to Admin Level 1 alongside it, both in the
+   approval queue and in their approval-needed email, so they know why the
+   correction was made when they review it again.
    Saving here writes straight to the live TradeDealLog row(s) (no separate
    pending/staging columns, no approval gate on the save itself — the
    "approval" is the fact that it now has to go through Level 1/2/3 again)
@@ -5280,7 +5307,14 @@ async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
    here (same carve-out as the superadmin recap editor above) — that's what
    "Request edit" is for. */
 function canFullyEditAfterLevel1(status){
-  return status === STATUS_PENDING_2 || status === STATUS_PENDING_3 || status === STATUS_APPROVED;
+  // Full details/products edit is only available in the short window right
+  // after Admin Level 1 approves and before Admin Level 2 acts. Once Level 2
+  // (or Level 3) has signed off, the submitter can no longer touch the full
+  // details here — only Registry, Tech, and BD source matching remain
+  // editable, via the separate "Request edit" flow (see canRequestEdit /
+  // openEditRequestModal), which sends the deal through a fresh Level 3
+  // sign-off instead of restarting the whole chain from Level 1.
+  return status === STATUS_PENDING_2;
 }
 // Compares the pre-edit row values (oldGroup, untouched) against what's
 // about to be saved (updatedRows, same shape/order) and returns a
@@ -5362,7 +5396,12 @@ function fullEditFormHtml(dealId, sortedGroup){
       recapEditFieldHtml('Special remarks', '<textarea id="'+idp+'remarks">'+escapeHtml(v[MC.specialReq]||'')+'</textarea>')+
     '</div></div>';
   });
-  html += '<div id="full-edit-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>'+
+  html += '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;">'+
+      '<label style="margin:0;font-size:13px;font-weight:600;" for="fe-justification">Justification for this correction</label>'+
+      '<p style="margin:0;font-size:12px;color:var(--text-secondary);">Required — explain why the details need to change. This is shown to the Admin Level 1 approver alongside the field-by-field changes below when this comes back to them.</p>'+
+      '<textarea id="fe-justification" rows="3" placeholder="e.g. Buyer confirmed the volume was entered incorrectly at submission"></textarea>'+
+    '</div>'+
+    '<div id="full-edit-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>'+
     '<div style="display:flex;gap:8px;justify-content:flex-end;">'+
       '<button type="button" class="secondary" id="full-edit-cancel">Cancel</button>'+
       '<button type="button" id="full-edit-save">Save &amp; resend for Level 1 approval</button>'+
@@ -5406,6 +5445,12 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
   const hDate = rv('fe-h-date'), hEntity = rv('fe-h-entity'), hBd = rv('fe-h-bd'), hCompany = rv('fe-h-company');
   if(!hDate || !hEntity || !hBd || !hCompany){
     errEl.textContent = 'Deal Date, Entity, BD in-charge and the Buyer/Seller full name can\'t be blank.';
+    errEl.style.display = 'block';
+    return;
+  }
+  const justification = rv('fe-justification');
+  if(!justification){
+    errEl.textContent = 'A justification for this correction is required — it\'s shown to Admin Level 1 when this comes back to them.';
     errEl.style.display = 'block';
     return;
   }
@@ -5482,7 +5527,8 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
   // silently skipped if this workbook hasn't added it yet (see
   // editChangeSummary on MC).
   const role = roleFromOrderType(sortedGroup[0].values[0][MC.supplyDemand]);
-  const changeSummary = buildFullEditChangeSummary(sortedGroup, updatedRows, role);
+  const fieldDiff = buildFullEditChangeSummary(sortedGroup, updatedRows, role);
+  const changeSummary = 'Justification: ' + justification + (fieldDiff ? '\n\n' + fieldDiff : '');
   if(updatedRows[0].values[0].length > MC.editChangeSummary){
     updatedRows[0].values[0][MC.editChangeSummary] = changeSummary;
   }
