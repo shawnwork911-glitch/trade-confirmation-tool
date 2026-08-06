@@ -1992,7 +1992,12 @@ function lockSubmittedForm(dealId){
     previewDealId = realDealId;
     previewDealGroup = group;
     const previewEditBtn = document.getElementById('preview-edit-btn');
-    previewEditBtn.style.display = (!isPendingDealId(dealId) && currentUserRole === 'superadmin' && group.length) ? 'inline-block' : 'none';
+    // Superadmin can edit at any stage, including before Level 1 approval
+    // (i.e. while the deal is still keyed under its pending placeholder ID) —
+    // the row(s) already exist and are looked up by whatever ID is currently
+    // stored, real or pending, so there's nothing that requires a real Deal
+    // ID to exist first.
+    previewEditBtn.style.display = (currentUserRole === 'superadmin' && group.length) ? 'inline-block' : 'none';
     document.getElementById('output-section').style.display = 'flex';
   }
 }
@@ -2841,9 +2846,11 @@ function openViewModal(dealId, html, agreementUrl, group){
   viewModalGroup = (group || []).slice().sort((a,b)=> a.index - b.index);
   document.getElementById('view-modal-copy').style.display = isPendingDealId(dealId) ? 'none' : 'inline-block';
   document.getElementById('view-modal-copy-status').style.display = 'none';
-  // Editing needs a real Deal ID (rows to write back to) and is superadmin-only.
+  // Superadmin-only, and allowed at any stage (including pre-Level-1, while
+  // the deal is still keyed under its pending placeholder ID) — the row(s)
+  // already exist and get looked up by whatever ID is currently stored.
   const editBtn = document.getElementById('view-modal-edit');
-  editBtn.style.display = (!isPendingDealId(dealId) && currentUserRole === 'superadmin' && viewModalGroup.length) ? 'inline-block' : 'none';
+  editBtn.style.display = (currentUserRole === 'superadmin' && viewModalGroup.length) ? 'inline-block' : 'none';
   document.getElementById('view-modal-overlay').style.display = 'flex';
 }
 function closeViewModal(){
