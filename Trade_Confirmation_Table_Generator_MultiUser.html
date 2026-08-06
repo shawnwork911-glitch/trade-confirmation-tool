@@ -2739,7 +2739,7 @@ function renderHistoryTable(el, groups, opts){
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
         '<div style="background:#fdecea;border:1px solid #e2a49a;color:#8a2d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
         '<strong>⚠ Registry/Tech needs confirmation:</strong> '+escapeHtml(regTechFlags.join(' · '))+
-        '. Please edit to the correct Registry/Tech. Deadline 1 month before the Delivery End Date.' +
+        '. Please edit to the correct Registry/Tech, deadline given 1 month before the Delivery End Date.' +
         '</div></td></tr>';
     }
     if(status === STATUS_REJECTED && v[MC.rejectReason]){
@@ -5313,7 +5313,7 @@ function regTechWarningItems(filled){
 function showRegTechWarning(items){
   const box = document.getElementById('regtech-warning');
   if(!box) return;
-  box.innerHTML = '<strong>⚠ Registry/Tech needs confirmation:</strong> Each product should only ever have one Registry and one Tech (not a combination, and not "Any"). Please remember to edit for each below once confirmation done:<ul>'+
+  box.innerHTML = '<strong>⚠ Registry/Tech needs confirmation:</strong> Each product should only ever have one Registry and one Tech (not a combination, and not "Any"). Please remember to edit for each below once confirmation done. You could still save this agreement like usual.<ul>'+
     items.map(t=>'<li>'+escapeHtml(t)+'</li>').join('')+'</ul>';
   box.style.display = 'block';
 }
