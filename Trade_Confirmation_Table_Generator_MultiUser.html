@@ -609,6 +609,14 @@
   </div>
 </div>
 
+<div id="full-edit-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
+  <div style="width:100%;max-width:640px;max-height:85vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:12px;">
+    <h2 style="margin:0;font-size:16px;">Edit agreement — Deal ID <span id="full-edit-modal-dealid"></span></h2>
+    <p style="margin:0;font-size:13px;color:var(--text-secondary);">Admin Level 1 has already signed off on this deal, so changing its details or products here will send it back through the approval chain: the Status resets to <strong>Pending Level 1</strong>, any Level 2/Level 3 sign-offs (and the Level 2 agreement attachment) already recorded are cleared, and Admin Level 1 gets a fresh approval email. The Deal ID itself does not change.</p>
+    <div id="full-edit-modal-fields" style="display:flex;flex-direction:column;gap:16px;"></div>
+  </div>
+</div>
+
 <script>
 /* =======================================================================
    MICROSOFT SIGN-IN + SHAREPOINT EXCEL SETUP — fill these in before use.
@@ -650,15 +658,21 @@ const LOG_TABLE_NAME = "TradeDealLog";        // must match the Excel Table name
 // reminder email (that flow runs outside this app — see the
 // regTechReminderSentDate comment on the MC object below); not required for
 // anything else in this app to work: Reg/Tech Reminder Sent Date.
+// OPTIONAL 61st column, only needed for the post-Level-1 "Edit & resend"
+// change-diff shown to approvers (see the editChangeSummary comment on the
+// MC object below); not required for anything else in this app to work:
+// Edit Change Summary.
 // NOTE: if you're adding this to an existing workbook, add any new column
 // ("Broker Fee Type"/"Broker Fee Currency"/"Broker Fee Price" included, the
 // 7 "Pending ..."/"Change Requested ..." columns used for post-approval BD
 // source matching change requests (Pending Matching, Pending Buyer/Seller,
 // Pending Which Deal, Pending No of RECs, Pending Delivery Date, Change
 // Requested By, Change Requested Date), "Row Uid"/"Approved List Item
-// Id", and now "Pending Registry"/"Pending Tech" (staging columns for a
+// Id", "Pending Registry"/"Pending Tech" (staging columns for a
 // post-approval Registry/Tech correction — see the pendingRegistry/
-// pendingTech comment on the MC object below)) at the END of the live
+// pendingTech comment on the MC object below), and now "Edit Change
+// Summary" (what a post-Level-1 "Edit & resend" changed — see the
+// editChangeSummary comment on the MC object below)) at the END of the live
 // TradeDealLog Excel Table — don't insert them in the middle, or every
 // existing column index below will point at the wrong data.
 // "Row Uid": a permanent, per-TRADE-ROW random ID, stamped once at Save
@@ -733,7 +747,21 @@ const MC = {
   // that hasn't added this one extra column yet doesn't get blocked out of
   // any OTHER feature that guards on COL_COUNT (saving, approving, BD
   // source matching changes).
-  regTechReminderSentDate:59
+  regTechReminderSentDate:59,
+  // Plain-text, human-readable diff ("Volume (RECs): 500 -> 800") of
+  // whatever a submitter's post-Level-1 "Edit & resend" changed (see
+  // saveFullEditAndResubmit/buildFullEditChangeSummary) — written onto the
+  // deal's first row alongside the reset Status/approval columns, so
+  // whichever level (1, 2, or 3) reviews it next can see exactly what
+  // changed without having to compare two versions by eye. Shown in the
+  // approval queue/history lists while the deal is anywhere in Pending
+  // Level 1/2/3, and also included in that level's approval-needed email
+  // (see notifyNextApprover's changeSummary param). Cleared once the deal
+  // reaches Approved or Rejected — same "done with it" lifecycle as
+  // pendingMatchNote. Also optional/additive, same reasoning as
+  // regTechReminderSentDate above — guard on values.length before
+  // reading/writing it.
+  editChangeSummary:60
 };
 const COL_COUNT = 59;
 const DRAFT_TABLE_NAME = "TradeDealDrafts";   // must match the Excel Table name you create
@@ -1096,10 +1124,13 @@ async function sendMailGraph(toEmails, subject, htmlBody){
 }
 // status = the deal's status *after* this submit/approve just happened —
 // looks up which role is now responsible and emails everyone holding it.
-// changeSummary is optional — used when a fully Approved deal is sent back
-// to Level 3 with only a BD source matching change requested (see
-// requestBdMatchChange), so the approver sees exactly what's being asked to
-// change without having to open the app and compare fields by eye.
+// changeSummary is optional — a plain-text diff of what changed, shown to
+// the approver so they see it without having to open the app and compare
+// fields by eye. Used both when a fully Approved deal is sent back to
+// Level 3 with only a BD source matching change requested (see
+// requestBdMatchChange) and when a submitter's post-Level-1 "Edit & resend"
+// sends a deal back through the whole chain (see
+// saveFullEditAndResubmit/approveDeal).
 async function notifyNextApprover(status, dealId, description, changeSummary){
   const role = APPROVER_ROLE_FOR_STATUS[status];
   if(!role) return; // e.g. Approved — no next approver to notify
@@ -1114,7 +1145,7 @@ async function notifyNextApprover(status, dealId, description, changeSummary){
   const label = isPendingDealId(dealId) ? 'An agreement' : 'Deal ID <strong>' + escapeHtml(displayId) + '</strong>';
   const descBlock = (description && description.trim()) ? '<p><strong>Description:</strong> ' + escapeHtml(description) + '</p>' : '';
   const changeBlock = (changeSummary && changeSummary.trim())
-    ? '<p><strong>What changed (BD source matching change request):</strong><br>' + escapeHtml(changeSummary).replace(/\n/g,'<br>') + '</p>'
+    ? '<p><strong>What changed since this was last reviewed:</strong><br>' + escapeHtml(changeSummary).replace(/\n/g,'<br>') + '</p>'
     : '';
   const html = '<p>' + label + ' is waiting on your ' + escapeHtml(levelLabel) + ' approval.</p>' +
     descBlock +
@@ -2213,6 +2244,13 @@ async function approveDeal(dealId, file, transferOverrides){
   }
   const approvedListErrors = []; // one entry per trade row that failed to copy, not just the last
   let tradeNum = 0;
+  // Whatever a post-Level-1 "Edit & resend" last changed (see
+  // saveFullEditAndResubmit) — carried forward into this level's approval
+  // email below, then cleared once the deal reaches Approved so it doesn't
+  // linger on a deal nobody's actively reviewing anymore. Read once, up
+  // front, from the still-unmutated row values.
+  const editSummary = (matching[0].values[0].length > MC.editChangeSummary)
+    ? (matching[0].values[0][MC.editChangeSummary] || '') : '';
   for(const r of matching){
     tradeNum++;
     const values = r.values[0].slice();
@@ -2226,6 +2264,12 @@ async function approveDeal(dealId, file, transferOverrides){
     if(agreementInfo){
       values[MC.agreementFileName] = agreementInfo.name;
       values[MC.agreementFileUrl] = agreementInfo.webUrl;
+    }
+    // The edit diff has done its job once the deal is fully Approved —
+    // nothing further is going to review it against this version, so clear
+    // it rather than leave a stale summary sitting on an Approved deal.
+    if(nextStatus === STATUS_APPROVED && values.length > MC.editChangeSummary){
+      values[MC.editChangeSummary] = '';
     }
     await updateTableRow(LOG_TABLE_NAME, r.index, values);
     // Final sign-off (Pending Level 3 -> Approved): also copy this row into
@@ -2252,7 +2296,7 @@ async function approveDeal(dealId, file, transferOverrides){
     }
   }
   const idForNotifications = assignedDealId || dealId;
-  await notifyNextApprover(nextStatus, idForNotifications, matching[0].values[0][MC.description]);
+  await notifyNextApprover(nextStatus, idForNotifications, matching[0].values[0][MC.description], editSummary);
   // Also let the OTHER admins at the level that was just used know it's
   // already been actioned (e.g. the other Level 3 admins when one Level 3
   // admin approves), so they don't waste time on a deal that's moved on —
@@ -2309,6 +2353,11 @@ async function rejectDeal(dealId, reason){
     // column is optional (see MC.regTechReminderSentDate).
     if(values.length > MC.regTechReminderSentDate){
       values[MC.regTechReminderSentDate] = '';
+    }
+    // Same reasoning — a rejected deal is a dead end, so any leftover
+    // "what changed" diff from a prior "Edit & resend" no longer applies.
+    if(values.length > MC.editChangeSummary){
+      values[MC.editChangeSummary] = '';
     }
     await updateTableRow(LOG_TABLE_NAME, r.index, values);
   }
@@ -2642,7 +2691,7 @@ async function loadHistory(){
     const mineGroups = groupByDealId(
       rows.filter(r => (String(r.values[0][MC.submittedBy] || '')).toLowerCase() === myEmail)
     ).sort((a,b)=> String(b.rows[0].values[0][MC.submittedDate]||'').localeCompare(String(a.rows[0].values[0][MC.submittedDate]||'')));
-    renderHistoryTable(listEl, mineGroups, {showOwner:false, showActions:false, showRequestEdit:true});
+    renderHistoryTable(listEl, mineGroups, {showOwner:false, showActions:false, showRequestEdit:true, showFullEdit:true});
 
     if(isAdmin){
       const allGroups = groupByDealId(rows)
@@ -2697,6 +2746,7 @@ function renderHistoryTable(el, groups, opts){
   const showOwner = !!opts.showOwner;
   const showActions = !!opts.showActions;
   const showRequestEdit = !!opts.showRequestEdit;
+  const showFullEdit = !!opts.showFullEdit;
   const colCount = showOwner ? 7 : 6;
   if(!groups.length){
     el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">'+escapeHtml(opts.emptyText || 'No saved confirmations yet.')+'</p>';
@@ -2719,6 +2769,13 @@ function renderHistoryTable(el, groups, opts){
       ? '<div style="font-size:11px;margin-top:2px;"><a href="'+escapeHtml(agreementUrl)+'" target="_blank" rel="noopener">📄 View agreement</a></div>'
       : '';
     const canRequestEdit = showRequestEdit && status === STATUS_APPROVED;
+    // Full details/products edit — available once Admin Level 1 has
+    // approved (Pending Level 2, Pending Level 3, or fully Approved).
+    // Deliberately separate from canRequestEdit above: this covers
+    // everything EXCEPT BD source matching (which stays "Request edit"'s
+    // job), and resubmits the whole deal back through Level 1 rather than
+    // just asking Level 3 to sign off on a small correction.
+    const canFullEdit = showFullEdit && canFullyEditAfterLevel1(status);
     html += '<tr style="border-top:1px solid var(--border);">' +
       (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[MC.salesPic]||'')+'</td>' : '') +
       '<td style="padding:6px;">'+(isPendingDealId(v[MC.dealId]) ? '-' : escapeHtml(friendlyDealId(v[MC.dealId])))+'</td>' +
@@ -2734,6 +2791,7 @@ function renderHistoryTable(el, groups, opts){
         (canAct ? ' <button type="button" class="secondary history-approve-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;">Approve</button>' +
                   ' <button type="button" class="secondary history-reject-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;color:#8a2d1f;border-color:#c1493a;">Reject</button>' : '') +
         (canRequestEdit ? ' <button type="button" class="secondary history-request-edit-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;">Request edit</button>' : '') +
+        (canFullEdit ? ' <button type="button" class="secondary history-full-edit-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;" title="Edit details/products — resends this deal through Level 1 approval again">Edit &amp; resend</button>' : '') +
       '</td>' +
     '</tr>';
     // Shown to whoever's looking at this table — including admin
@@ -2813,6 +2871,20 @@ function renderHistoryTable(el, groups, opts){
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
         '<div style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:12px;font-weight:bold;color:var(--text);">' +
         '<strong style="color:var(--text);">Commercial Justification:</strong> '+escapeHtml(v[MC.description]) +
+        '</div></td></tr>';
+    }
+    // What a post-Level-1 "Edit & resend" last changed (see
+    // saveFullEditAndResubmit) — shown to whoever's reviewing the deal at
+    // any of the three approval levels while it's back in the pending
+    // chain; cleared once the deal reaches Approved or Rejected (see
+    // approveDeal/rejectDeal), so it only ever shows for a deal that's
+    // actually still being reviewed against this edit. Optional column —
+    // v[MC.editChangeSummary] is simply undefined on a workbook that hasn't
+    // added it yet, so this block just doesn't render.
+    if(v[MC.editChangeSummary] && [STATUS_PENDING_1, STATUS_PENDING_2, STATUS_PENDING_3].includes(status)){
+      html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
+        '<div style="background:#eaf1fb;border:1px solid #b8cdec;color:#1f3a63;border-radius:6px;padding:8px 10px;font-size:12px;">' +
+        '<strong>What changed in the latest edit:</strong><br>' + escapeHtml(v[MC.editChangeSummary]).replace(/\n/g,'<br>') +
         '</div></td></tr>';
     }
   });
@@ -3349,6 +3421,11 @@ document.addEventListener('click', (e)=>{
   const requestEditBtn = e.target.closest('.history-request-edit-btn');
   if(requestEditBtn){
     openEditRequestModal(requestEditBtn.getAttribute('data-dealid'));
+    return;
+  }
+  const fullEditBtn = e.target.closest('.history-full-edit-btn');
+  if(fullEditBtn){
+    openFullEditModal(fullEditBtn.getAttribute('data-dealid'));
   }
 });
 
@@ -5177,6 +5254,258 @@ async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
     btn.textContent = 'Save changes';
   }
 }
+
+/* ---- Post-Level-1 "Edit & resend" (full submitter self-edit) ----
+   Once Admin Level 1 has approved a deal (Status is Pending Level 2,
+   Pending Level 3, or fully Approved), the original submitter can still
+   correct its details/products themselves — unlike the permanent lock that
+   applies to everything else on the main form (see lockSubmittedForm), and
+   unlike the lighter "Request edit" flow above, which is scoped to just the
+   BD source matching fields and only ever needs a fresh Level 3 sign-off.
+   Saving here writes straight to the live TradeDealLog row(s) (no separate
+   pending/staging columns, no approval gate on the save itself — the
+   "approval" is the fact that it now has to go through Level 1/2/3 again)
+   and:
+     - resets Status back to STATUS_PENDING_1
+     - clears every approval stamp (Approved By/Date for L1, L2, L3) so the
+       trail shown in the UI accurately reflects that none of them have
+       signed off on THIS version of the deal yet
+     - clears the Level 2 agreement file (it was countersigned against the
+       old details) and any stale rejection note
+     - re-notifies whoever holds Admin Level 1 today, exactly like a brand
+       new submission does
+   The Deal ID itself is untouched — it was permanently assigned at the
+   original Level 1 approval and this isn't a new submission, just a
+   correction to the existing one. BD source matching fields aren't editable
+   here (same carve-out as the superadmin recap editor above) — that's what
+   "Request edit" is for. */
+function canFullyEditAfterLevel1(status){
+  return status === STATUS_PENDING_2 || status === STATUS_PENDING_3 || status === STATUS_APPROVED;
+}
+// Compares the pre-edit row values (oldGroup, untouched) against what's
+// about to be saved (updatedRows, same shape/order) and returns a
+// plain-text, line-per-field diff of only what actually changed — e.g.
+// "Volume (RECs): 500 -> 800". Uses the same display formatting
+// (formatStoredDate, registryDisplayName, techFullName, countryFullName)
+// as the recap itself, so the diff reads the way the fields do everywhere
+// else in the app rather than as raw stored codes. Stored on the deal's
+// first row (see saveFullEditAndResubmit) and shown to every approval
+// level while the deal works back through Pending Level 1/2/3.
+function buildFullEditChangeSummary(oldGroup, updatedRows, role){
+  const lines = [];
+  const diff = (label, oldV, newV) => {
+    const a = String(oldV||'').trim(), b = String(newV||'').trim();
+    if(a !== b) lines.push(label+': '+(a||'(blank)')+' \u2192 '+(b||'(blank)'));
+  };
+  const oldHead = oldGroup[0].values[0];
+  const newHead = updatedRows[0].values[0];
+  diff('Deal Date', formatStoredDate(oldHead[MC.agreementDate]), formatStoredDate(newHead[MC.agreementDate]));
+  diff('Entity', oldHead[MC.entity], newHead[MC.entity]);
+  diff('BD in-charge', oldHead[MC.salesPic], newHead[MC.salesPic]);
+  diff(role+' Full Name', oldHead[MC.company], newHead[MC.company]);
+  oldGroup.forEach((r, idx)=>{
+    const ov = r.values[0];
+    const nv = updatedRows[idx].values[0];
+    const prefix = oldGroup.length > 1 ? 'Product '+(idx+1)+' \u2014 ' : '';
+    const pdiff = (label, oldV, newV) => {
+      const a = String(oldV||'').trim(), b = String(newV||'').trim();
+      if(a !== b) lines.push(prefix+label+': '+(a||'(blank)')+' \u2192 '+(b||'(blank)'));
+    };
+    pdiff('Registry', registryDisplayName(ov[MC.registry]), registryDisplayName(nv[MC.registry]));
+    pdiff(transferAccountLabel(role), ov[MC.tigrsIrecName], nv[MC.tigrsIrecName]);
+    pdiff('Tech', techFullName(ov[MC.tech])||ov[MC.tech]||'', techFullName(nv[MC.tech])||nv[MC.tech]||'');
+    pdiff('Country', countryFullName(ov[MC.country])||ov[MC.country]||'', countryFullName(nv[MC.country])||nv[MC.country]||'');
+    pdiff('Vintage', (ov[MC.vFromMM]||'')+' '+(ov[MC.vFromYY]||'')+' - '+(ov[MC.vToMM]||'')+' '+(ov[MC.vToYY]||''),
+                     (nv[MC.vFromMM]||'')+' '+(nv[MC.vFromYY]||'')+' - '+(nv[MC.vToMM]||'')+' '+(nv[MC.vToYY]||''));
+    pdiff('Volume (RECs)', ov[MC.volume], nv[MC.volume]);
+    pdiff('Price / REC', (ov[MC.currency]||'')+' '+(ov[MC.unitPrice]||''), (nv[MC.currency]||'')+' '+(nv[MC.unitPrice]||''));
+    pdiff('Payment Term', ov[MC.paymentTerm], nv[MC.paymentTerm]);
+    pdiff('Delivery Start', formatStoredDate(ov[MC.deliveryStart]), formatStoredDate(nv[MC.deliveryStart]));
+    pdiff('Delivery End', formatStoredDate(ov[MC.deliveryEnd]), formatStoredDate(nv[MC.deliveryEnd]));
+    pdiff('COD', ov[MC.cod], nv[MC.cod]);
+    pdiff('Special Remarks', ov[MC.specialReq], nv[MC.specialReq]);
+  });
+  return lines.join('\n');
+}
+// Same field set as recapEditFormHtml, but with its own "fe-" id prefix and
+// its own Cancel/Save/error element ids, so this modal can never collide
+// with the superadmin recap editor if both happened to be touched in the
+// same session.
+function fullEditFormHtml(dealId, sortedGroup){
+  const head = sortedGroup[0].values[0];
+  const role = roleFromOrderType(head[MC.supplyDemand]);
+  let html = '<div id="full-edit-form" style="display:flex;flex-direction:column;gap:16px;">'+
+    '<div class="grid">'+
+      recapEditFieldHtml('Deal Date', '<input type="date" id="fe-h-date" value="'+escapeHtml(toDateInputValue(head[MC.agreementDate]))+'"/>')+
+      recapEditFieldHtml('Entity', '<input type="text" id="fe-h-entity" value="'+escapeHtml(head[MC.entity]||'')+'"/>')+
+      recapEditFieldHtml('BD in-charge', '<input type="text" id="fe-h-bd" value="'+escapeHtml(head[MC.salesPic]||'')+'"/>')+
+      recapEditFieldHtml(role+' Full Name', '<input type="text" id="fe-h-company" value="'+escapeHtml(head[MC.company]||'')+'"/>')+
+    '</div>';
+  sortedGroup.forEach((r, idx)=>{
+    const v = r.values[0];
+    const i = idx+1;
+    const idp = 'fe-t'+i+'-';
+    html += '<div class="trade-block"><p class="trade-title">Product '+i+'</p><div class="grid">'+
+      recapEditFieldHtml('Registry', selectWithFullNamesHtml(idp+'registry', REGISTRIES, REGISTRY_DISPLAY_NAMES, v[MC.registry]||'IREC'))+
+      recapEditFieldHtml(transferAccountLabel(role), '<input type="text" id="'+idp+'transfer" value="'+escapeHtml(v[MC.tigrsIrecName]||'')+'"/>')+
+      recapEditFieldHtml('Tech', comboHtml(idp+'tech', idp+'tech-list', TECHS, v[MC.tech]||''))+
+      recapEditFieldHtml('Country (Full Name)', comboHtml(idp+'country', idp+'country-list', countryComboOptions(), v[MC.country]||''))+
+      recapEditFieldHtml('Vintage start month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vstart-m', MONTHS, v[MC.vFromMM]||'Jan')+comboHtml(idp+'vstart-y', idp+'vstart-y-list', YEARS, v[MC.vFromYY]||'')+'</div>')+
+      recapEditFieldHtml('Vintage end month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vend-m', MONTHS, v[MC.vToMM]||'Dec')+comboHtml(idp+'vend-y', idp+'vend-y-list', YEARS, v[MC.vToYY]||'')+'</div>')+
+      recapEditFieldHtml('Volume (RECs)', '<input type="text" id="'+idp+'volume" value="'+escapeHtml(v[MC.volume]||'')+'"/>')+
+      recapEditFieldHtml('Price currency', comboHtml(idp+'currency', idp+'currency-list', CURRENCIES, v[MC.currency]||''))+
+      recapEditFieldHtml('Price / REC', '<input type="text" id="'+idp+'price" value="'+escapeHtml(v[MC.unitPrice]||'')+'"/>')+
+      recapEditFieldHtml('Payment term', '<input type="text" id="'+idp+'payterm" value="'+escapeHtml(v[MC.paymentTerm]||'')+'"/>')+
+      recapEditFieldHtml('Delivery start date', '<input type="date" id="'+idp+'dstart" value="'+escapeHtml(toDateInputValue(v[MC.deliveryStart]))+'"/>')+
+      recapEditFieldHtml('Delivery end date', '<input type="date" id="'+idp+'dend" value="'+escapeHtml(toDateInputValue(v[MC.deliveryEnd]))+'"/>')+
+      recapEditFieldHtml('COD (if applicable)', '<input type="text" id="'+idp+'cod" value="'+escapeHtml(v[MC.cod]||'')+'"/>')+
+      recapEditFieldHtml('Special remarks', '<textarea id="'+idp+'remarks">'+escapeHtml(v[MC.specialReq]||'')+'</textarea>')+
+    '</div></div>';
+  });
+  html += '<div id="full-edit-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>'+
+    '<div style="display:flex;gap:8px;justify-content:flex-end;">'+
+      '<button type="button" class="secondary" id="full-edit-cancel">Cancel</button>'+
+      '<button type="button" id="full-edit-save">Save &amp; resend for Level 1 approval</button>'+
+    '</div>'+
+  '</div>';
+  return html;
+}
+let fullEditModalDealId = null;
+let fullEditModalGroup = [];
+function openFullEditModal(dealId){
+  const group = logRowsCache
+    .filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId)
+    .sort((a,b)=> a.index - b.index);
+  if(!group.length) return;
+  fullEditModalDealId = dealId;
+  fullEditModalGroup = group;
+  document.getElementById('full-edit-modal-dealid').textContent = friendlyDealId(dealId);
+  document.getElementById('full-edit-modal-fields').innerHTML = fullEditFormHtml(dealId, group);
+  document.getElementById('full-edit-cancel').addEventListener('click', closeFullEditModal);
+  document.getElementById('full-edit-save').addEventListener('click', ()=>{
+    saveFullEditAndResubmit(fullEditModalDealId, fullEditModalGroup);
+  });
+  document.getElementById('full-edit-modal-overlay').style.display = 'flex';
+}
+function closeFullEditModal(){
+  document.getElementById('full-edit-modal-overlay').style.display = 'none';
+  document.getElementById('full-edit-modal-fields').innerHTML = '';
+  fullEditModalDealId = null;
+  fullEditModalGroup = [];
+}
+document.getElementById('full-edit-modal-overlay').addEventListener('click', (e)=>{
+  if(e.target.id === 'full-edit-modal-overlay') closeFullEditModal();
+});
+async function saveFullEditAndResubmit(dealId, sortedGroup){
+  const btn = document.getElementById('full-edit-save');
+  const cancelBtn = document.getElementById('full-edit-cancel');
+  const errEl = document.getElementById('full-edit-error');
+  errEl.style.display = 'none';
+  const rv = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+
+  const hDate = rv('fe-h-date'), hEntity = rv('fe-h-entity'), hBd = rv('fe-h-bd'), hCompany = rv('fe-h-company');
+  if(!hDate || !hEntity || !hBd || !hCompany){
+    errEl.textContent = 'Deal Date, Entity, BD in-charge and the Buyer/Seller full name can\'t be blank.';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  const updatedRows = [];
+  for(let idx = 0; idx < sortedGroup.length; idx++){
+    const i = idx + 1;
+    const idp = 'fe-t'+i+'-';
+    const registry = rv(idp+'registry');
+    const volume = rv(idp+'volume');
+    if(!registry || !volume){
+      errEl.textContent = 'Product '+i+': Registry and Volume (RECs) can\'t be blank.';
+      errEl.style.display = 'block';
+      return;
+    }
+    const values = sortedGroup[idx].values[0].slice();
+    values[MC.agreementDate] = hDate;
+    values[MC.entity] = hEntity;
+    values[MC.salesPic] = hBd;
+    values[MC.company] = hCompany;
+    values[MC.registry] = registry;
+    values[MC.tigrsIrecName] = rv(idp+'transfer');
+    values[MC.tech] = rv(idp+'tech');
+    values[MC.country] = rv(idp+'country');
+    values[MC.vFromMM] = rv(idp+'vstart-m');
+    values[MC.vFromYY] = rv(idp+'vstart-y');
+    values[MC.vToMM] = rv(idp+'vend-m');
+    values[MC.vToYY] = rv(idp+'vend-y');
+    values[MC.volume] = volume;
+    values[MC.currency] = rv(idp+'currency');
+    values[MC.unitPrice] = rv(idp+'price');
+    values[MC.paymentTerm] = rv(idp+'payterm');
+    values[MC.deliveryStart] = rv(idp+'dstart');
+    values[MC.deliveryEnd] = rv(idp+'dend');
+    values[MC.cod] = rv(idp+'cod');
+    const remarksRaw = rv(idp+'remarks');
+    values[MC.specialReq] = (!remarksRaw || remarksRaw.toUpperCase() === 'NA') ? 'N/A' : remarksRaw;
+
+    // ---- Retrigger the approval flow from the start ----
+    // Every row of the deal moves back to Pending Level 1, and every
+    // approval stamp is cleared — Level 1 must sign off again on this
+    // edited version, and any Level 2 (and Level 3, if it had gotten that
+    // far) approval that already happened no longer applies to it.
+    values[MC.status] = STATUS_PENDING_1;
+    values[MC.approvedBy1] = ''; values[MC.approvedDate1] = '';
+    values[MC.approvedBy2] = ''; values[MC.approvedDate2] = '';
+    values[MC.approvedBy3] = ''; values[MC.approvedDate3] = '';
+    // The Level 2 agreement file was signed against the pre-edit details —
+    // clear it too, so Level 2 is prompted to attach a fresh one when this
+    // comes back around to their level.
+    values[MC.agreementFileName] = '';
+    values[MC.agreementFileUrl] = '';
+    // Clear any stale rejection note (e.g. a previously-rejected BD source
+    // matching change on an Approved deal) — it no longer applies once the
+    // whole deal is back at Pending Level 1.
+    values[MC.rejectedBy] = ''; values[MC.rejectedDate] = ''; values[MC.rejectReason] = '';
+    // Same reasoning as rejectDeal's clear-on-dead-end: a deal that isn't
+    // Approved shouldn't be carrying a live Reg/Tech reminder stamp for the
+    // external Power Automate flow.
+    if(values.length > MC.regTechReminderSentDate){
+      values[MC.regTechReminderSentDate] = '';
+    }
+    updatedRows.push({ index: sortedGroup[idx].index, values: [values] });
+  }
+
+  // Regenerate the recap the same way a fresh submission does, from the
+  // values just entered (not yet written) - then stash it on the first
+  // row, the only row that ever carries the Generated HTML column.
+  const freshHtml = renderPointFormatHtml(buildRecapLinesFromRows(dealId, updatedRows));
+  updatedRows[0].values[0][MC.generatedHtml] = freshHtml;
+
+  // Diff against the pre-edit values (sortedGroup, untouched) so whichever
+  // level reviews this next can see exactly what changed. Optional column —
+  // silently skipped if this workbook hasn't added it yet (see
+  // editChangeSummary on MC).
+  const role = roleFromOrderType(sortedGroup[0].values[0][MC.supplyDemand]);
+  const changeSummary = buildFullEditChangeSummary(sortedGroup, updatedRows, role);
+  if(updatedRows[0].values[0].length > MC.editChangeSummary){
+    updatedRows[0].values[0][MC.editChangeSummary] = changeSummary;
+  }
+
+  btn.disabled = true; cancelBtn.disabled = true;
+  btn.textContent = 'Saving\u2026';
+  try{
+    for(const r of updatedRows){
+      await updateTableRow(LOG_TABLE_NAME, r.index, r.values[0]);
+    }
+    await notifyNextApprover(STATUS_PENDING_1, dealId, updatedRows[0].values[0][MC.description], changeSummary);
+    await loadHistory(); // refresh logRowsCache and re-render every history/queue view
+    closeFullEditModal();
+  }catch(err){
+    errEl.textContent = 'Save failed: ' + err.message;
+    errEl.style.display = 'block';
+    btn.disabled = false; cancelBtn.disabled = false;
+    btn.textContent = 'Save & resend for Level 1 approval';
+  }
+}
+document.addEventListener('keydown', (e)=>{
+  if(e.key === 'Escape' && document.getElementById('full-edit-modal-overlay').style.display === 'flex') closeFullEditModal();
+});
 
 function buildPointFormatText(lines){
   return lines.map(l=>{
