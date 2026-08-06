@@ -2302,6 +2302,14 @@ async function rejectDeal(dealId, reason){
     values[MC.rejectedBy] = currentAccount.username;
     values[MC.rejectedDate] = nowIso;
     values[MC.rejectReason] = trimmedReason;
+    // Rejected deals are dead ends (a resubmission creates fresh rows via
+    // saveConfirmationToHistory), so don't leave a stale Reg/Tech reminder
+    // stamp pointing the external Power Automate flow at a Delivery End
+    // Date that will never be actioned. Guarded on values.length since this
+    // column is optional (see MC.regTechReminderSentDate).
+    if(values.length > MC.regTechReminderSentDate){
+      values[MC.regTechReminderSentDate] = '';
+    }
     await updateTableRow(LOG_TABLE_NAME, r.index, values);
   }
   await notifySubmitter(STATUS_REJECTED, dealId, matching[0].values[0][MC.submittedBy], trimmedReason);
