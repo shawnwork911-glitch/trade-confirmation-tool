@@ -393,8 +393,19 @@
     color:var(--text-secondary);
   }
   #user-bar .right{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
-  #history-list table{width:100%;border-collapse:collapse;}
-  #history-list th{font-size:12px;color:var(--text-secondary);border-bottom:1px solid var(--border);}
+  #main-tabs{display:flex;gap:6px;border-bottom:1px solid var(--border);}
+  #main-tabs button{
+    background:transparent;border:none;border-bottom:2px solid transparent;
+    padding:10px 4px;margin-bottom:-1px;font-size:14px;font-weight:600;
+    color:var(--text-secondary);cursor:pointer;
+  }
+  #main-tabs button.active{color:var(--text);border-bottom-color:var(--accent);}
+  #main-tabs button:hover{color:var(--text);}
+  .tab-panel{display:flex;flex-direction:column;gap:24px;}
+  #history-list table, #admin-history-list table{width:100%;border-collapse:collapse;}
+  #history-list th, #admin-history-list th{font-size:12px;color:var(--text-secondary);border-bottom:1px solid var(--border);}
+  tr.confirmation-row-restricted td{color:var(--text-secondary);}
+  .row-lock-note{font-size:11px;color:var(--text-secondary);font-style:italic;}
   #draft-status{font-size:12px;color:var(--text-secondary);margin:0;}
   #user-role-label{color:var(--text-secondary);font-weight:400;}
   #user-mgmt-list table{width:100%;border-collapse:collapse;}
@@ -448,6 +459,13 @@
     <p class="subtitle" id="page-subtitle">Fill in the details below, generate the Customer version table, then copy and send to your customer.</p>
   </div>
 
+  <div id="main-tabs">
+    <button type="button" class="active" id="tab-btn-form" data-tab="form">Form</button>
+    <button type="button" id="tab-btn-confirmations" data-tab="confirmations">Confirmations</button>
+  </div>
+
+  <div id="tab-panel-form" class="tab-panel">
+
   <div id="agreement-form-section" style="display:flex;flex-direction:column;gap:24px;">
 
   <div class="card">
@@ -493,6 +511,10 @@
     <p id="copy-status">Copied — paste directly into your email.</p>
   </div>
 
+  </div><!-- /tab-panel-form -->
+
+  <div id="tab-panel-confirmations" class="tab-panel" style="display:none;">
+
   <div class="card" id="my-history-card">
     <p class="card-title">My saved confirmations</p>
     <div id="history-list"><p style="font-size:13px;color:var(--text-secondary);">Loading...</p></div>
@@ -504,11 +526,13 @@
     <div id="approval-queue-list"><p style="font-size:13px;color:var(--text-secondary);">Loading...</p></div>
   </div>
 
-  <div class="card" id="admin-history-card" style="display:none;">
-    <p class="card-title">All confirmations (Admin)</p>
-    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Visible to Admin/Super Admin accounts — shows every saved confirmation across every user, read-only, with the full approval trail.</p>
+  <div class="card" id="admin-history-card">
+    <p class="card-title">All confirmations</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Every saved confirmation across every user. You can open full details and edit only for confirmations you created (Admin/Super Admin can open any). Everyone else's confirmations show as a read-only summary row.</p>
     <div id="admin-history-list"><p style="font-size:13px;color:var(--text-secondary);">Loading...</p></div>
   </div>
+
+  </div><!-- /tab-panel-confirmations -->
 
   <div class="card" id="user-mgmt-card" style="display:none;">
     <p class="card-title">User management</p>
@@ -892,6 +916,20 @@ document.getElementById('signout-btn').addEventListener('click', ()=>{
   msalInstance.logoutPopup({ account }).finally(()=> location.reload());
 });
 
+/* ---- Main tab switching (Form / Confirmations) ----
+   Purely a UI grouping — doesn't change who can see what inside each tab;
+   that's still governed by applyRoleUi()/renderHistoryTable() per element
+   and per row. Everyone signed in gets both tabs. */
+function setActiveTab(tab){
+  const isForm = tab === 'form';
+  document.getElementById('tab-panel-form').style.display = isForm ? 'flex' : 'none';
+  document.getElementById('tab-panel-confirmations').style.display = isForm ? 'none' : 'flex';
+  document.getElementById('tab-btn-form').classList.toggle('active', isForm);
+  document.getElementById('tab-btn-confirmations').classList.toggle('active', !isForm);
+}
+document.getElementById('tab-btn-form').addEventListener('click', ()=> setActiveTab('form'));
+document.getElementById('tab-btn-confirmations').addEventListener('click', ()=> setActiveTab('confirmations'));
+
 window.addEventListener('load', async ()=>{
   await msalInstance.initialize();
   const accounts = msalInstance.getAllAccounts();
@@ -1022,8 +1060,20 @@ function applyRoleUi(){
   document.getElementById('page-subtitle').textContent = isUserRole
     ? 'Fill in the details below, generate the Customer version table, then copy and send to your customer.'
     : 'Review confirmations submitted by users — check the Approval queue for anything waiting on your level, or browse All confirmations for the full history.';
-  document.getElementById('admin-history-card').style.display = isAdmin ? 'block' : 'none';
+  // "All confirmations" is now visible to every signed-in user (not just
+  // Admin/Super Admin) — row-by-row access is enforced separately inside
+  // renderHistoryTable/loadHistory (see restrictOthers), which only lets a
+  // non-owner, non-admin see a read-only summary row with no way to open
+  // full details. Approval queue stays Admin/Super Admin-only, same as before.
+  document.getElementById('admin-history-card').style.display = 'block';
   document.getElementById('approval-queue-card').style.display = isAdmin ? 'block' : 'none';
+  // The Form tab has nothing to show for review-only roles (Admin1/2/3),
+  // since agreement-form-section is hidden for them above — so land those
+  // roles on the Confirmations tab by default instead. Users/Superadmin
+  // still default to Form. Also hide the Form tab button entirely for
+  // review-only roles so there's nothing to click into that's empty.
+  document.getElementById('tab-btn-form').style.display = isUserRole ? 'inline-block' : 'none';
+  setActiveTab(isUserRole ? 'form' : 'confirmations');
   const isSuperadmin = currentUserRole === 'superadmin';
   document.getElementById('user-mgmt-card').style.display = isSuperadmin ? 'block' : 'none';
   document.getElementById('dealid-settings-card').style.display = isSuperadmin ? 'block' : 'none';
@@ -1270,6 +1320,13 @@ function tryOpenDealFromUrl(){
   const group = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
   const withHtml = group.find(r => r.values[0][MC.generatedHtml]);
   if(!withHtml) return; // history may not have loaded this deal yet — try again next refresh
+  // Same "creator or admin only" rule as the shared All confirmations list
+  // — a deep link (e.g. from an approval-notification email) shouldn't let
+  // someone else's confirmation be opened just because the link was seen
+  // or forwarded.
+  const ownerEmail = (withHtml.values[0][MC.submittedBy] || '').toLowerCase();
+  const myEmailLower = (currentAccount && currentAccount.username || '').toLowerCase();
+  if(!isAdmin && ownerEmail !== myEmailLower){ urlDealOpened = true; return; }
   const freshHtml = refreshBdMatchingInHtml(withHtml.values[0][MC.generatedHtml], group);
   openViewModal(dealId, freshHtml, withHtml.values[0][MC.agreementFileUrl], group);
   urlDealOpened = true;
@@ -2705,10 +2762,19 @@ async function loadHistory(){
     ).sort((a,b)=> String(b.rows[0].values[0][MC.submittedDate]||'').localeCompare(String(a.rows[0].values[0][MC.submittedDate]||'')));
     renderHistoryTable(listEl, mineGroups, {showOwner:false, showActions:false, showRequestEdit:true, showFullEdit:true});
 
-    if(isAdmin){
-      const allGroups = groupByDealId(rows)
-        .sort((a,b)=> String(b.rows[0].values[0][MC.submittedDate]||'').localeCompare(String(a.rows[0].values[0][MC.submittedDate]||'')));
+    const allGroups = groupByDealId(rows)
+      .sort((a,b)=> String(b.rows[0].values[0][MC.submittedDate]||'').localeCompare(String(a.rows[0].values[0][MC.submittedDate]||'')));
 
+    // "All confirmations" is now visible to every signed-in user, not just
+    // Admin/Super Admin — but restrictOthers:true means renderHistoryTable
+    // only lets each row's own creator (or an admin) open full details;
+    // anyone else just gets a read-only summary line for that row (see
+    // renderHistoryTable). isAdmin:false readers therefore effectively see
+    // their own rows in full and everyone else's row list is summary-only.
+    const adminListEl = document.getElementById('admin-history-list');
+    renderHistoryTable(adminListEl, allGroups, {showOwner:true, showActions:false, restrictOthers:true});
+
+    if(isAdmin){
       const queueEl = document.getElementById('approval-queue-list');
       // Visibility is intentionally wider than actionability: every admin
       // level (and superadmin) sees the whole approval queue — every deal
@@ -2718,9 +2784,6 @@ async function loadHistory(){
       // inside renderHistoryTable (via its own showActions+canAct check).
       const queueGroups = allGroups.filter(g => PENDING_STATUSES.includes(dealGroupStatus(g.rows)));
       renderHistoryTable(queueEl, queueGroups, {showOwner:true, showActions:true, emptyText:'Nothing pending right now.'});
-
-      const adminListEl = document.getElementById('admin-history-list');
-      renderHistoryTable(adminListEl, allGroups, {showOwner:true, showActions:false});
     }
     tryOpenDealFromUrl();
   }catch(err){
@@ -2771,9 +2834,31 @@ function renderHistoryTable(el, groups, opts){
     '<th style="text-align:left;padding:6px;">Products</th>' +
     '<th style="text-align:left;padding:6px;">Status</th>' +
     '<th style="padding:6px;"></th></tr>';
+  const restrictOthers = !!opts.restrictOthers;
+  const myEmailLower = (currentAccount && currentAccount.username || '').toLowerCase();
   groups.forEach(g=>{
     const v = g.rows[0].values[0];
     const status = dealGroupStatus(g.rows);
+    // When restrictOthers is set (the shared "All confirmations" list),
+    // anyone who isn't the confirmation's own creator and isn't an
+    // Admin/Super Admin only gets a read-only summary row — no View
+    // button (so full details/generated table stay unopenable), no
+    // action buttons, no approval trail/agreement link/reject reason/etc.
+    // Same underlying data either way; this only changes what's rendered.
+    const ownerEmail = (v[MC.submittedBy] || '').toLowerCase();
+    const isOwnerOrAdmin = isAdmin || (ownerEmail && ownerEmail === myEmailLower);
+    if(restrictOthers && !isOwnerOrAdmin){
+      html += '<tr class="confirmation-row-restricted" style="border-top:1px solid var(--border);">' +
+        (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[MC.salesPic]||'')+'</td>' : '') +
+        '<td style="padding:6px;">'+(isPendingDealId(v[MC.dealId]) ? '-' : escapeHtml(friendlyDealId(v[MC.dealId])))+'</td>' +
+        '<td style="padding:6px;">'+escapeHtml(formatStoredDate(v[MC.agreementDate]))+'</td>' +
+        '<td style="padding:6px;">'+escapeHtml(v[MC.company]||'')+'</td>' +
+        '<td style="padding:6px;">—</td>' +
+        '<td style="padding:6px;">'+statusBadge(status)+'</td>' +
+        '<td style="padding:6px;white-space:nowrap;"><span class="row-lock-note">Owner only</span></td>' +
+      '</tr>';
+      return;
+    }
     const canAct = showActions && canActOnStatus(status);
     const trail = approvalTrailText(v);
     const agreementUrl = v[MC.agreementFileUrl];
