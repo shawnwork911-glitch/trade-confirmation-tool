@@ -3685,10 +3685,10 @@ function techFullName(code){
     return TECH_FULLNAMES[partKey] || part.trim();
   }).join('/');
 }
-const REGISTRIES = ["IREC","TIGR","IREC/TIGR","GEC","Rehash","JEPX","BCX","Verra","LGC","T-REC","K-REC"];
+const REGISTRIES = ["IREC","TIGR","IREC/TIGR","GEC","Rehash","JEPX","BCX","Verra","LGC","T-REC","K-REC","AIB GO","REGO","NAR/MRET","NAR","MRET"];
 // Registry options offered when fixing a product's Registry down to a
 // single value (see needsRegistryTechFix/openEditRequestModal) — same list
-// as REGISTRIES minus any combo entry (currently just "IREC/TIGR"), since a
+// as REGISTRIES minus any combo entry (currently "IREC/TIGR" and "NAR/MRET"), since a
 // combo is exactly what this flow exists to resolve into one registry.
 const SINGLE_REGISTRIES = REGISTRIES.filter(r => r.indexOf('/') === -1);
 // Tech options offered by that same fix flow — every specific tech, minus
