@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Commercial Approval Form</title>
 <script src="https://unpkg.com/@azure/msal-browser@3/lib/msal-browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
     --bg:#f5f5f4;
@@ -409,6 +410,29 @@
   .confirmation-filter-bar select{padding:6px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text);}
   .confirmation-filter-bar button{padding:6px 10px;font-size:12px;}
   .confirmation-filter-count{font-size:11px;color:var(--text-secondary);white-space:nowrap;}
+  .confirmation-filter-bar input[type="date"]{padding:6px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text);}
+  .analysis-filter-group-label{font-size:11px;color:var(--text-secondary);font-weight:600;text-transform:uppercase;letter-spacing:.02em;margin-left:4px;}
+  #analysis-stats{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px;}
+  .analysis-stat{flex:1 1 140px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;}
+  .analysis-stat .stat-label{font-size:11px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.03em;}
+  .analysis-stat .stat-value{font-size:22px;font-weight:700;margin-top:4px;}
+  .analysis-stat .stat-sub{font-size:11px;color:var(--text-secondary);margin-top:2px;}
+  #analysis-chart-row{display:flex;gap:28px;flex-wrap:wrap;align-items:center;margin-bottom:20px;}
+  #analysis-donut{width:190px;height:190px;border-radius:50%;flex:none;position:relative;}
+  #analysis-donut::after{
+    content:'';position:absolute;inset:26px;border-radius:50%;background:var(--surface);
+    display:flex;align-items:center;justify-content:center;
+  }
+  #analysis-donut-center{position:absolute;inset:26px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;}
+  #analysis-donut-center .n{font-size:22px;font-weight:700;}
+  #analysis-donut-center .l{font-size:10px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.03em;}
+  #analysis-legend{display:flex;flex-direction:column;gap:8px;min-width:200px;}
+  .analysis-legend-row{display:flex;align-items:center;gap:8px;font-size:13px;}
+  .analysis-legend-swatch{width:11px;height:11px;border-radius:3px;flex:none;}
+  .analysis-legend-pct{margin-left:auto;color:var(--text-secondary);font-size:12px;}
+  #analysis-table-wrap table{width:100%;border-collapse:collapse;}
+  #analysis-table-wrap th{font-size:12px;color:var(--text-secondary);border-bottom:1px solid var(--border);text-align:left;padding:6px;}
+  #analysis-table-wrap td{padding:6px;font-size:13px;border-top:1px solid var(--border);}
   tr.confirmation-row-restricted td{color:var(--text-secondary);}
   .row-lock-note{font-size:11px;color:var(--text-secondary);font-style:italic;}
   #draft-status{font-size:12px;color:var(--text-secondary);margin:0;}
@@ -467,6 +491,7 @@
   <div id="main-tabs">
     <button type="button" class="active" id="tab-btn-form" data-tab="form">Form</button>
     <button type="button" id="tab-btn-confirmations" data-tab="confirmations">Confirmations</button>
+    <button type="button" id="tab-btn-analysis" data-tab="analysis">Analysis</button>
   </div>
 
   <div id="tab-panel-form" class="tab-panel">
@@ -553,6 +578,36 @@
   </div>
 
   </div><!-- /tab-panel-confirmations -->
+
+  <div id="tab-panel-analysis" class="tab-panel" style="display:none;">
+
+  <div class="card">
+    <p class="card-title">Confirmations analysis</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Breaks down every saved confirmation (one entry per deal, matching "All confirmations") by status, filterable by BD in-charge, Deal Date, and the date the agreement was created (submitted) by the user. "Export to Excel" downloads exactly the rows shown below.</p>
+    <div class="confirmation-filter-bar">
+      <select id="analysis-filter-bd"><option value="">All BD in-charge</option></select>
+      <span class="analysis-filter-group-label">Deal Date:</span>
+      <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">From <input type="date" id="analysis-filter-from"></label>
+      <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">To <input type="date" id="analysis-filter-to"></label>
+      <span class="analysis-filter-group-label">Created (Submitted):</span>
+      <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">From <input type="date" id="analysis-filter-created-from"></label>
+      <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">To <input type="date" id="analysis-filter-created-to"></label>
+      <button type="button" id="analysis-filter-clear" class="secondary">Clear filters</button>
+      <span class="confirmation-filter-count" id="analysis-filter-count"></span>
+      <button type="button" id="analysis-export-btn" class="secondary" style="margin-left:auto;">⬇ Export to Excel</button>
+    </div>
+
+    <div id="analysis-stats"></div>
+
+    <div id="analysis-chart-row">
+      <div id="analysis-donut"><div id="analysis-donut-center"><div class="n" id="analysis-donut-total">0</div><div class="l">deals</div></div></div>
+      <div id="analysis-legend"></div>
+    </div>
+
+    <div id="analysis-table-wrap"><p style="font-size:13px;color:var(--text-secondary);">Loading…</p></div>
+  </div>
+
+  </div><!-- /tab-panel-analysis -->
 
   <div class="card" id="user-mgmt-card" style="display:none;">
     <p class="card-title">User management</p>
@@ -942,13 +997,21 @@ document.getElementById('signout-btn').addEventListener('click', ()=>{
    and per row. Everyone signed in gets both tabs. */
 function setActiveTab(tab){
   const isForm = tab === 'form';
+  const isAnalysis = tab === 'analysis';
+  const isConfirmations = !isForm && !isAnalysis;
   document.getElementById('tab-panel-form').style.display = isForm ? 'flex' : 'none';
-  document.getElementById('tab-panel-confirmations').style.display = isForm ? 'none' : 'flex';
+  document.getElementById('tab-panel-confirmations').style.display = isConfirmations ? 'flex' : 'none';
+  document.getElementById('tab-panel-analysis').style.display = isAnalysis ? 'flex' : 'none';
   document.getElementById('tab-btn-form').classList.toggle('active', isForm);
-  document.getElementById('tab-btn-confirmations').classList.toggle('active', !isForm);
+  document.getElementById('tab-btn-confirmations').classList.toggle('active', isConfirmations);
+  document.getElementById('tab-btn-analysis').classList.toggle('active', isAnalysis);
+  // Data is kept fresh by loadHistory() already; re-render here just in case
+  // the filters were touched while this tab wasn't visible.
+  if(isAnalysis) renderAnalysisTab();
 }
 document.getElementById('tab-btn-form').addEventListener('click', ()=> setActiveTab('form'));
 document.getElementById('tab-btn-confirmations').addEventListener('click', ()=> setActiveTab('confirmations'));
+document.getElementById('tab-btn-analysis').addEventListener('click', ()=> setActiveTab('analysis'));
 
 window.addEventListener('load', async ()=>{
   await msalInstance.initialize();
@@ -1431,7 +1494,11 @@ async function getAccessToken(scopes){
 async function graphFetch(path, options){
   options = options || {};
   const isWorkbookCall = path.indexOf('/workbook/') !== -1;
-  const maxAttempts = 3;
+  // Workbook calls get one extra attempt over plain Graph calls: a
+  // session-expired recovery (recreate + retry) consumes an attempt on its
+  // own, so without the extra headroom a call that expires once has no
+  // budget left to also absorb a transient 503/504/429 afterwards.
+  const maxAttempts = isWorkbookCall ? 4 : 3;
   for(let attempt = 0; attempt < maxAttempts; attempt++){
     const token = await getAccessToken(options.scopes);
     const headers = Object.assign({ 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, options.headers || {});
@@ -1474,6 +1541,7 @@ async function graphFetch(path, options){
 // automatically to any /workbook/ path, and recreates it transparently if
 // it ever expires mid-session (see the sessionExpired branch above).
 let workbookSessionId = null;
+let workbookSessionCreatedAt = 0;
 async function createWorkbookSession(){
   if(!fileItemId || !driveId) return null;
   try{
@@ -1486,15 +1554,31 @@ async function createWorkbookSession(){
     if(!res.ok){
       console.warn('Could not create a workbook session (Graph ' + res.status + ') — falling back to session-less calls, which are slower and more timeout-prone.');
       workbookSessionId = null;
+      workbookSessionCreatedAt = 0;
       return null;
     }
     const data = await res.json();
     workbookSessionId = data.id;
+    workbookSessionCreatedAt = Date.now();
     return workbookSessionId;
   }catch(err){
     console.warn('Could not create a workbook session — falling back to session-less calls, which are slower and more timeout-prone.', err);
     workbookSessionId = null;
+    workbookSessionCreatedAt = 0;
     return null;
+  }
+}
+// Excel workbook sessions expire after ~5 min idle. Multi-step flows like
+// approveDeal/rejectDeal/approveBdMatchChange do several sequential Graph
+// calls — re-check status, upload a file, add/update rows — that can add up
+// to a couple of minutes on a slow connection. Rather than wait for one of
+// those calls to hit an expired session mid-flow (which still recovers, but
+// costs a retry and a few seconds), call this at the start of any such flow
+// so it starts with a full timeout budget instead of a possibly-stale one.
+async function ensureFreshWorkbookSession(maxAgeMs){
+  maxAgeMs = maxAgeMs || 3 * 60 * 1000; // refresh proactively at 3 min, well under the ~5 min idle cap
+  if(!workbookSessionId || (Date.now() - workbookSessionCreatedAt) > maxAgeMs){
+    await createWorkbookSession();
   }
 }
 function encodeShareUrl(url){
@@ -2247,6 +2331,7 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
    them act on (any pending level, vs. admin1/2/3's own single level). */
 async function approveDeal(dealId, file, transferOverrides){
   if(!dealId) return;
+  await ensureFreshWorkbookSession();
   const rows = await getTableRows(LOG_TABLE_NAME);
   const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
   if(!matching.length) return;
@@ -2411,6 +2496,7 @@ async function rejectDeal(dealId, reason){
   if(!dealId) return;
   const trimmedReason = (reason||'').trim();
   if(!trimmedReason) throw new Error('A comment is required so the submitter knows why this was rejected.');
+  await ensureFreshWorkbookSession();
   const rows = await getTableRows(LOG_TABLE_NAME);
   const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
   if(!matching.length) return;
@@ -2465,6 +2551,7 @@ async function rejectDeal(dealId, reason){
    unchanged value, so the diff below only picks up a real change. */
 async function requestBdMatchChange(dealId, edits, matchNote){
   if(!dealId) return;
+  await ensureFreshWorkbookSession();
   const rows = await getTableRows(LOG_TABLE_NAME);
   const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
   if(!matching.length) throw new Error('Could not find this deal.');
@@ -2583,6 +2670,7 @@ async function requestBdMatchChange(dealId, edits, matchNote){
 // Deal ID (the UID that ties every one of these rows back to the product).
 async function approveBdMatchChange(dealId){
   if(!dealId) return;
+  await ensureFreshWorkbookSession();
   const rows = await getTableRows(LOG_TABLE_NAME);
   const allMatching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
   if(!allMatching.length) return;
@@ -2707,6 +2795,7 @@ async function rejectBdMatchChange(dealId, reason){
   if(!dealId) return;
   const trimmedReason = (reason || '').trim();
   if(!trimmedReason) throw new Error('A comment is required so the submitter knows why this change was rejected.');
+  await ensureFreshWorkbookSession();
   const rows = await getTableRows(LOG_TABLE_NAME);
   const allMatching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
   if(!allMatching.length) return;
@@ -2871,11 +2960,228 @@ async function loadHistory(){
     if(isAdmin){
       applyConfirmationFilter('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-count');
     }
+    refreshAnalysisBdOptions();
+    wireAnalysisFilterBar();
+    renderAnalysisTab();
     tryOpenDealFromUrl();
   }catch(err){
     listEl.innerHTML = '<p style="font-size:13px;color:#8a2d1f;">Could not load: ' + escapeHtml(err.message) + '</p>';
   }
 }
+
+/* ---- Analysis tab ----
+   Reuses historyGroupsCache.admin — the same one-row-per-deal grouping
+   "All confirmations" already builds in loadHistory() above — so this adds
+   no extra Graph calls of its own. Filters by BD in-charge (MC.salesPic)
+   and by Deal Date (MC.agreementDate) range, then breaks the filtered set
+   down by status (one deal = one status, via dealGroupStatus, same rule
+   the rest of the app uses) into a donut chart + a table that can be
+   exported to .xlsx exactly as shown. */
+const ANALYSIS_STATUS_COLORS = {
+  [STATUS_PENDING_1]: '#c9962e',
+  [STATUS_PENDING_2]: '#b3811f',
+  [STATUS_PENDING_3]: '#9c6d15',
+  [STATUS_PENDING_CHANGE_3]: '#7a4d9f',
+  [STATUS_APPROVED]: '#1f7a4d',
+  [STATUS_REJECTED]: '#8a2d1f'
+};
+function refreshAnalysisBdOptions(){
+  const sel = document.getElementById('analysis-filter-bd');
+  if(!sel) return;
+  const current = sel.value;
+  const names = Array.from(new Set(
+    (historyGroupsCache.admin || [])
+      .map(g => String(g.rows[0].values[0][MC.salesPic] || '').trim())
+      .filter(Boolean)
+  )).sort((a,b)=> a.localeCompare(b));
+  sel.innerHTML = '<option value="">All BD in-charge</option>' +
+    names.map(n => '<option value="'+escapeHtml(n)+'">'+escapeHtml(n)+'</option>').join('');
+  if(names.includes(current)) sel.value = current;
+}
+function wireAnalysisFilterBar(){
+  const bdEl = document.getElementById('analysis-filter-bd');
+  const fromEl = document.getElementById('analysis-filter-from');
+  const toEl = document.getElementById('analysis-filter-to');
+  const createdFromEl = document.getElementById('analysis-filter-created-from');
+  const createdToEl = document.getElementById('analysis-filter-created-to');
+  const clearBtn = document.getElementById('analysis-filter-clear');
+  const exportBtn = document.getElementById('analysis-export-btn');
+  [bdEl, fromEl, toEl, createdFromEl, createdToEl].forEach(el=>{
+    if(!el || el.dataset.wired) return;
+    el.addEventListener('change', renderAnalysisTab);
+    el.dataset.wired = '1';
+  });
+  if(clearBtn && !clearBtn.dataset.wired){
+    clearBtn.addEventListener('click', ()=>{
+      if(bdEl) bdEl.value = '';
+      if(fromEl) fromEl.value = '';
+      if(toEl) toEl.value = '';
+      if(createdFromEl) createdFromEl.value = '';
+      if(createdToEl) createdToEl.value = '';
+      renderAnalysisTab();
+    });
+    clearBtn.dataset.wired = '1';
+  }
+  if(exportBtn && !exportBtn.dataset.wired){ exportBtn.addEventListener('click', exportAnalysisToExcel); exportBtn.dataset.wired = '1'; }
+}
+// Both bounds are inclusive, compared as UTC midnight dates via the
+// existing parseStoredDateToDate helper (handles both Excel serial numbers
+// and ISO-ish strings, same as the rest of the app's date columns).
+function getFilteredAnalysisGroups(){
+  const bd = (document.getElementById('analysis-filter-bd') || {}).value || '';
+  const fromStr = (document.getElementById('analysis-filter-from') || {}).value || '';
+  const toStr = (document.getElementById('analysis-filter-to') || {}).value || '';
+  const createdFromStr = (document.getElementById('analysis-filter-created-from') || {}).value || '';
+  const createdToStr = (document.getElementById('analysis-filter-created-to') || {}).value || '';
+  const fromDate = fromStr ? new Date(fromStr + 'T00:00:00Z') : null;
+  const toDate = toStr ? new Date(toStr + 'T00:00:00Z') : null;
+  const createdFromDate = createdFromStr ? new Date(createdFromStr + 'T00:00:00Z') : null;
+  // "To" dates are inclusive of the whole day picked.
+  const createdToDate = createdToStr ? new Date(createdToStr + 'T23:59:59.999Z') : null;
+  return (historyGroupsCache.admin || []).filter(g=>{
+    const v = g.rows[0].values[0];
+    if(bd && String(v[MC.salesPic] || '').trim() !== bd) return false;
+    if(fromDate || toDate){
+      const dealDate = parseStoredDateToDate(v[MC.agreementDate]);
+      if(!dealDate) return false;
+      if(fromDate && dealDate < fromDate) return false;
+      if(toDate && dealDate > toDate) return false;
+    }
+    if(createdFromDate || createdToDate){
+      const createdDate = parseStoredDateToDate(v[MC.submittedDate]);
+      if(!createdDate) return false;
+      if(createdFromDate && createdDate < createdFromDate) return false;
+      if(createdToDate && createdDate > createdToDate) return false;
+    }
+    return true;
+  }).sort((a,b)=> String(b.rows[0].values[0][MC.agreementDate]||'').localeCompare(String(a.rows[0].values[0][MC.agreementDate]||'')));
+}
+function renderAnalysisTab(){
+  const wrap = document.getElementById('analysis-table-wrap');
+  if(!wrap) return; // tab markup not present (shouldn't happen, but keeps loadHistory from throwing)
+  const groups = getFilteredAnalysisGroups();
+  const total = groups.length;
+
+  // ---- status counts ----
+  const counts = {};
+  ALL_CONFIRMATION_STATUSES.forEach(s => counts[s] = 0);
+  groups.forEach(g => { const s = dealGroupStatus(g.rows); counts[s] = (counts[s]||0) + 1; });
+  const approvedCount = counts[STATUS_APPROVED] || 0;
+  const rejectedCount = counts[STATUS_REJECTED] || 0;
+  const pendingCount = total - approvedCount - rejectedCount;
+  const pct = n => total ? Math.round((n/total)*1000)/10 : 0;
+
+  // ---- summary stat cards ----
+  document.getElementById('analysis-stats').innerHTML = [
+    ['Total confirmations', total, ''],
+    ['Approved', approvedCount, pct(approvedCount)+'% of total'],
+    ['Pending (any level)', pendingCount, pct(pendingCount)+'% of total'],
+    ['Rejected', rejectedCount, pct(rejectedCount)+'% of total']
+  ].map(([label, value, sub]) =>
+    '<div class="analysis-stat"><div class="stat-label">'+escapeHtml(label)+'</div>'+
+    '<div class="stat-value">'+value+'</div>'+
+    (sub ? '<div class="stat-sub">'+escapeHtml(sub)+'</div>' : '')+
+    '</div>'
+  ).join('');
+
+  // ---- donut chart (CSS conic-gradient) + legend ----
+  const donut = document.getElementById('analysis-donut');
+  const centerTotal = document.getElementById('analysis-donut-total');
+  centerTotal.textContent = total;
+  const legendEl = document.getElementById('analysis-legend');
+  if(!total){
+    donut.style.background = 'var(--surface-2)';
+    legendEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);margin:0;">No confirmations match this filter.</p>';
+  } else {
+    let acc = 0;
+    const stops = [];
+    const legendRows = [];
+    ALL_CONFIRMATION_STATUSES.forEach(status=>{
+      const n = counts[status] || 0;
+      if(!n) return;
+      const color = ANALYSIS_STATUS_COLORS[status] || '#999';
+      const start = (acc/total)*360;
+      acc += n;
+      const end = (acc/total)*360;
+      stops.push(color+' '+start.toFixed(2)+'deg '+end.toFixed(2)+'deg');
+      legendRows.push(
+        '<div class="analysis-legend-row">'+
+          '<span class="analysis-legend-swatch" style="background:'+color+';"></span>'+
+          '<span>'+escapeHtml(status)+'</span>'+
+          '<span class="analysis-legend-pct">'+n+' · '+pct(n)+'%</span>'+
+        '</div>'
+      );
+    });
+    donut.style.background = 'conic-gradient(' + stops.join(', ') + ')';
+    legendEl.innerHTML = legendRows.join('');
+  }
+
+  // ---- data table ----
+  if(!total){
+    wrap.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No confirmations match this filter.</p>';
+    return;
+  }
+  let html = '<table><tr>' +
+    '<th>BD in-charge</th><th>Deal ID</th><th>Deal Date</th><th>Counterparty</th>' +
+    '<th>Products</th><th>Total No of RECs</th><th>Status</th></tr>';
+  groups.forEach(g=>{
+    const v = g.rows[0].values[0];
+    const status = dealGroupStatus(g.rows);
+    const totalRecs = g.rows.reduce((sum, r)=>{
+      const n = Number(r.values[0][MC.noOfRecs]);
+      return sum + (isFinite(n) ? n : 0);
+    }, 0);
+    html += '<tr>' +
+      '<td>'+escapeHtml(v[MC.salesPic]||'')+'</td>' +
+      '<td>'+(isPendingDealId(v[MC.dealId]) ? '-' : escapeHtml(friendlyDealId(v[MC.dealId])))+'</td>' +
+      '<td>'+escapeHtml(formatStoredDate(v[MC.agreementDate]))+'</td>' +
+      '<td>'+escapeHtml(v[MC.company]||'')+'</td>' +
+      '<td>'+g.rows.length+'</td>' +
+      '<td>'+(totalRecs || '')+'</td>' +
+      '<td>'+statusBadge(status)+'</td>' +
+    '</tr>';
+  });
+  html += '</table>';
+  wrap.innerHTML = html;
+
+  const countEl = document.getElementById('analysis-filter-count');
+  if(countEl){
+    const allTotal = (historyGroupsCache.admin || []).length;
+    countEl.textContent = total === allTotal ? '' : ('Showing ' + total + ' of ' + allTotal);
+  }
+}
+function exportAnalysisToExcel(){
+  if(typeof XLSX === 'undefined'){
+    alert('The Excel export library did not load (check your internet connection) — try refreshing the page.');
+    return;
+  }
+  const groups = getFilteredAnalysisGroups();
+  const header = ['BD in-charge', 'Deal ID', 'Deal Date', 'Counterparty', 'Products', 'Total No of RECs', 'Status'];
+  const rows = groups.map(g=>{
+    const v = g.rows[0].values[0];
+    const status = dealGroupStatus(g.rows);
+    const totalRecs = g.rows.reduce((sum, r)=>{
+      const n = Number(r.values[0][MC.noOfRecs]);
+      return sum + (isFinite(n) ? n : 0);
+    }, 0);
+    return [
+      v[MC.salesPic] || '',
+      isPendingDealId(v[MC.dealId]) ? '' : friendlyDealId(v[MC.dealId]),
+      formatStoredDate(v[MC.agreementDate]),
+      v[MC.company] || '',
+      g.rows.length,
+      totalRecs,
+      status
+    ];
+  });
+  const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+  ws['!cols'] = [{wch:20},{wch:12},{wch:12},{wch:26},{wch:9},{wch:16},{wch:22}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Analysis');
+  const stamp = new Date().toISOString().slice(0,10);
+  XLSX.writeFile(wb, 'confirmations_analysis_' + stamp + '.xlsx');
+}
+
 function statusBadge(status){
   const s = status || STATUS_PENDING_1;
   const color = s === STATUS_APPROVED ? '#1f7a4d'
@@ -5607,6 +5913,7 @@ document.getElementById('full-edit-modal-overlay').addEventListener('click', (e)
   if(e.target.id === 'full-edit-modal-overlay') closeFullEditModal();
 });
 async function saveFullEditAndResubmit(dealId, sortedGroup){
+  await ensureFreshWorkbookSession();
   const btn = document.getElementById('full-edit-save');
   const cancelBtn = document.getElementById('full-edit-cancel');
   const errEl = document.getElementById('full-edit-error');
