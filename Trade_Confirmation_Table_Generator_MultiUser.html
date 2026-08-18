@@ -492,6 +492,8 @@
     <button type="button" class="active" id="tab-btn-form" data-tab="form">Form</button>
     <button type="button" id="tab-btn-confirmations" data-tab="confirmations">Confirmations</button>
     <button type="button" id="tab-btn-analysis" data-tab="analysis">Analysis</button>
+    <button type="button" id="tab-btn-usermgmt" data-tab="usermgmt" style="display:none;">User Management</button>
+    <button type="button" id="tab-btn-dealid" data-tab="dealid" style="display:none;">Deal ID Numbering</button>
   </div>
 
   <div id="tab-panel-form" class="tab-panel">
@@ -609,7 +611,8 @@
 
   </div><!-- /tab-panel-analysis -->
 
-  <div class="card" id="user-mgmt-card" style="display:none;">
+  <div id="tab-panel-usermgmt" class="tab-panel" style="display:none;">
+  <div class="card" id="user-mgmt-card">
     <p class="card-title">User management</p>
     <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Superadmin only. Assign each person's approval level — Admin Level 1, 2, 3, or plain User. Levels approve in order (1 → 2 → 3) before a deal counts as fully Approved.</p>
     <div id="user-mgmt-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;margin-bottom:10px;"></div>
@@ -631,8 +634,10 @@
     </div>
     <div id="user-mgmt-list"><p style="font-size:13px;color:var(--text-secondary);">Loading...</p></div>
   </div>
+  </div><!-- /tab-panel-usermgmt -->
 
-  <div class="card" id="dealid-settings-card" style="display:none;">
+  <div id="tab-panel-dealid" class="tab-panel" style="display:none;">
+  <div class="card" id="dealid-settings-card">
     <p class="card-title">Deal ID numbering</p>
     <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Superadmin only. Sets the lowest 5-digit number the next new Deal ID can start from — e.g. to line this system up with numbering used elsewhere, or to pick a clean range for testing. It's a floor, not a reset: once any deal has been issued at or above that number, this has no further effect and nothing already issued is renumbered.</p>
     <div id="dealid-settings-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;margin-bottom:10px;"></div>
@@ -645,6 +650,7 @@
     </div>
     <p id="dealid-start-current" style="font-size:12px;color:var(--text-secondary);margin:10px 0 0;"></p>
   </div>
+  </div><!-- /tab-panel-dealid -->
 
   <footer>Built from the Trade Confirmation email SOP · draft autosaves per account, approval and history saved to the shared SharePoint workbook</footer>
 
@@ -960,6 +966,7 @@ let logRowsCache = [];         // last-fetched rows from the log table, for the 
 let userRolesCache = [];       // last-fetched rows from the TradeUserRoles table
 let currentUserRole = 'user';
 let isAdmin = false;           // true for admin1/admin2/admin3/superadmin — any elevated role
+let currentTab = 'form';       // which main tab is active — see setActiveTab()
 let settingsCache = [];
 let dealIdStartOverride = 0;   // 0 = no override, use the normal max+1 behavior
 let draftSaveTimer = null;
@@ -998,20 +1005,31 @@ document.getElementById('signout-btn').addEventListener('click', ()=>{
 function setActiveTab(tab){
   const isForm = tab === 'form';
   const isAnalysis = tab === 'analysis';
-  const isConfirmations = !isForm && !isAnalysis;
+  const isUserMgmt = tab === 'usermgmt';
+  const isDealId = tab === 'dealid';
+  const isConfirmations = !isForm && !isAnalysis && !isUserMgmt && !isDealId;
   document.getElementById('tab-panel-form').style.display = isForm ? 'flex' : 'none';
   document.getElementById('tab-panel-confirmations').style.display = isConfirmations ? 'flex' : 'none';
   document.getElementById('tab-panel-analysis').style.display = isAnalysis ? 'flex' : 'none';
+  document.getElementById('tab-panel-usermgmt').style.display = isUserMgmt ? 'flex' : 'none';
+  document.getElementById('tab-panel-dealid').style.display = isDealId ? 'flex' : 'none';
   document.getElementById('tab-btn-form').classList.toggle('active', isForm);
   document.getElementById('tab-btn-confirmations').classList.toggle('active', isConfirmations);
   document.getElementById('tab-btn-analysis').classList.toggle('active', isAnalysis);
+  document.getElementById('tab-btn-usermgmt').classList.toggle('active', isUserMgmt);
+  document.getElementById('tab-btn-dealid').classList.toggle('active', isDealId);
   // Data is kept fresh by loadHistory() already; re-render here just in case
   // the filters were touched while this tab wasn't visible.
   if(isAnalysis) renderAnalysisTab();
+  if(isUserMgmt) renderUserMgmtList();
+  if(isDealId) renderDealIdSettings();
+  currentTab = tab;
 }
 document.getElementById('tab-btn-form').addEventListener('click', ()=> setActiveTab('form'));
 document.getElementById('tab-btn-confirmations').addEventListener('click', ()=> setActiveTab('confirmations'));
 document.getElementById('tab-btn-analysis').addEventListener('click', ()=> setActiveTab('analysis'));
+document.getElementById('tab-btn-usermgmt').addEventListener('click', ()=> setActiveTab('usermgmt'));
+document.getElementById('tab-btn-dealid').addEventListener('click', ()=> setActiveTab('dealid'));
 
 window.addEventListener('load', async ()=>{
   await msalInstance.initialize();
@@ -1158,11 +1176,18 @@ function applyRoleUi(){
   document.getElementById('tab-btn-form').style.display = isUserRole ? 'inline-block' : 'none';
   setActiveTab(isUserRole ? 'form' : 'confirmations');
   const isSuperadmin = currentUserRole === 'superadmin';
+  document.getElementById('tab-btn-usermgmt').style.display = isSuperadmin ? 'inline-block' : 'none';
+  document.getElementById('tab-btn-dealid').style.display = isSuperadmin ? 'inline-block' : 'none';
   document.getElementById('user-mgmt-card').style.display = isSuperadmin ? 'block' : 'none';
   document.getElementById('dealid-settings-card').style.display = isSuperadmin ? 'block' : 'none';
   if(isSuperadmin){
     renderUserMgmtList();
     renderDealIdSettings();
+  } else if(currentTab === 'usermgmt' || currentTab === 'dealid'){
+    // A superadmin's session ended (role changed/re-check) while sitting on
+    // one of their own tabs — fall back to a tab everyone can see instead
+    // of leaving them stranded on a now-hidden panel.
+    setActiveTab(isUserRole ? 'form' : 'confirmations');
   }
 }
 /* Which pending status (if any) the current user's role is allowed to act
