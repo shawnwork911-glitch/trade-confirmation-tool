@@ -3397,13 +3397,18 @@ function renderHistoryTable(el, groups, opts){
     // sign-off round-trip. See needsRegistryTechFix. Computed here (before
     // the row's own <td>s) so the Deal ID cell can carry a small hover-only
     // ⚠ icon instead of a full-width banner row taking up permanent space.
-    let anyRegTechFlag = false, anyVolumeFlag = false;
+    let anyRegistryFlag = false, anyTechFlag = false, anyVolumeFlag = false;
     const regTechFlags = g.rows.map((r, idx)=>{
       const rv = r.values[0];
       const label = g.rows.length > 1 ? 'Product '+(idx+1)+': ' : '';
       const parts = [];
-      if(needsRegistryTechFix(rv[MC.registry], rv[MC.tech])){
-        anyRegTechFlag = true;
+      const registryRaw = String(rv[MC.registry]||'').trim();
+      const techRaw = String(rv[MC.tech]||'').trim().toUpperCase();
+      const registryNeedsConfirmation = registryRaw.indexOf('/') !== -1;
+      const techNeedsConfirmation = techRaw.indexOf('/') !== -1 || techRaw === 'ANY';
+      if(registryNeedsConfirmation || techNeedsConfirmation){
+        if(registryNeedsConfirmation) anyRegistryFlag = true;
+        if(techNeedsConfirmation) anyTechFlag = true;
         parts.push(regTechIssueText(rv[MC.registry], rv[MC.tech]));
       }
       if(needsVolumeFix(rv[MC.volume])){
@@ -3412,10 +3417,13 @@ function renderHistoryTable(el, groups, opts){
       }
       return parts.length ? label + parts.join('; ') : '';
     }).filter(Boolean);
-    const regTechHeading = anyRegTechFlag && anyVolumeFlag ? 'Registry/Tech/Volume needs confirmation'
-      : anyVolumeFlag ? 'Volume needs confirmation' : 'Registry/Tech needs confirmation';
+    const confirmationParts = [];
+    if(anyRegistryFlag) confirmationParts.push('Registry');
+    if(anyTechFlag) confirmationParts.push('Tech');
+    if(anyVolumeFlag) confirmationParts.push('Volume');
+    const regTechHeading = confirmationParts.join(', ').replace(/, ([^,]+)$/, confirmationParts.length > 1 ? ' and $1' : '$1') + ' confirmation needed';
     const regTechWarningIcon = regTechFlags.length
-      ? ' <span class="volume-warning-wrap"><span class="volume-warning-icon">⚠</span>'+
+      ? '<span class="volume-warning-wrap" style="margin-right:6px;vertical-align:middle;"><span class="volume-warning-icon">⚠</span>'+
         '<span class="volume-warning-tooltip" style="white-space:normal;max-width:340px;text-align:left;">'+
         '<strong>'+escapeHtml(regTechHeading)+':</strong> '+escapeHtml(regTechFlags.join(' · '))+
         '. Please edit to the correct value(s), deadline given 1 month before the Delivery End Date.'+
@@ -3423,7 +3431,7 @@ function renderHistoryTable(el, groups, opts){
       : '';
     html += '<tr style="border-top:1px solid var(--border);">' +
       (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[MC.salesPic]||'')+'</td>' : '') +
-      '<td style="padding:6px;">'+(isPendingDealId(v[MC.dealId]) ? '-' : escapeHtml(friendlyDealId(v[MC.dealId])))+regTechWarningIcon+'</td>' +
+      '<td style="padding:6px;">'+(isPendingDealId(v[MC.dealId]) ? '-' : escapeHtml(friendlyDealId(v[MC.dealId])))+'</td>' +
       '<td style="padding:6px;">'+escapeHtml(formatStoredDate(v[MC.agreementDate]))+'</td>' +
       '<td style="padding:6px;">'+escapeHtml(v[MC.company]||'')+'</td>' +
       '<td style="padding:6px;">'+g.rows.length+'</td>' +
@@ -3432,6 +3440,7 @@ function renderHistoryTable(el, groups, opts){
         agreementLink+
       '</td>' +
       '<td style="padding:6px;white-space:nowrap;">' +
+        regTechWarningIcon +
         '<button type="button" class="secondary history-view-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;">View</button>' +
         (canAct ? ' <button type="button" class="secondary history-approve-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;">Approve</button>' +
                   ' <button type="button" class="secondary history-reject-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;color:#8a2d1f;border-color:#c1493a;">Reject</button>' : '') +
