@@ -4377,7 +4377,13 @@ function needsVolumeFix(volume){
   return /\d\s*-\s*\d/.test(v);
 }
 function volumeIssueText(volume){
-  return 'Volume (RECs) is '+String(volume||'').trim()+' (needs to confirm exact volume)';
+  const volumeLabel = currentProductMode === 'carboncredit' ? 'Volume (CC)' : 'Volume (RECs)';
+  return volumeLabel+' is '+String(volume||'').trim()+' (needs to confirm exact volume)';
+}
+function transactionRecapTitle(isCarbonCredit){
+  return isCarbonCredit
+    ? 'Details: Transaction Recap for Carbon Credit'
+    : 'Details: Transaction Recap for Renewable Energy Certificates';
 }
 // Parses a Volume (RECs) value for aggregate math (Analysis tab totals/
 // export). A confirmed value parses straight through as a number. An
@@ -4478,11 +4484,14 @@ function brokerYesHtml(){
 }
 // Broker Fees type — a hidden h-broker-fee-type field ("Price/REC" /
 // "Fixed price" / "") backs two mutually-exclusive tickboxes, same idea.
+// The "Price/REC" tickbox's visible label switches to "Price/VCU" on the
+// Carbon Credit tab — see updateBrokerFeeUi() — while its underlying
+// data-value stays "Price/REC" so the stored/compared value never changes.
 function brokerFeeTypeHtml(){
   return '<input type="hidden" id="h-broker-fee-type" value=""/>'+
     '<div style="display:flex;gap:20px;flex-wrap:wrap;">'+
       '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
-        '<input type="checkbox" class="broker-fee-type-toggle" data-value="Price/REC" style="width:auto;margin:0;"> Price/REC'+
+        '<input type="checkbox" class="broker-fee-type-toggle" data-value="Price/REC" style="width:auto;margin:0;"> <span id="h-broker-fee-type-price-checkbox-label">Price/REC</span>'+
       '</label>'+
       '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
         '<input type="checkbox" class="broker-fee-type-toggle" data-value="Fixed price" style="width:auto;margin:0;"> Fixed price'+
@@ -5062,8 +5071,10 @@ function tradeBlockHtml(n){
     '<div class="grid">'+
     lockableField('Country (Full Name)', comboHtml('t'+n+'-country','t'+n+'-country-list',countryComboOptions(),'MY'),'t'+n+'-country')+
     lockableField('Registry', selectWithFullNamesHtml('t'+n+'-registry', currentProductMode === 'carboncredit' ? ['BCX','Verra','Gold Standard'] : REGISTRIES, REGISTRY_DISPLAY_NAMES, currentProductMode === 'carboncredit' ? 'BCX' : 'IREC'),'t'+n+'-registry')+
-    lockableField('Tech', techCheckboxesHtml(n,'SLR'),'t'+n+'-tech')
-      .replace('<div id=','<div style="grid-column:1 / -1;" id=')+
+    (currentProductMode === 'carboncredit'
+      ? '<input type="hidden" id="t'+n+'-tech" value="CC"/>'
+      : lockableField('Tech', techCheckboxesHtml(n,'SLR'),'t'+n+'-tech')
+          .replace('<div id=','<div style="grid-column:1 / -1;" id='))+
     lockableField('Vintage start month &amp; year',
       '<div style="display:flex;gap:6px;">'+
         selectHtml('t'+n+'-vintage-start-month', MONTHS, 'Jan')+
@@ -5291,11 +5302,16 @@ function updateBrokerFeeUi(){
   const hidden = document.getElementById('h-broker-fee-type');
   const fieldsWrap = document.getElementById('h-broker-fee-fields-wrap');
   const priceLabel = document.querySelector('label[for="h-broker-fee-price"]');
+  const checkboxLabel = document.getElementById('h-broker-fee-type-price-checkbox-label');
+  // "Price/REC" reads as "Price/VCU" on the Carbon Credit tab, matching the
+  // VCU-oriented wording used everywhere else on that tab.
+  const priceUnitLabel = currentProductMode === 'carboncredit' ? 'Price/VCU' : 'Price/REC';
+  if(checkboxLabel) checkboxLabel.textContent = priceUnitLabel;
   if(!hidden || !fieldsWrap) return;
   const feeType = hidden.value;
   const anyChecked = !!feeType;
   fieldsWrap.style.display = anyChecked ? 'grid' : 'none';
-  if(priceLabel) priceLabel.textContent = feeType === 'Fixed price' ? 'Fixed price' : 'Price / REC';
+  if(priceLabel) priceLabel.textContent = feeType === 'Fixed price' ? 'Fixed price' : priceUnitLabel.replace('/', ' / ');
   if(!anyChecked){
     const priceEl = document.getElementById('h-broker-fee-price');
     if(priceEl) priceEl.value = '';
@@ -5348,6 +5364,13 @@ function brokerFeeTypeValue(){
   if(!yes || yes.value !== 'Yes') return '';
   const feeType = document.getElementById('h-broker-fee-type');
   return feeType ? feeType.value : '';
+}
+// The stored fee-type value is always "Price/REC" or "Fixed price" (see
+// brokerFeeTypeHtml()'s data-value comment). For display on Carbon Credit
+// deals, "Price/REC" reads as "Price/VCU" instead, matching the VCU wording
+// used for every other Carbon Credit field.
+function brokerFeeTypeDisplay(value, isCC){
+  return (isCC && value === 'Price/REC') ? 'Price/VCU' : value;
 }
 
 // Returns the value to fill into the generated table's "From which deal"
@@ -5825,7 +5848,7 @@ function buildPointFormat(){
   const addLiveField = (product, field, label, value) => lines.push({type:'field', label, value, bd:false, product, field});
   const addBlank = () => lines.push({type:'blank'});
 
-  lines.push({type:'title', text:'Details: Transaction Recap'});
+  lines.push({type:'title', text:transactionRecapTitle(currentProductMode === 'carboncredit')});
   addBlank();
   // The 5-digit sequence number isn't claimed until Save agreement succeeds,
   // so opsDealId() before that point is just "trade count" appended to a
@@ -5849,7 +5872,7 @@ function buildPointFormat(){
     addField('Broker', val('h-broker') || 'NA', true);
     const brokerFeeType = brokerFeeTypeValue();
     if(brokerFeeType){
-      addField('Broker Fees', brokerFeeType, true);
+      addField('Broker Fees', brokerFeeTypeDisplay(brokerFeeType, currentProductMode === 'carboncredit'), true);
       addField('Broker Fee Currency', val('h-broker-fee-currency'), true);
       addField(currentProductMode === 'carboncredit' ? 'Broker Fee Price / VCU' : 'Broker Fee Price / REC', val('h-broker-fee-price'), true);
     }
@@ -6036,7 +6059,7 @@ function buildRecapLinesFromRows(dealId, sortedGroup){
   const head = sortedGroup[0].values[0];
   const role = roleFromOrderType(head[MC.supplyDemand]);
 
-  lines.push({type:'title', text:'Details: Transaction Recap'});
+  lines.push({type:'title', text:transactionRecapTitle((sortedGroup[0]._sourceTable || STANDARD_LOG_TABLE_NAME) === CC_LOG_TABLE_NAME)});
   addBlank();
   addField('Deal ID', friendlyDealId(dealId));
   addField('Deal Date', formatStoredDate(head[MC.agreementDate]));
@@ -6047,7 +6070,7 @@ function buildRecapLinesFromRows(dealId, sortedGroup){
   if(head[MC.broker]){
     addField('Broker', head[MC.broker] || 'NA', true);
     if(head[MC.brokerFeeType]){
-      addField('Broker Fees', head[MC.brokerFeeType], true);
+      addField('Broker Fees', brokerFeeTypeDisplay(head[MC.brokerFeeType], head._sourceTable === CC_LOG_TABLE_NAME || currentProductMode === 'carboncredit'), true);
       addField('Broker Fee Currency', head[MC.brokerFeeCurrency], true);
       addField((head._sourceTable === CC_LOG_TABLE_NAME || currentProductMode === 'carboncredit') ? 'Broker Fee Price / VCU' : 'Broker Fee Price / REC', head[MC.brokerFeePrice], true);
     }
@@ -6569,7 +6592,7 @@ function detailFieldDefs(requireDealId){
   const brokerYes = document.getElementById('h-broker-yes');
   if(brokerYes && brokerYes.value === 'Yes'){
     defs.push({id:'h-broker', label:'Broker name'});
-    defs.push({id:'h-broker-fee-type', label:'Broker Fees (choose Price/REC, or Fixed price)',
+    defs.push({id:'h-broker-fee-type', label:'Broker Fees (choose '+(currentProductMode === 'carboncredit' ? 'Price/VCU' : 'Price/REC')+', or Fixed price)',
       validate: ()=>!!brokerFeeTypeValue()});
     if(brokerFeeTypeValue()){
       defs.push({id:'h-broker-fee-currency', label:'Broker Fee Currency'});
@@ -6703,7 +6726,7 @@ function showRegTechWarning(items){
     : anyVolumeFlag ? 'Volume needs confirmation' : 'Registry/Tech needs confirmation';
   const explain = (anyRegTechFlag ? 'Each product should only ever have one Registry and one Tech (not a combination, and not "Any").' : '') +
     (anyRegTechFlag && anyVolumeFlag ? ' ' : '') +
-    (anyVolumeFlag ? 'Each product\'s Volume (RECs) should be a single confirmed number, not a range.' : '');
+    (anyVolumeFlag ? 'Each product\'s '+(currentProductMode === 'carboncredit' ? 'Volume (CC)' : 'Volume (RECs)')+' should be a single confirmed number, not a range.' : '');
   box.innerHTML = '<strong>⚠ '+heading+':</strong> '+explain+' Please remember to edit for each below once confirmation done. You could still save this agreement like usual.<ul>'+
     items.map(t=>'<li>'+escapeHtml(t)+'</li>').join('')+'</ul>';
   box.style.display = 'block';
