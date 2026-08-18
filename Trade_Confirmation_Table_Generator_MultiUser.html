@@ -3072,8 +3072,13 @@ function renderAnalysisTab(){
   const pct = n => total ? Math.round((n/total)*1000)/10 : 0;
 
   // ---- summary stat cards ----
+  const totalVolumeAll = groups.reduce((sum, g) => sum + g.rows.reduce((s, r)=>{
+    const n = Number(r.values[0][MC.volume]);
+    return s + (isFinite(n) ? n : 0);
+  }, 0), 0);
   document.getElementById('analysis-stats').innerHTML = [
     ['Total confirmations', total, ''],
+    ['Total volume', totalVolumeAll.toLocaleString(), ''],
     ['Approved', approvedCount, pct(approvedCount)+'% of total'],
     ['Pending (any level)', pendingCount, pct(pendingCount)+'% of total'],
     ['Rejected', rejectedCount, pct(rejectedCount)+'% of total']
@@ -3123,10 +3128,14 @@ function renderAnalysisTab(){
   }
   let html = '<table><tr>' +
     '<th>BD in-charge</th><th>Deal ID</th><th>Deal Date</th><th>Counterparty</th>' +
-    '<th>Products</th><th>Total No of RECs</th><th>Status</th></tr>';
+    '<th>Products</th><th>Total Volume</th><th>Total No of RECs</th><th>Status</th></tr>';
   groups.forEach(g=>{
     const v = g.rows[0].values[0];
     const status = dealGroupStatus(g.rows);
+    const totalVolume = g.rows.reduce((sum, r)=>{
+      const n = Number(r.values[0][MC.volume]);
+      return sum + (isFinite(n) ? n : 0);
+    }, 0);
     const totalRecs = g.rows.reduce((sum, r)=>{
       const n = Number(r.values[0][MC.noOfRecs]);
       return sum + (isFinite(n) ? n : 0);
@@ -3137,6 +3146,7 @@ function renderAnalysisTab(){
       '<td>'+escapeHtml(formatStoredDate(v[MC.agreementDate]))+'</td>' +
       '<td>'+escapeHtml(v[MC.company]||'')+'</td>' +
       '<td>'+g.rows.length+'</td>' +
+      '<td>'+(totalVolume ? totalVolume.toLocaleString() : '')+'</td>' +
       '<td>'+(totalRecs || '')+'</td>' +
       '<td>'+statusBadge(status)+'</td>' +
     '</tr>';
@@ -3156,10 +3166,14 @@ function exportAnalysisToExcel(){
     return;
   }
   const groups = getFilteredAnalysisGroups();
-  const header = ['BD in-charge', 'Deal ID', 'Deal Date', 'Counterparty', 'Products', 'Total No of RECs', 'Status'];
+  const header = ['BD in-charge', 'Deal ID', 'Deal Date', 'Counterparty', 'Products', 'Total Volume', 'Total No of RECs', 'Status'];
   const rows = groups.map(g=>{
     const v = g.rows[0].values[0];
     const status = dealGroupStatus(g.rows);
+    const totalVolume = g.rows.reduce((sum, r)=>{
+      const n = Number(r.values[0][MC.volume]);
+      return sum + (isFinite(n) ? n : 0);
+    }, 0);
     const totalRecs = g.rows.reduce((sum, r)=>{
       const n = Number(r.values[0][MC.noOfRecs]);
       return sum + (isFinite(n) ? n : 0);
@@ -3170,12 +3184,13 @@ function exportAnalysisToExcel(){
       formatStoredDate(v[MC.agreementDate]),
       v[MC.company] || '',
       g.rows.length,
+      totalVolume,
       totalRecs,
       status
     ];
   });
   const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
-  ws['!cols'] = [{wch:20},{wch:12},{wch:12},{wch:26},{wch:9},{wch:16},{wch:22}];
+  ws['!cols'] = [{wch:20},{wch:12},{wch:12},{wch:26},{wch:9},{wch:14},{wch:16},{wch:22}];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Analysis');
   const stamp = new Date().toISOString().slice(0,10);
@@ -3927,7 +3942,7 @@ document.addEventListener('click', (e)=>{
 
 
 const COUNTRIES = ["MY","BN","CN","JP","SA","TH","IN","PH","SG","VN","INDO","AUS","TW"];
-const TECHS = ["ANY","SLR","GEO","BIO","HYD","BGS","SHY","LHY","WND"];
+const TECHS = ["ANY","SLR","GEO","BIO","HYD","BGS","SHY","LHY","WND","CC"];
 
 // Hardcoded code -> full name lookups for the Customer version output (per
 // the reference sheet). Keys are matched case-insensitively; anything not
@@ -3941,7 +3956,8 @@ const TECH_FULLNAMES = {
   'SLR':'Solar', 'ANY':'Any tech', 'GEO':'Geothermal', 'BIO':'Biomass', 'HYD':'Hydro',
   'BGS':'Biogas', 'SHY':'Small Hydro', 'LHY':'Large Hydro',
   'WND':'Wind', 'SLR/WND':'Solar/Wind', 'S/WND':'Solar/Wind', 'SLR/BIO':'Solar/Biomass',
-  'SLR/WND/SHY':'Solar/Wind/Small Hydro', 'SLR/WND/LHY':'Solar/Wind/Large Hydro'
+  'SLR/WND/SHY':'Solar/Wind/Small Hydro', 'SLR/WND/LHY':'Solar/Wind/Large Hydro',
+  'CC':'Carbon Credit'
 };
 function countryFullName(code){
   const key = String(code||'').trim().toUpperCase();
@@ -3991,7 +4007,7 @@ function techFullName(code){
     return TECH_FULLNAMES[partKey] || part.trim();
   }).join('/');
 }
-const REGISTRIES = ["IREC","TIGR","IREC/TIGR","GEC","Rehash","JEPX","BCX","Verra","LGC","T-REC","K-REC","AIB GO","REGO","NAR/MRET","NAR","MRET"];
+const REGISTRIES = ["IREC","TIGR","IREC/TIGR","GEC","Rehash","JEPX","BCX","Verra","LGC","T-REC","K-REC","AIB GO","REGO","NAR/MRET","NAR","MRET","Gold Standard"];
 // Registry options offered when fixing a product's Registry down to a
 // single value (see needsRegistryTechFix/openEditRequestModal) — same list
 // as REGISTRIES minus any combo entry (currently "IREC/TIGR" and "NAR/MRET"), since a
@@ -4196,35 +4212,65 @@ function syncTechCheckboxesFromHidden(n){
     cb.checked = codes.indexOf(cb.value.toUpperCase()) !== -1;
   });
   applyTechExclusivityUi(n);
+  updateProductLabelsForTech(n);
 }
 // "Any Tech" can't be combined with specific techs — it means any/unspecified
-// tech, which is a different thing from a defined combination of techs. So
-// ticking Any Tech clears every other tick, and ticking any other tech
-// clears Any Tech, for whichever checkbox the person just changed.
+// tech, which is a different thing from a defined combination of techs.
+// "Carbon Credit" is likewise its own, separate product type (not a
+// renewable-energy tech at all), so it's exclusive the same way: ticking
+// Any Tech or Carbon Credit clears every other tick, and ticking any other
+// (specific-tech) checkbox clears both Any Tech and Carbon Credit, for
+// whichever checkbox the person just changed.
+const EXCLUSIVE_TECHS = ['ANY','CC'];
 function enforceTechExclusivity(n, changedCb){
   const group = document.getElementById('t'+n+'-tech-boxes');
   if(!group || !changedCb) return;
-  const anyCb = group.querySelector('input.tech-checkbox[value="ANY"]');
-  if(!anyCb) return;
-  if(changedCb === anyCb && anyCb.checked){
-    group.querySelectorAll('input.tech-checkbox').forEach(cb=>{ if(cb !== anyCb) cb.checked = false; });
-  } else if(changedCb !== anyCb && changedCb.checked){
-    anyCb.checked = false;
+  const isExclusive = EXCLUSIVE_TECHS.indexOf(changedCb.value) !== -1;
+  if(isExclusive && changedCb.checked){
+    group.querySelectorAll('input.tech-checkbox').forEach(cb=>{ if(cb !== changedCb) cb.checked = false; });
+  } else if(!isExclusive && changedCb.checked){
+    group.querySelectorAll('input.tech-checkbox').forEach(cb=>{
+      if(EXCLUSIVE_TECHS.indexOf(cb.value) !== -1) cb.checked = false;
+    });
   }
 }
 // Greys out whichever side is currently unselectable, so it's visually clear
-// Any Tech and specific techs can't be combined. Left alone while the field
-// is locked (the lock's own disabling already covers that case).
+// Any Tech / Carbon Credit and specific techs can't be combined. Left alone
+// while the field is locked (the lock's own disabling already covers that case).
 function applyTechExclusivityUi(n){
   const group = document.getElementById('t'+n+'-tech-boxes');
   if(!group) return;
   const wrap = document.getElementById('t'+n+'-tech-wrap');
   if(wrap && wrap.classList.contains('field-locked')) return;
-  const anyCb = group.querySelector('input.tech-checkbox[value="ANY"]');
-  if(!anyCb) return;
-  const othersChecked = Array.from(group.querySelectorAll('input.tech-checkbox')).some(cb=>cb!==anyCb && cb.checked);
-  group.querySelectorAll('input.tech-checkbox').forEach(cb=>{
-    cb.disabled = (cb === anyCb) ? othersChecked : anyCb.checked;
+  const boxes = Array.from(group.querySelectorAll('input.tech-checkbox'));
+  const exclusiveChecked = boxes.some(cb=>EXCLUSIVE_TECHS.indexOf(cb.value)!==-1 && cb.checked);
+  const othersChecked = boxes.some(cb=>EXCLUSIVE_TECHS.indexOf(cb.value)===-1 && cb.checked);
+  boxes.forEach(cb=>{
+    const isExclusive = EXCLUSIVE_TECHS.indexOf(cb.value) !== -1;
+    cb.disabled = isExclusive ? (othersChecked || (exclusiveChecked && !cb.checked)) : exclusiveChecked;
+  });
+}
+// When a product's Tech is set to Carbon Credit, several field labels on
+// that product's form switch from their REC-oriented wording to the
+// carbon-credit equivalent (Carbon Credit projects are described by a
+// project name rather than delivered as RECs, and priced/counted in VCUs
+// rather than RECs). Switching back off Carbon Credit restores the normal
+// wording. Only the on-screen labels change — the underlying field ids
+// (and what gets written to SharePoint/Excel) are unchanged.
+const CC_FIELD_LABELS = {
+  't{n}-remarks': ['Special remarks', 'Special Remarks (Project Name)'],
+  't{n}-volume': ['Volume (RECs)', 'Volume (VCUs)'],
+  't{n}-price': ['Price / REC', 'Price / VCU'],
+  't{n}-m-recs': ['No of RECs', 'No of VCUs']
+};
+function updateProductLabelsForTech(n){
+  const isCC = (val('t'+n+'-tech') || '').trim().toUpperCase() === 'CC';
+  Object.keys(CC_FIELD_LABELS).forEach(tpl=>{
+    const id = tpl.replace('{n}', n);
+    const label = document.querySelector('label[for="'+id+'"]');
+    if(!label) return;
+    const [normal, ccLabel] = CC_FIELD_LABELS[tpl];
+    label.textContent = isCC ? ccLabel : normal;
   });
 }
 document.addEventListener('change', (e)=>{
@@ -4234,6 +4280,7 @@ document.addEventListener('change', (e)=>{
     enforceTechExclusivity(n, cb);
     updateTechValue(n);
     applyTechExclusivityUi(n);
+    updateProductLabelsForTech(n);
   }
 });
 /* COD (if applicable) — the user just ticks "Applicable" and picks a year;
@@ -4953,6 +5000,7 @@ function renderTrades(){
   initSectionLock('trades'); // re-apply a locked Trades section to the freshly-rendered blocks
   for(let i=1;i<=n;i++) {
     handleMatchingChange(i); // initialize conditional visibility matching state
+    updateProductLabelsForTech(i); // set REC/VCU-style labels to match this product's current Tech
   }
   updateTransferAccountLabels(); // update dynamic input labels
 }
@@ -5372,18 +5420,21 @@ function buildPointFormat(){
     addField('Vintage', val('t'+i+'-vintage-start-month')+' '+val('t'+i+'-vintage-start-year')+' - '+val('t'+i+'-vintage-end-month')+' '+val('t'+i+'-vintage-end-year'));
     addLiveField(i, 'tech', 'Technology', techFullName(val('t'+i+'-tech')));
     addField('Country', countryFullName(val('t'+i+'-country')));
-    addField('Volume (RECs)', val('t'+i+'-volume'));
-    addField('Price / REC', val('t'+i+'-currency')+' '+val('t'+i+'-price'));
+    // Carbon Credit products are described/priced/counted in project-name and
+    // VCU terms rather than the usual REC-oriented labels — see CC_FIELD_LABELS.
+    const isCC_i = (val('t'+i+'-tech')||'').trim().toUpperCase() === 'CC';
+    addField(isCC_i ? 'Volume (VCUs)' : 'Volume (RECs)', val('t'+i+'-volume'));
+    addField(isCC_i ? 'Price / VCU' : 'Price / REC', val('t'+i+'-currency')+' '+val('t'+i+'-price'));
     addField('Payment Term', val('t'+i+'-payterm'));
     addField('Delivery', fmtDateOrdinal(val('t'+i+'-dstart'))+' - '+fmtDateOrdinal(val('t'+i+'-dend')));
     addField('License Commencement Date (if applicable)', val('t'+i+'-m-cod'));
-    addField('Special Remarks Request', remarksVal(i));
+    addField(isCC_i ? 'Special Remarks (Project Name)' : 'Special Remarks Request', remarksVal(i));
     // Internal-only from here down — see the addField comment above. Product
     // number is this trade's position (i), 1-based, matching the order
     // products are written as rows in TradeDealLog (see saveConfirmationToHistory).
     addBdField(i, 'status', 'BD Matching \u2014 Status', matchingDisplayLabel(val('t'+i+'-m-matching')));
     addBdField(i, 'buyerseller', 'BD Matching \u2014 Buyer/Seller', val('t'+i+'-m-name') || '-');
-    addBdField(i, 'norecs', 'BD Matching \u2014 No of RECs', val('t'+i+'-m-recs') || '-');
+    addBdField(i, 'norecs', isCC_i ? 'BD Matching \u2014 No of VCUs' : 'BD Matching \u2014 No of RECs', val('t'+i+'-m-recs') || '-');
     addBdField(i, 'whichdeal', 'BD Matching \u2014 Which deal', dealLabelFor(i) || '-');
     addBdField(i, 'deliverydate', 'BD Matching \u2014 Delivery Date', formatStoredDate(val('t'+i+'-m-ddate')) || '-');
   }
