@@ -502,8 +502,8 @@
   </div>
 
   <div id="main-tabs">
-    <button type="button" class="active" id="tab-btn-form" data-tab="form">Form</button>
-    <button type="button" id="tab-btn-carboncredit" data-tab="carboncredit">Carbon Credit Tech</button>
+    <button type="button" class="active" id="tab-btn-form" data-tab="form">RECs</button>
+    <button type="button" id="tab-btn-carboncredit" data-tab="carboncredit">Carbon Credit</button>
     <button type="button" id="tab-btn-confirmations" data-tab="confirmations">Confirmations</button>
     <button type="button" id="tab-btn-analysis" data-tab="analysis">Analysis</button>
     <button type="button" id="tab-btn-usermgmt" data-tab="usermgmt" style="display:none;">User Management</button>
@@ -565,6 +565,7 @@
     <p class="card-title">My saved confirmations</p>
     <div class="confirmation-filter-bar">
       <input type="text" id="history-filter-search" placeholder="Search Deal ID or Counterparty…">
+      <select id="history-filter-type"><option value="">All types</option><option value="recs">RECs</option><option value="carboncredit">Carbon Credit</option></select>
       <select id="history-filter-status"></select>
       <span class="confirmation-filter-count" id="history-filter-count"></span>
     </div>
@@ -576,6 +577,7 @@
     <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Every confirmation currently pending at any approval level. Approve/Reject only appear on the rows waiting on your own level — the rest are visible for awareness only.</p>
     <div class="confirmation-filter-bar">
       <input type="text" id="queue-filter-search" placeholder="Search Deal ID or Counterparty…">
+      <select id="queue-filter-type"><option value="">All types</option><option value="recs">RECs</option><option value="carboncredit">Carbon Credit</option></select>
       <select id="queue-filter-status"></select>
       <span class="confirmation-filter-count" id="queue-filter-count"></span>
     </div>
@@ -587,6 +589,7 @@
     <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Every saved confirmation across every user. You can open full details and edit only for confirmations you created (Admin/Super Admin can open any). Everyone else's confirmations show as a read-only summary row.</p>
     <div class="confirmation-filter-bar">
       <input type="text" id="admin-filter-search" placeholder="Search Deal ID or Counterparty…">
+      <select id="admin-filter-type"><option value="">All types</option><option value="recs">RECs</option><option value="carboncredit">Carbon Credit</option></select>
       <select id="admin-filter-status"></select>
       <span class="confirmation-filter-count" id="admin-filter-count"></span>
     </div>
@@ -599,8 +602,9 @@
 
   <div class="card">
     <p class="card-title">Confirmations analysis</p>
-    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Breaks down every saved confirmation (one entry per deal, matching "All confirmations") by status, filterable by BD in-charge, Deal Date, and the date the agreement was created (submitted) by the user. "Export to Excel" downloads exactly the rows shown below.</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Breaks down every saved confirmation (one entry per deal, matching "All confirmations") by status, filterable by type (RECs or Carbon Credit), BD in-charge, Deal Date, and the date the agreement was created (submitted) by the user. "Export to Excel" downloads exactly the rows shown below.</p>
     <div class="confirmation-filter-bar">
+      <select id="analysis-filter-type"><option value="">All types</option><option value="recs">RECs</option><option value="carboncredit">Carbon Credit</option></select>
       <select id="analysis-filter-bd"><option value="">All BD in-charge</option></select>
       <span class="analysis-filter-group-label">Deal Date:</span>
       <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">From <input type="date" id="analysis-filter-from"></label>
@@ -745,6 +749,7 @@ const CLIENT_ID = "5b17f2d1-ca2a-4521-9d03-01cda2e86c16";           // Applicati
 const SP_HOSTNAME = "saxonrenewables.sharepoint.com";
 const SP_SITE_PATH = "/sites/Operations";
 const APPROVED_LIST_NAME = "BD Agreement Record Approved";
+const CC_APPROVED_LIST_NAME = "Carbon Credit Approval List";
 const SP_FILE_NAME = "BD Agreement Record.xlsx";
 // Resolving straight from this sharing link (instead of guessing the site's
 // default drive + a root-level path) sidesteps two whole classes of failure:
@@ -1731,6 +1736,7 @@ async function getSharePointListId(listName) {
     return data.value[0].id;
 }
 let approvedListId = null;
+let ccApprovedListId = null;
 // Graph requires each SharePoint list column's INTERNAL name (e.g.
 // "field_2" or "Agreement_x0020_Date"), not the friendly label shown in the
 // list UI ("Agreement Date") — and the internal name isn't guessable from
@@ -1740,6 +1746,7 @@ let approvedListId = null;
 // columns once (displayName -> internal name) and builds the write from
 // that, so it survives the list being renamed/restructured going forward.
 let approvedListColumnMapCache = null;
+let ccApprovedListColumnMapCache = null;
 // The "Deal ID" line inside the saved point-format HTML is baked in at
 // Save-agreement time — before Level 1 approval, that's necessarily the
 // placeholder text ("Pending Level 1 approval"), since no real Deal ID
@@ -1812,28 +1819,32 @@ function coerceForColumnType(raw, colType){
   // SharePoint Text column can trigger a vague Graph "generalException".
   return raw; // choice/boolean/etc — send as given
 }
-async function getApprovedListColumnMap(){
-  if(approvedListColumnMapCache) return approvedListColumnMapCache;
-  const data = await graphFetch("/sites/" + siteId + "/lists/" + approvedListId + "/columns?$select=name,displayName,hidden,readOnly,text,number,dateTime,boolean,choice");
-  const map = {};
-  (data.value || []).forEach(col => {
-    // SharePoint lists carry extra hidden/computed columns that piggyback
-    // on the same displayName as a real column — most notably "LinkTitle"
-    // and "LinkTitleNoMenu", which both report displayName "Title" but are
-    // read-only rendering helpers, not the actual Title field. Without this
-    // filter, whichever one Graph happens to return last silently overwrites
-    // the real column in this map, and the write then fails with something
-    // like `Field 'LinkTitleNoMenu' is read-only`. Skipping anything
-    // hidden or read-only ensures only the genuine, writable column wins.
-    if(col.hidden || col.readOnly) return;
-    let type = 'text';
-    if(col.number) type = 'number';
-    else if(col.dateTime) type = 'dateTime';
-    else if(col.boolean) type = 'boolean';
-    map[col.displayName] = { name: col.name, type };
-  });
-  approvedListColumnMapCache = map;
-  return map;
+function approvedListNameForCurrentLog(){
+  return dealLogTableName() === CC_LOG_TABLE_NAME ? CC_APPROVED_LIST_NAME : APPROVED_LIST_NAME;
+}
+async function getApprovedListContext(){
+  const isCC = dealLogTableName() === CC_LOG_TABLE_NAME;
+  const listName = isCC ? CC_APPROVED_LIST_NAME : APPROVED_LIST_NAME;
+  let listId = isCC ? ccApprovedListId : approvedListId;
+  let columnMap = isCC ? ccApprovedListColumnMapCache : approvedListColumnMapCache;
+  if(!listId){
+    listId = await getSharePointListId(listName);
+    if(isCC) ccApprovedListId = listId; else approvedListId = listId;
+  }
+  if(!columnMap){
+    const data = await graphFetch("/sites/" + siteId + "/lists/" + listId + "/columns?$select=name,displayName,hidden,readOnly,text,number,dateTime,boolean,choice");
+    columnMap = {};
+    (data.value || []).forEach(col => {
+      if(col.hidden || col.readOnly) return;
+      let type = 'text';
+      if(col.number) type = 'number';
+      else if(col.dateTime) type = 'dateTime';
+      else if(col.boolean) type = 'boolean';
+      columnMap[col.displayName] = { name: col.name, type };
+    });
+    if(isCC) ccApprovedListColumnMapCache = columnMap; else approvedListColumnMapCache = columnMap;
+  }
+  return {isCC, listName, listId, columnMap};
 }
 
 // changeNote is optional context describing WHY this entry was added —
@@ -1843,18 +1854,50 @@ async function getApprovedListColumnMap(){
 // otherwise-identical "Approved" snapshots. Defaults to describing the
 // initial final sign-off when not given.
 async function addApprovedDealToList(values, changeNote){
+    const ctx = await getApprovedListContext();
+    const columnMap = ctx.columnMap;
 
-    if(!approvedListId){
-        approvedListId = await getSharePointListId(APPROVED_LIST_NAME);
-    }
-    const columnMap = await getApprovedListColumnMap();
-
-    // Keyed by the column's DISPLAY name, i.e. what you actually see as the
-    // header in the "Approved" list. Add a line here any time a new column
-    // is added to that list and should be populated on approval — no need
-    // to know or guess its internal name or type; coerceForColumnType()
-    // adapts the value to whatever type Graph reports for that column.
-    const desiredByDisplayName = {
+    const desiredByDisplayName = ctx.isCC ? {
+        'Title': values[MC.salesPic],
+        'Entity': values[MC.entity],
+        'Agreement Date': values[MC.agreementDate],
+        'Agreement ID (Assigned to BD)': values[MC.dealId],
+        'Supply/Demand': values[MC.supplyDemand],
+        'Company': values[MC.company],
+        'Project ID': values[MC.projectId],
+        'Project Name': values[MC.projectName],
+        'Broker': values[MC.broker],
+        'Country': values[MC.country],
+        'Registry': values[MC.registry],
+        'Match/Open Position': values[MC.matching],
+        'Volume (VCUs)': values[MC.volume],
+        'Delivery (Start date)': values[MC.deliveryStart],
+        'Delivery (End date)': values[MC.deliveryEnd],
+        'V (From MM)': values[MC.vFromMM],
+        'V (From YY)': values[MC.vFromYY],
+        'V (To MM)': values[MC.vToMM],
+        'V (To YY)': values[MC.vToYY],
+        'Currency': values[MC.currency],
+        'Unit Price': values[MC.unitPrice],
+        'Special Requirement': values[MC.specialReq],
+        'COD': values[MC.cod],
+        'Payment Term': values[MC.paymentTerm],
+        'Prepayment': values[MC.prepayment],
+        'Buyer/Seller': values[MC.buyerSeller],
+        'No of VCUs': values[MC.noOfRecs],
+        'Which deal': values[MC.whichDeal],
+        'Delivery Date': values[MC.deliveryDateM],
+        'Status': values[MC.status],
+        'Submitted By': values[MC.submittedBy],
+        'Submitted Date': values[MC.submittedDate],
+        'Approved By': values[MC.approvedBy3],
+        'Approved Date': values[MC.approvedDate3],
+        'Broker Fee Type': values[MC.brokerFeeType],
+        'Broker Fee Currency': values[MC.brokerFeeCurrency],
+        'Broker Fee Price / VCU': values[MC.brokerFeePrice],
+        'Pending Matching Note': changeNote || 'Initial Level 3 approval',
+        'Row Uid': values[MC.rowUid]
+    } : {
         'Title': values[MC.salesPic],
         'Entity': values[MC.entity],
         'Agreement Date': values[MC.agreementDate],
@@ -1886,29 +1929,10 @@ async function addApprovedDealToList(values, changeNote){
         'Status': values[MC.status],
         'Submitted By': values[MC.submittedBy],
         'Submitted Date': values[MC.submittedDate],
-        // Who/when actually signed this particular entry off — distinct
-        // from Submitted By/Date above, and what makes each audit-log
-        // entry self-contained rather than needing a join back to
-        // TradeDealLog to know who approved it.
         'Approved By': values[MC.approvedBy3],
         'Approved Date': values[MC.approvedDate3],
-        // What this entry represents — the initial final sign-off, or the
-        // specific field-level diff (plus the submitter's own explanation,
-        // if given) for a later BD source matching change. Named "Pending
-        // Matching Note" to match the actual column on this SharePoint
-        // list — it previously targeted a "Change Note" column that
-        // doesn't exist there, so this value was silently dropped every
-        // time (see the skipped-column warning below).
         'Pending Matching Note': changeNote || 'Initial Level 3 approval',
-        // Ties this "Approved" list entry back to its exact TradeDealLog
-        // source row — see the Row Uid comment on the MC column-layout
-        // block above. If the "Approved" list has no such column yet this
-        // is just silently skipped (same as any other missing column), so
-        // it's safe to deploy this before that column exists there.
         'Row Uid': values[MC.rowUid]
-        // Agreement File: no matching column on this list — intentionally
-        // left out rather than sent-and-skipped. Add a line here (with the
-        // exact display name) if a column for it is ever created.
     };
 
     const fields = {};
@@ -1922,37 +1946,26 @@ async function addApprovedDealToList(values, changeNote){
         }
     });
     if(skipped.length){
-        console.warn('"' + APPROVED_LIST_NAME + '" list has no column matching these labels — skipped: ' + skipped.join(', '));
+        console.warn('"' + ctx.listName + '" list has no column matching these labels — skipped: ' + skipped.join(', '));
     }
 
     try{
         const created = await graphFetch(
             "/sites/" + siteId +
-            "/lists/" + approvedListId +
+            "/lists/" + ctx.listId +
             "/items",
         {
             method:"POST",
             body:JSON.stringify({ fields })
         }
     );
-    // The created item's SharePoint list item id — callers write this back
-    // onto the TradeDealLog row's "Approved List Item Id" column so the row
-    // stays traceable to where it landed in the "Approved" list.
     return created && created.id;
     }catch(err){
-        // Annotate with exactly what was sent so a failure here is diagnosable
-        // from the error alone, without needing another round of screenshots —
-        // the caller (approveDeal) surfaces err.message directly to the user.
-        err.message = (err.message || String(err)) + '\n\nFields sent: ' + JSON.stringify(fields);
-        throw err;
+        const sent = Object.keys(fields).map(k => k + '=' + JSON.stringify(fields[k])).join(', ');
+        throw new Error('SharePoint write to "' + ctx.listName + '" failed: ' + (err && err.message ? err.message : err) + '. Sent fields: ' + sent);
     }
 }
-// Caches how many columns the live Excel Table actually has right now, so
-// row writes can be shaped to match — this is what keeps saves working even
-// when the code's column list (MC/COL_COUNT) has grown ahead of what's
-// actually been added to the workbook yet, instead of Graph rejecting the
-// whole write with a dimension-mismatch error.
-let tableColumnCountCache = {};
+
 async function getTableColumnCount(tableName){
   if(tableColumnCountCache[tableName]) return tableColumnCountCache[tableName];
   const data = await graphFetch(workbookTablePath(tableName) + '/columns?$select=name');
@@ -2421,7 +2434,7 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
     row[MC.broker] = val('h-broker');
     row[MC.country] = val('t'+n+'-country');
     row[MC.registry] = val('t'+n+'-registry');
-    row[MC.tech] = val('t'+n+'-tech');
+    row[MC.tech] = currentProductMode === 'carboncredit' ? 'CC' : val('t'+n+'-tech');
     row[MC.matching] = matching;
     row[MC.volume] = val('t'+n+'-volume');
     row[MC.deliveryStart] = val('t'+n+'-dstart');
@@ -2615,7 +2628,7 @@ async function approveDeal(dealId, file, transferOverrides){
           await updateCanonicalTableRow(dealLogTableName(), r.index, values);
         }
       }catch(err){
-        console.error('Could not copy Product ' + tradeNum + ' into the "Approved" list — check that its column internal names match what this app sends (see the fields{} object in addApprovedDealToList).', err);
+        console.error('Could not copy Product ' + tradeNum + ' into the approved SharePoint list — check that its columns match what this app sends (see addApprovedDealToList).', err);
         approvedListErrors.push('Product ' + tradeNum + ': ' + err.message);
       }
     }
@@ -2646,7 +2659,7 @@ async function approveDeal(dealId, file, transferOverrides){
     // saved — this is a secondary, non-blocking notice, not a failure of
     // the action the person just took.
     alert('This deal was approved successfully, but copying ' + approvedListErrors.length + ' of ' + matching.length +
-      ' trade row(s) into the "Approved" SharePoint list failed:\n\n' +
+      ' trade row(s) into "' + approvedListNameForCurrentLog() + '" failed:\n\n' +
       approvedListErrors.join('\n\n') +
       '\n\nThe approval itself is saved — this only affects the separate "Approved" list. Check that the list\'s column internal names/types match what the app sends (see addApprovedDealToList in the code), then ask an admin to fix the mismatch and re-copy the missing trade(s).');
   }
@@ -2955,7 +2968,7 @@ async function approveBdMatchChange(dealId){
         await updateCanonicalTableRow(dealLogTableName(), r.index, values);
       }
     }catch(err){
-      console.error('Could not copy Product ' + tradeNum + '\'s change into the "' + APPROVED_LIST_NAME + '" list — check that its column internal names match what this app sends (see the fields{} object in addApprovedDealToList).', err);
+      console.error('Could not copy Product ' + tradeNum + '\'s change into the "' + approvedListNameForCurrentLog() + '" list — check that its column internal names match what this app sends (see the fields{} object in addApprovedDealToList).', err);
       approvedListErrors.push('Product ' + tradeNum + ': ' + err.message);
     }
   }
@@ -2963,7 +2976,7 @@ async function approveBdMatchChange(dealId){
   await notifyOtherApproversAtLevel('admin3', dealId, allMatching[0].values[0][MC.description], currentAccount.username);
   await loadHistory();
   if(approvedListErrors.length){
-    alert('The change was approved and applied, but couldn\'t be copied into the "' + APPROVED_LIST_NAME + '" list for:\n' + approvedListErrors.join('\n'));
+    alert('The change was approved and applied, but couldn\'t be copied into the "' + approvedListNameForCurrentLog() + '" list for:\n' + approvedListErrors.join('\n'));
   }
 }
 // Rejects a pending BD source matching change: discards the staged pending*
@@ -3051,6 +3064,10 @@ const CONFIRMATION_FILTER_OPTS = {
   queue: {showOwner:true, showActions:true, emptyText:'Nothing pending right now.'}
 };
 const ALL_CONFIRMATION_STATUSES = [STATUS_PENDING_1, STATUS_PENDING_2, STATUS_PENDING_3, STATUS_PENDING_CHANGE_3, STATUS_APPROVED, STATUS_REJECTED];
+function confirmationGroupType(g){
+  return (g && g.sourceTable === CC_LOG_TABLE_NAME) ? 'carboncredit' : 'recs';
+}
+function confirmationGroupTypeLabel(g){ return confirmationGroupType(g) === 'carboncredit' ? 'Carbon Credit' : 'RECs'; }
 function populateConfirmationFilterSelects(){
   // Approval queue never contains Approved/Rejected deals (its cache is
   // pre-filtered to PENDING_STATUSES — see wireConfirmationFilterBars), so
@@ -3069,7 +3086,8 @@ function populateConfirmationFilterSelects(){
       optsFor[id].map(s=>'<option value="'+escapeHtml(s)+'">'+escapeHtml(s)+'</option>').join('');
   });
 }
-function confirmationGroupMatchesFilter(g, searchLower, statusFilter){
+function confirmationGroupMatchesFilter(g, searchLower, statusFilter, typeFilter){
+  if(typeFilter && confirmationGroupType(g) !== typeFilter) return false;
   if(statusFilter && dealGroupStatus(g.rows) !== statusFilter) return false;
   if(searchLower){
     const v = g.rows[0].values[0];
@@ -3082,33 +3100,37 @@ function confirmationGroupMatchesFilter(g, searchLower, statusFilter){
   }
   return true;
 }
-function applyConfirmationFilter(key, listElId, searchElId, statusElId, countElId){
+function applyConfirmationFilter(key, listElId, searchElId, statusElId, typeElId, countElId){
   const listEl = document.getElementById(listElId);
   if(!listEl) return;
   const searchEl = document.getElementById(searchElId);
   const statusEl = document.getElementById(statusElId);
+  const typeEl = document.getElementById(typeElId);
   const search = ((searchEl && searchEl.value) || '').trim().toLowerCase();
   const status = (statusEl && statusEl.value) || '';
+  const type = (typeEl && typeEl.value) || '';
   const full = historyGroupsCache[key] || [];
-  const filtered = (search || status) ? full.filter(g=>confirmationGroupMatchesFilter(g, search, status)) : full;
+  const filtered = (search || status || type) ? full.filter(g=>confirmationGroupMatchesFilter(g, search, status, type)) : full;
   const opts = Object.assign({}, CONFIRMATION_FILTER_OPTS[key]);
-  if(search || status) opts.emptyText = 'No confirmations match your filter.';
+  if(search || status || type) opts.emptyText = 'No confirmations match your filter.';
   renderHistoryTable(listEl, filtered, opts);
   const countEl = document.getElementById(countElId);
-  if(countEl) countEl.textContent = (search || status) ? ('Showing ' + filtered.length + ' of ' + full.length) : '';
+  if(countEl) countEl.textContent = (search || status || type) ? ('Showing ' + filtered.length + ' of ' + full.length) : '';
 }
-function wireConfirmationFilterBar(key, listElId, searchElId, statusElId, countElId){
-  const run = ()=> applyConfirmationFilter(key, listElId, searchElId, statusElId, countElId);
+function wireConfirmationFilterBar(key, listElId, searchElId, statusElId, typeElId, countElId){
+  const run = ()=> applyConfirmationFilter(key, listElId, searchElId, statusElId, typeElId, countElId);
   const searchEl = document.getElementById(searchElId);
   const statusEl = document.getElementById(statusElId);
+  const typeEl = document.getElementById(typeElId);
   if(searchEl && !searchEl.dataset.wired){ searchEl.addEventListener('input', run); searchEl.dataset.wired = '1'; }
   if(statusEl && !statusEl.dataset.wired){ statusEl.addEventListener('change', run); statusEl.dataset.wired = '1'; }
+  if(typeEl && !typeEl.dataset.wired){ typeEl.addEventListener('change', run); typeEl.dataset.wired = '1'; }
 }
 function wireConfirmationFilterBars(){
   populateConfirmationFilterSelects();
-  wireConfirmationFilterBar('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-count');
-  wireConfirmationFilterBar('admin', 'admin-history-list', 'admin-filter-search', 'admin-filter-status', 'admin-filter-count');
-  wireConfirmationFilterBar('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-count');
+  wireConfirmationFilterBar('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-type', 'history-filter-count');
+  wireConfirmationFilterBar('admin', 'admin-history-list', 'admin-filter-search', 'admin-filter-status', 'admin-filter-type', 'admin-filter-count');
+  wireConfirmationFilterBar('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-type', 'queue-filter-count');
 }
 
 async function loadHistory(){
@@ -3146,10 +3168,10 @@ async function loadHistory(){
     }
 
     wireConfirmationFilterBars();
-    applyConfirmationFilter('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-count');
-    applyConfirmationFilter('admin', 'admin-history-list', 'admin-filter-search', 'admin-filter-status', 'admin-filter-count');
+    applyConfirmationFilter('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-type', 'history-filter-count');
+    applyConfirmationFilter('admin', 'admin-history-list', 'admin-filter-search', 'admin-filter-status', 'admin-filter-type', 'admin-filter-count');
     if(isAdmin){
-      applyConfirmationFilter('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-count');
+      applyConfirmationFilter('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-type', 'queue-filter-count');
     }
     refreshAnalysisBdOptions();
     wireAnalysisFilterBar();
@@ -3190,6 +3212,7 @@ function refreshAnalysisBdOptions(){
   if(names.includes(current)) sel.value = current;
 }
 function wireAnalysisFilterBar(){
+  const typeEl = document.getElementById('analysis-filter-type');
   const bdEl = document.getElementById('analysis-filter-bd');
   const fromEl = document.getElementById('analysis-filter-from');
   const toEl = document.getElementById('analysis-filter-to');
@@ -3197,13 +3220,14 @@ function wireAnalysisFilterBar(){
   const createdToEl = document.getElementById('analysis-filter-created-to');
   const clearBtn = document.getElementById('analysis-filter-clear');
   const exportBtn = document.getElementById('analysis-export-btn');
-  [bdEl, fromEl, toEl, createdFromEl, createdToEl].forEach(el=>{
+  [typeEl, bdEl, fromEl, toEl, createdFromEl, createdToEl].forEach(el=>{
     if(!el || el.dataset.wired) return;
     el.addEventListener('change', renderAnalysisTab);
     el.dataset.wired = '1';
   });
   if(clearBtn && !clearBtn.dataset.wired){
     clearBtn.addEventListener('click', ()=>{
+      if(typeEl) typeEl.value = '';
       if(bdEl) bdEl.value = '';
       if(fromEl) fromEl.value = '';
       if(toEl) toEl.value = '';
@@ -3219,6 +3243,7 @@ function wireAnalysisFilterBar(){
 // existing parseStoredDateToDate helper (handles both Excel serial numbers
 // and ISO-ish strings, same as the rest of the app's date columns).
 function getFilteredAnalysisGroups(){
+  const type = (document.getElementById('analysis-filter-type') || {}).value || '';
   const bd = (document.getElementById('analysis-filter-bd') || {}).value || '';
   const fromStr = (document.getElementById('analysis-filter-from') || {}).value || '';
   const toStr = (document.getElementById('analysis-filter-to') || {}).value || '';
@@ -3231,6 +3256,7 @@ function getFilteredAnalysisGroups(){
   const createdToDate = createdToStr ? new Date(createdToStr + 'T23:59:59.999Z') : null;
   return (historyGroupsCache.admin || []).filter(g=>{
     const v = g.rows[0].values[0];
+    if(type && confirmationGroupType(g) !== type) return false;
     if(bd && String(v[MC.salesPic] || '').trim() !== bd) return false;
     if(fromDate || toDate){
       const dealDate = parseStoredDateToDate(v[MC.agreementDate]);
@@ -3374,7 +3400,7 @@ function exportAnalysisToExcel(){
     return;
   }
   const groups = getFilteredAnalysisGroups();
-  const header = ['BD in-charge', 'Deal ID', 'Deal Date', 'Counterparty', 'Products', 'Total Volume', 'Volume Confirmed', 'Actual Volume Range(s)', 'Total Matched Volume', 'Status'];
+  const header = ['Type', 'BD in-charge', 'Deal ID', 'Deal Date', 'Counterparty', 'Products', 'Total Volume', 'Volume Confirmed', 'Actual Volume Range(s)', 'Total Matched Volume', 'Status'];
   const rows = groups.map(g=>{
     const v = g.rows[0].values[0];
     const status = dealGroupStatus(g.rows);
@@ -3390,6 +3416,7 @@ function exportAnalysisToExcel(){
       return sum + (isFinite(n) ? n : 0);
     }, 0);
     return [
+      confirmationGroupTypeLabel(g),
       v[MC.salesPic] || '',
       isPendingDealId(v[MC.dealId]) ? '' : friendlyDealId(v[MC.dealId]),
       formatStoredDate(v[MC.agreementDate]),
@@ -3403,7 +3430,7 @@ function exportAnalysisToExcel(){
     ];
   });
   const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
-  ws['!cols'] = [{wch:20},{wch:12},{wch:12},{wch:26},{wch:9},{wch:14},{wch:18},{wch:24},{wch:16},{wch:22}];
+  ws['!cols'] = [{wch:14},{wch:20},{wch:12},{wch:12},{wch:26},{wch:9},{wch:14},{wch:18},{wch:24},{wch:16},{wch:22}];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Analysis');
   const stamp = new Date().toISOString().slice(0,10);
@@ -4204,7 +4231,7 @@ document.addEventListener('click', (e)=>{
       return;
     }
     if(dealStatus === STATUS_PENDING_CHANGE_3){
-      if(confirm('Approve this BD source matching change for Deal ID ' + friendlyDealId(dealId) + '? The new values will be applied immediately and copied into the "' + APPROVED_LIST_NAME + '" list.')){
+      if(confirm('Approve this BD source matching change for Deal ID ' + friendlyDealId(dealId) + '? The new values will be applied immediately and copied into the "' + approvedListNameForCurrentLog() + '" list.')){
         approveBtn.disabled = true;
         approveBdMatchChange(dealId)
           .catch(err=>{ console.error('Change approval failed', err); alert('Change approval failed: ' + err.message); })
@@ -4802,9 +4829,18 @@ function updateTransferAccountLabels(){
   const role = currentRole();
   const label_text = transferAccountLabel(role);
   const tradeCount = parseInt(document.getElementById('trade-count').value, 10);
+  const hideReceiving = isStockOutR(val('h-order'));
   for(let i = 1; i <= tradeCount; i++) {
+    const input = document.getElementById(`t${i}-transfer`);
     const label = document.querySelector(`label[for="t${i}-transfer"]`);
     if(label) label.textContent = label_text;
+    const wrap = input && input.closest('[id$="-wrap"]');
+    if(hideReceiving){
+      if(input) input.value = '';
+      if(wrap) wrap.style.display = 'none';
+    } else if(wrap){
+      wrap.style.display = '';
+    }
   }
 }
 function refreshRoleDependentUi(){
@@ -5047,7 +5083,7 @@ function tradeBlockHtml(n){
     lockableField('Price currency', comboHtml('t'+n+'-currency','t'+n+'-currency-list',CURRENCIES,'USD'),'t'+n+'-currency')+
     lockableField('Price / REC', '<input type="text" inputmode="decimal" class="numeric-decimal-only" id="t'+n+'-price" placeholder="e.g. 0.27" value=""/>','t'+n+'-price')+
     lockableField('Payment term', textHtml('t'+n+'-payterm','30 days after invoice','30 days after invoice'),'t'+n+'-payterm')+
-    (currentProductMode === 'carboncredit' ? lockableField('Prepayment', '<textarea id="t'+n+'-prepayment" placeholder="Enter prepayment details"></textarea>', 't'+n+'-prepayment') : '')+
+    (currentProductMode === 'carboncredit' ? lockableField('Prepayment', '<textarea id="t'+n+'-prepayment" placeholder="Enter prepayment details"></textarea>', 't'+n+'-prepayment').replace('<div id=','<div style="grid-column:1 / -1;" id=') : '')+
     lockableField('Special remarks', '<textarea id="t'+n+'-remarks" placeholder="N/A">N/A</textarea>', 't'+n+'-remarks')
       .replace('<div id=','<div style="grid-column:1 / -1;" id=')+
     // Custom label text is updated programmatically to reflect Buyer/Seller dynamically
@@ -5525,7 +5561,7 @@ function buildTradeGroup(startIdx, filled){
       transfers.push(transferAccountValue(val('h-order'), val('t'+i+'-transfer')));
       vintages.push(val('t'+i+'-vintage-start-month')+' | '+val('t'+i+'-vintage-start-year')+' | '+val('t'+i+'-vintage-end-month')+' | '+val('t'+i+'-vintage-end-year'));
       vintageParts.push([val('t'+i+'-vintage-start-month'), val('t'+i+'-vintage-start-year'), val('t'+i+'-vintage-end-month'), val('t'+i+'-vintage-end-year')]);
-      techs.push(val('t'+i+'-tech'));
+      techs.push(currentProductMode === 'carboncredit' ? 'CC' : val('t'+i+'-tech'));
       countries.push(val('t'+i+'-country'));
       volumes.push(val('t'+i+'-volume'));
       prices.push(val('t'+i+'-currency')+' | '+val('t'+i+'-price'));
@@ -5552,7 +5588,7 @@ function buildTradeGroup(startIdx, filled){
   addRow('Registry', registries.map(registryDisplayName));
   addRow(transferAccountLabel(currentRole()), transfers);
   addRow('Vintage', vintages, false, vintageParts);
-  addRow('Tech', techs);
+  if(currentProductMode !== 'carboncredit') addRow('Tech', techs);
   addRow('Country', countries);
   addRow('Volume (RECs)', volumes);
   addRow('Price / RECs', prices, false, priceParts);
@@ -5815,7 +5851,7 @@ function buildPointFormat(){
     if(brokerFeeType){
       addField('Broker Fees', brokerFeeType, true);
       addField('Broker Fee Currency', val('h-broker-fee-currency'), true);
-      addField('Broker Fee Price / REC', val('h-broker-fee-price'), true);
+      addField(currentProductMode === 'carboncredit' ? 'Broker Fee Price / VCU' : 'Broker Fee Price / REC', val('h-broker-fee-price'), true);
     }
   }
 
@@ -5825,11 +5861,11 @@ function buildPointFormat(){
     addLiveField(i, 'registry', 'Registry', registryDisplayName(val('t'+i+'-registry')));
     addField(transferAccountLabel(currentRole()), transferAccountValue(val('h-order'), val('t'+i+'-transfer')));
     addField('Vintage', val('t'+i+'-vintage-start-month')+' '+val('t'+i+'-vintage-start-year')+' - '+val('t'+i+'-vintage-end-month')+' '+val('t'+i+'-vintage-end-year'));
-    addLiveField(i, 'tech', 'Technology', techFullName(val('t'+i+'-tech')));
+    if(currentProductMode !== 'carboncredit') addLiveField(i, 'tech', 'Technology', techFullName(val('t'+i+'-tech')));
     addField('Country', countryFullName(val('t'+i+'-country')));
     // Carbon Credit products are described/priced/counted in project-name and
     // VCU terms rather than the usual REC-oriented labels — see CC_FIELD_LABELS.
-    const isCC_i = (val('t'+i+'-tech')||'').trim().toUpperCase() === 'CC';
+    const isCC_i = currentProductMode === 'carboncredit' || (val('t'+i+'-tech')||'').trim().toUpperCase() === 'CC';
     addField(isCC_i ? 'Volume (VCUs)' : 'Volume (RECs)', val('t'+i+'-volume'));
     addField(isCC_i ? 'Price / VCU' : 'Price / REC', val('t'+i+'-currency')+' '+val('t'+i+'-price'));
     addField('Payment Term', val('t'+i+'-payterm'));
@@ -6013,7 +6049,7 @@ function buildRecapLinesFromRows(dealId, sortedGroup){
     if(head[MC.brokerFeeType]){
       addField('Broker Fees', head[MC.brokerFeeType], true);
       addField('Broker Fee Currency', head[MC.brokerFeeCurrency], true);
-      addField('Broker Fee Price / REC', head[MC.brokerFeePrice], true);
+      addField((head._sourceTable === CC_LOG_TABLE_NAME || currentProductMode === 'carboncredit') ? 'Broker Fee Price / VCU' : 'Broker Fee Price / REC', head[MC.brokerFeePrice], true);
     }
   }
 
