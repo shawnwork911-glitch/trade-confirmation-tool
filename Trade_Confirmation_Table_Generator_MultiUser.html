@@ -3072,10 +3072,16 @@ function renderAnalysisTab(){
   const pct = n => total ? Math.round((n/total)*1000)/10 : 0;
 
   // ---- summary stat cards ----
-  const totalVolumeAll = groups.reduce((sum, g) => sum + g.rows.reduce((s, r)=>{
-    const n = Number(r.values[0][MC.volume]);
-    return s + (isFinite(n) ? n : 0);
-  }, 0), 0);
+  // Rejected deals don't represent real transacted volume, so they're
+  // excluded from the Total volume figure (unlike Total confirmations,
+  // which counts every deal regardless of status).
+  const totalVolumeAll = groups.reduce((sum, g) => {
+    if(dealGroupStatus(g.rows) === STATUS_REJECTED) return sum;
+    return sum + g.rows.reduce((s, r)=>{
+      const n = Number(r.values[0][MC.volume]);
+      return s + (isFinite(n) ? n : 0);
+    }, 0);
+  }, 0);
   document.getElementById('analysis-stats').innerHTML = [
     ['Total confirmations', total, ''],
     ['Total volume', totalVolumeAll.toLocaleString(), ''],
