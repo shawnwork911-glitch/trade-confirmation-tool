@@ -503,6 +503,7 @@
 
   <div id="main-tabs">
     <button type="button" class="active" id="tab-btn-form" data-tab="form">Form</button>
+    <button type="button" id="tab-btn-carboncredit" data-tab="carboncredit">Carbon Credit Tech</button>
     <button type="button" id="tab-btn-confirmations" data-tab="confirmations">Confirmations</button>
     <button type="button" id="tab-btn-analysis" data-tab="analysis">Analysis</button>
     <button type="button" id="tab-btn-usermgmt" data-tab="usermgmt" style="display:none;">User Management</button>
@@ -752,7 +753,8 @@ const SP_FILE_NAME = "BD Agreement Record.xlsx";
 // grab its "Copy link" URL again and paste it in here — nothing else in
 // resolveWorkbook needs to change.
 const SP_FILE_SHARE_URL = "https://saxonrenewables.sharepoint.com/:x:/s/Operations/IQCIkW5tgJWPQJB1t7KiWT7KAaDp_pqoAmZigGQ9UbvBQME?e=dquVG0";
-const LOG_TABLE_NAME = "TradeDealLog";        // must match the Excel Table name you create
+const STANDARD_LOG_TABLE_NAME = "TradeDealLog";
+const CC_LOG_TABLE_NAME = "TradeDealLog7"; // Excel Table on the workbook's CCDealLog sheet
 // Column layout of the restructured TradeDealLog "main list" table.
 // One physical row per TRADE (a multi-trade agreement produces several rows
 // sharing the same Agreement ID). Create the Excel Table with these 44
@@ -897,7 +899,8 @@ const MC = {
   // Optional/additive, same reasoning as regTechReminderSentDate/
   // editChangeSummary above — guard on values.length before reading/
   // writing it.
-  pendingVolume:61
+  pendingVolume:61,
+  projectId:62, projectName:63, prepayment:64
 };
 const COL_COUNT = 59;
 const DRAFT_TABLE_NAME = "TradeDealDrafts";   // must match the Excel Table name you create
@@ -905,7 +908,8 @@ const DRAFT_TABLE_NAME = "TradeDealDrafts";   // must match the Excel Table name
 // key="dealIdStart", value=the lowest 5-digit number the next new Deal ID
 // is allowed to start from (superadmin-editable — see "Deal ID numbering").
 // Create the Excel Table with just these 2 columns: Key, Value.
-const SETTINGS_TABLE_NAME = "TradeSettings";  // must match the Excel Table name you create
+const STANDARD_SETTINGS_TABLE_NAME = "TradeSettings";
+const CC_SETTINGS_TABLE_NAME = "TradeSettings8"; // Excel Table on the workbook's CC Settings sheet
 const SC = { key:0, value:1 };
 const DEAL_ID_START_KEY = "dealIdStart";
 const GRAPH_SCOPES = ["Sites.ReadWrite.All", "User.Read"];
@@ -998,6 +1002,10 @@ let userRolesCache = [];       // last-fetched rows from the TradeUserRoles tabl
 let currentUserRole = 'user';
 let isAdmin = false;           // true for admin1/admin2/admin3/superadmin — any elevated role
 let currentTab = 'form';       // which main tab is active — see setActiveTab()
+let currentProductMode = 'standard'; // normal Form excludes CC; Carbon Credit Tech is CC-only
+let activeDealLogTableName = STANDARD_LOG_TABLE_NAME;
+let settingsCacheByTable = {};
+let dealIdStartOverrideByTable = {};
 let settingsCache = [];
 let dealIdStartOverride = 0;   // 0 = no override, use the normal max+1 behavior
 let draftSaveTimer = null;
@@ -1035,28 +1043,40 @@ document.getElementById('signout-btn').addEventListener('click', ()=>{
    and per row. Everyone signed in gets both tabs. */
 function setActiveTab(tab){
   const isForm = tab === 'form';
+  const isCarbonCredit = tab === 'carboncredit';
+  const isProductForm = isForm || isCarbonCredit;
   const isAnalysis = tab === 'analysis';
   const isUserMgmt = tab === 'usermgmt';
   const isDealId = tab === 'dealid';
-  const isConfirmations = !isForm && !isAnalysis && !isUserMgmt && !isDealId;
-  document.getElementById('tab-panel-form').style.display = isForm ? 'flex' : 'none';
+  const isConfirmations = !isProductForm && !isAnalysis && !isUserMgmt && !isDealId;
+
+  if(isProductForm && typeof switchProductMode === 'function'){
+    switchProductMode(isCarbonCredit ? 'carboncredit' : 'standard');
+  }
+
+  document.getElementById('tab-panel-form').style.display = isProductForm ? 'flex' : 'none';
   document.getElementById('tab-panel-confirmations').style.display = isConfirmations ? 'flex' : 'none';
   document.getElementById('tab-panel-analysis').style.display = isAnalysis ? 'flex' : 'none';
   document.getElementById('tab-panel-usermgmt').style.display = isUserMgmt ? 'flex' : 'none';
   document.getElementById('tab-panel-dealid').style.display = isDealId ? 'flex' : 'none';
   document.getElementById('tab-btn-form').classList.toggle('active', isForm);
+  document.getElementById('tab-btn-carboncredit').classList.toggle('active', isCarbonCredit);
   document.getElementById('tab-btn-confirmations').classList.toggle('active', isConfirmations);
   document.getElementById('tab-btn-analysis').classList.toggle('active', isAnalysis);
   document.getElementById('tab-btn-usermgmt').classList.toggle('active', isUserMgmt);
   document.getElementById('tab-btn-dealid').classList.toggle('active', isDealId);
-  // Data is kept fresh by loadHistory() already; re-render here just in case
-  // the filters were touched while this tab wasn't visible.
+  if(isProductForm){
+    document.getElementById('page-subtitle').textContent = isCarbonCredit
+      ? 'Create a Carbon Credit confirmation. Technology is fixed to Carbon Credit for every product.'
+      : 'Fill in the details below, generate the Customer version table, then copy and send to your customer.';
+  }
   if(isAnalysis) renderAnalysisTab();
   if(isUserMgmt) renderUserMgmtList();
   if(isDealId) renderDealIdSettings();
   currentTab = tab;
 }
 document.getElementById('tab-btn-form').addEventListener('click', ()=> setActiveTab('form'));
+document.getElementById('tab-btn-carboncredit').addEventListener('click', ()=> setActiveTab('carboncredit'));
 document.getElementById('tab-btn-confirmations').addEventListener('click', ()=> setActiveTab('confirmations'));
 document.getElementById('tab-btn-analysis').addEventListener('click', ()=> setActiveTab('analysis'));
 document.getElementById('tab-btn-usermgmt').addEventListener('click', ()=> setActiveTab('usermgmt'));
@@ -1141,34 +1161,41 @@ async function recordSignInIfNew(){
    system up with an existing external sequence, or to pick a clean range for
    testing — without renumbering anything already issued. */
 async function loadDealIdSettings(){
-  try{
-    settingsCache = await getTableRows(SETTINGS_TABLE_NAME);
-  }catch(err){
-    console.error('Could not load settings', err);
-    settingsCache = [];
+  for(const logTable of [STANDARD_LOG_TABLE_NAME, CC_LOG_TABLE_NAME]){
+    const settingsTable = settingsTableForLog(logTable);
+    try{
+      const cache = await getTableRows(settingsTable);
+      settingsCacheByTable[logTable] = cache;
+      const row = cache.find(r => (r.values[0][SC.key]||'') === DEAL_ID_START_KEY);
+      const n = row ? parseInt(String(row.values[0][SC.value]||'').trim(), 10) : 0;
+      dealIdStartOverrideByTable[logTable] = (!isNaN(n) && n > 0) ? n : 0;
+    }catch(err){
+      console.error('Could not load settings from ' + settingsTable, err);
+      settingsCacheByTable[logTable] = [];
+      dealIdStartOverrideByTable[logTable] = 0;
+    }
   }
-  const row = settingsCache.find(r => (r.values[0][SC.key]||'') === DEAL_ID_START_KEY);
-  const n = row ? parseInt(String(row.values[0][SC.value]||'').trim(), 10) : 0;
-  dealIdStartOverride = (!isNaN(n) && n > 0) ? n : 0;
+  setActiveDealLogTable(logTableForMode(currentProductMode));
 }
 async function setDealIdStart(numStr){
   const n = parseInt(String(numStr||'').trim(), 10);
   if(isNaN(n) || n < 1 || n > 99999) throw new Error('Enter a whole number between 1 and 99999.');
-  const existing = settingsCache.find(r => (r.values[0][SC.key]||'') === DEAL_ID_START_KEY);
-  if(existing){
-    await updateTableRow(SETTINGS_TABLE_NAME, existing.index, [DEAL_ID_START_KEY, String(n)]);
-  }else{
-    await addTableRow(SETTINGS_TABLE_NAME, [DEAL_ID_START_KEY, String(n)]);
-  }
+  const logTable = dealLogTableName();
+  const settingsTable = settingsTableForLog(logTable);
+  const cache = settingsCacheByTable[logTable] || [];
+  const existing = cache.find(r => (r.values[0][SC.key]||'') === DEAL_ID_START_KEY);
+  if(existing) await updateTableRow(settingsTable, existing.index, [DEAL_ID_START_KEY, String(n)]);
+  else await addTableRow(settingsTable, [DEAL_ID_START_KEY, String(n)]);
   await loadDealIdSettings();
   renderDealIdSettings();
 }
 function renderDealIdSettings(){
   const el = document.getElementById('dealid-start-current');
   if(!el) return;
+  const settingsLabel = dealLogTableName() === CC_LOG_TABLE_NAME ? 'Carbon Credit' : 'REC';
   el.textContent = dealIdStartOverride
-    ? 'Current starting number: ' + String(dealIdStartOverride).padStart(5,'0') + ' — only applies once no higher Deal ID has been issued yet.'
-    : 'No starting number set — the next Deal ID will just be the highest issued so far, + 1.';
+    ? settingsLabel + ' starting number: ' + String(dealIdStartOverride).padStart(5,'0') + ' — only applies once no higher Deal ID has been issued yet.'
+    : 'No ' + settingsLabel + ' starting number set — the next Deal ID will just be the highest issued so far, + 1.';
 }
 // Plain Users create/submit agreements as their normal job. Superadmin also
 // gets the creation form — purely so they can build a test agreement and run
@@ -1205,6 +1232,7 @@ function applyRoleUi(){
   // still default to Form. Also hide the Form tab button entirely for
   // review-only roles so there's nothing to click into that's empty.
   document.getElementById('tab-btn-form').style.display = isUserRole ? 'inline-block' : 'none';
+  document.getElementById('tab-btn-carboncredit').style.display = isUserRole ? 'inline-block' : 'none';
   setActiveTab(isUserRole ? 'form' : 'confirmations');
   const isSuperadmin = currentUserRole === 'superadmin';
   document.getElementById('tab-btn-usermgmt').style.display = isSuperadmin ? 'inline-block' : 'none';
@@ -1456,7 +1484,11 @@ function tryOpenDealFromUrl(){
   if(urlDealOpened) return;
   const dealId = new URLSearchParams(location.search).get('deal');
   if(!dealId) { urlDealOpened = true; return; }
-  const group = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  const matches = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  if(!matches.length) return;
+  const preferred = matches.find(r => r.values[0][MC.generatedHtml]) || matches[0];
+  setActiveDealLogTable(preferred._sourceTable || STANDARD_LOG_TABLE_NAME);
+  const group = matches.filter(r => (r._sourceTable||STANDARD_LOG_TABLE_NAME) === dealLogTableName());
   const withHtml = group.find(r => r.values[0][MC.generatedHtml]);
   if(!withHtml) return; // history may not have loaded this deal yet — try again next refresh
   // Same "creator or admin only" rule as the shared All confirmations list
@@ -1933,6 +1965,59 @@ function fitRowToColumnCount(values, count){
   if(values.length > count) return values.slice(0, count);
   return values.concat(new Array(count - values.length).fill(''));
 }
+
+// Dedicated REC/Carbon Credit workbook routing. CCDealLog inserts Project ID,
+// Project Name and Prepayment, so translate it to the canonical MC layout at
+// the workbook boundary and keep the rest of the approval/history code shared.
+function dealLogTableName(){ return activeDealLogTableName || STANDARD_LOG_TABLE_NAME; }
+function logTableForMode(mode){ return mode === 'carboncredit' ? CC_LOG_TABLE_NAME : STANDARD_LOG_TABLE_NAME; }
+function settingsTableForLog(tableName){ return tableName === CC_LOG_TABLE_NAME ? CC_SETTINGS_TABLE_NAME : STANDARD_SETTINGS_TABLE_NAME; }
+function setActiveDealLogTable(tableName){
+  activeDealLogTableName = tableName === CC_LOG_TABLE_NAME ? CC_LOG_TABLE_NAME : STANDARD_LOG_TABLE_NAME;
+  settingsCache = settingsCacheByTable[activeDealLogTableName] || [];
+  dealIdStartOverride = dealIdStartOverrideByTable[activeDealLogTableName] || 0;
+}
+function ccRawToCanonical(raw){
+  const out = new Array(65).fill('');
+  for(let i=0;i<=5;i++) out[i] = raw[i] ?? '';
+  out[MC.projectId] = raw[6] ?? '';
+  out[MC.projectName] = raw[7] ?? '';
+  for(let i=6;i<=23;i++) out[i] = raw[i+2] ?? '';
+  out[MC.prepayment] = raw[26] ?? '';
+  for(let i=24;i<=61;i++) out[i] = raw[i+3] ?? '';
+  return out;
+}
+function canonicalToCcRaw(values){
+  const raw = new Array(65).fill('');
+  for(let i=0;i<=5;i++) raw[i] = values[i] ?? '';
+  raw[6] = values[MC.projectId] ?? '';
+  raw[7] = values[MC.projectName] ?? '';
+  for(let i=6;i<=23;i++) raw[i+2] = values[i] ?? '';
+  raw[26] = values[MC.prepayment] ?? '';
+  for(let i=24;i<=61;i++) raw[i+3] = values[i] ?? '';
+  return raw;
+}
+function canonicalizeLogRow(row, tableName){
+  if(tableName !== CC_LOG_TABLE_NAME){ row._sourceTable = STANDARD_LOG_TABLE_NAME; return row; }
+  return Object.assign({}, row, {values:[ccRawToCanonical(row.values[0] || [])], _sourceTable:CC_LOG_TABLE_NAME});
+}
+async function getCanonicalTableRows(tableName){
+  const rows = await getTableRows(tableName);
+  return rows.map(r => canonicalizeLogRow(r, tableName));
+}
+async function addCanonicalTableRows(tableName, rowsArray){
+  return addTableRows(tableName, tableName === CC_LOG_TABLE_NAME ? rowsArray.map(canonicalToCcRaw) : rowsArray);
+}
+async function updateCanonicalTableRow(tableName, rowIndex, values){
+  return updateTableRow(tableName, rowIndex, tableName === CC_LOG_TABLE_NAME ? canonicalToCcRaw(values) : values);
+}
+async function getAllCanonicalDealRows(){
+  const [standardRows, ccRows] = await Promise.all([
+    getCanonicalTableRows(STANDARD_LOG_TABLE_NAME),
+    getCanonicalTableRows(CC_LOG_TABLE_NAME)
+  ]);
+  return standardRows.concat(ccRows);
+}
 async function addTableRow(tableName, values){
   const count = await getTableColumnCount(tableName);
   return graphFetch(workbookTablePath(tableName) + '/rows/add', {
@@ -2035,7 +2120,7 @@ function assignPendingDealId(){
 // instead.
 async function assignFormalDealId(placeholderId, tradeCount){
   const scan = async () => {
-    const rows = await getTableRows(LOG_TABLE_NAME);
+    const rows = await getCanonicalTableRows(dealLogTableName());
     let maxNum = 0;
     const takenNums = new Set();
     rows.forEach(r=>{
@@ -2075,7 +2160,7 @@ function gatherFormData(){
       allValues[el.id] = el.value;
     }
   });
-  return { tradeCount, allValues, checkedIds, dealId: currentDealDocId || val('h-dealid-num'), submittedDate: currentSubmittedDate };
+  return { tradeCount, allValues, checkedIds, dealId: currentDealDocId || val('h-dealid-num'), submittedDate: currentSubmittedDate, productMode: currentProductMode };
 }
 function setDraftStatus(text){
   const el = document.getElementById('draft-status');
@@ -2103,6 +2188,11 @@ async function saveDraft(){
 }
 function applyDraftData(data){
   suppressAutosave = true;
+  currentProductMode = data.productMode === 'carboncredit' ? 'carboncredit' : 'standard';
+  setActiveDealLogTable(logTableForMode(currentProductMode));
+  currentTab = currentProductMode === 'carboncredit' ? 'carboncredit' : 'form';
+  document.getElementById('tab-btn-form').classList.toggle('active', currentProductMode === 'standard');
+  document.getElementById('tab-btn-carboncredit').classList.toggle('active', currentProductMode === 'carboncredit');
   document.getElementById('trade-count').value = data.tradeCount || '1';
   renderTrades();
   Object.keys(data.allValues || {}).forEach(id=>{
@@ -2122,6 +2212,11 @@ function applyDraftData(data){
     const dealEl = document.getElementById('t'+i+'-m-deal');
     if(dealEl && data.allValues && data.allValues['t'+i+'-m-deal'] !== undefined) dealEl.value = data.allValues['t'+i+'-m-deal'];
     handleMatchingChange(i);
+    const draftTech = document.getElementById('t'+i+'-tech');
+    if(draftTech){
+      if(currentProductMode === 'carboncredit') draftTech.value = 'CC';
+      else if((draftTech.value||'').trim().toUpperCase() === 'CC') draftTech.value = 'SLR';
+    }
     syncTechCheckboxesFromHidden(i);
     syncCodUiFromHidden(i); // hidden field's restored value drives toggle/year/visibility
   }
@@ -2178,16 +2273,17 @@ function myRowsBySubmissionRef(){
   if(!currentAccount || !currentSubmittedDate) return [];
   const myEmail = (currentAccount.username || '').toLowerCase();
   return logRowsCache.filter(r =>
+    (r._sourceTable||STANDARD_LOG_TABLE_NAME) === dealLogTableName() &&
     String(r.values[0][MC.submittedBy] || '').toLowerCase() === myEmail &&
     String(r.values[0][MC.submittedDate] || '') === currentSubmittedDate
   );
 }
 function dealAlreadySubmitted(dealId){
-  if(dealId && logRowsCache.some(r => String(r.values[0][MC.dealId] || '').trim() === dealId)) return true;
+  if(dealId && logRowsCache.some(r => (r._sourceTable||STANDARD_LOG_TABLE_NAME) === dealLogTableName() && String(r.values[0][MC.dealId] || '').trim() === dealId)) return true;
   return myRowsBySubmissionRef().length > 0;
 }
 function submittedDealStatus(dealId){
-  let rows = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  let rows = logRowsCache.filter(r => (r._sourceTable||STANDARD_LOG_TABLE_NAME) === dealLogTableName() && String(r.values[0][MC.dealId] || '').trim() === dealId);
   if(!rows.length) rows = myRowsBySubmissionRef();
   return rows.length ? dealGroupStatus(rows) : null;
 }
@@ -2225,11 +2321,11 @@ function lockSubmittedForm(dealId){
   // Runs every time a locked form loads (including a plain page reload),
   // so it also picks up the corrected Deal ID once Level 1 approval has
   // patched it into the stored HTML (see patchDealIdInGeneratedHtml).
-  let row = logRowsCache.find(r => String(r.values[0][MC.dealId] || '').trim() === dealId && r.values[0][MC.generatedHtml]);
+  let row = logRowsCache.find(r => (r._sourceTable||STANDARD_LOG_TABLE_NAME) === dealLogTableName() && String(r.values[0][MC.dealId] || '').trim() === dealId && r.values[0][MC.generatedHtml]);
   if(!row) row = myRowsBySubmissionRef().find(r => r.values[0][MC.generatedHtml]);
   if(row){
     const realDealId = String(row.values[0][MC.dealId] || '').trim();
-    const group = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === realDealId).sort((a,b)=> a.index - b.index);
+    const group = logRowsCache.filter(r => (r._sourceTable||STANDARD_LOG_TABLE_NAME) === dealLogTableName() && String(r.values[0][MC.dealId] || '').trim() === realDealId).sort((a,b)=> a.index - b.index);
     lastHtml = refreshBdMatchingInHtml(row.values[0][MC.generatedHtml], group);
     lastPlain = htmlToPlainFallback(lastHtml);
     document.getElementById('table-preview').innerHTML = lastHtml;
@@ -2294,7 +2390,8 @@ document.getElementById('new-confirmation-btn').addEventListener('click', async 
    a client-side filter, not a security boundary. */
 async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
   if(!currentAccount || !dealId) return;
-  const rows = await getTableRows(LOG_TABLE_NAME);
+  setActiveDealLogTable(logTableForMode(currentProductMode));
+  const rows = await getCanonicalTableRows(dealLogTableName());
   const existingRows = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
   if(existingRows.length){
     throw new Error((isPendingDealId(dealId) ? 'This agreement' : 'Deal ID ' + dealId) + ' has already been submitted and cannot be resaved. Use Reset data to start a new agreement instead.');
@@ -2303,7 +2400,7 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
   // however many columns the live table actually has — which for the
   // 3 new Broker Fee columns means the data would just quietly vanish on
   // save instead of failing loudly. Fail loudly instead.
-  const liveColumnCount = await getTableColumnCount(LOG_TABLE_NAME);
+  const liveColumnCount = await getTableColumnCount(dealLogTableName());
   if(liveColumnCount < COL_COUNT){
     throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing the "Broker Fee Type", "Broker Fee Currency" and "Broker Fee Price" columns. Ask an admin to add those three columns at the end of the table, then try again.');
   }
@@ -2320,6 +2417,7 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
     row[MC.dealId] = dealId;
     row[MC.supplyDemand] = val('h-order');
     row[MC.company] = val('h-buyer');
+    if(currentProductMode === 'carboncredit'){ row[MC.projectId] = val('h-project-id'); row[MC.projectName] = val('h-project-name'); }
     row[MC.broker] = val('h-broker');
     row[MC.country] = val('t'+n+'-country');
     row[MC.registry] = val('t'+n+'-registry');
@@ -2336,8 +2434,9 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
     row[MC.unitPrice] = val('t'+n+'-price');
     row[MC.specialReq] = remarksVal(n);
     row[MC.cod] = val('t'+n+'-m-cod');
-    row[MC.tigrsIrecName] = val('t'+n+'-transfer');
+    row[MC.tigrsIrecName] = transferAccountValue(val('h-order'), val('t'+n+'-transfer'));
     row[MC.paymentTerm] = val('t'+n+'-payterm');
+    if(currentProductMode === 'carboncredit') row[MC.prepayment] = val('t'+n+'-prepayment');
     row[MC.buyerSeller] = matchingActive ? val('t'+n+'-m-name') : '';
     row[MC.noOfRecs] = matchingActive ? val('t'+n+'-m-recs') : '';
     row[MC.whichDeal] = dealCodeFor(n);
@@ -2379,7 +2478,7 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
     }
     rowsToWrite.push(row);
   }
-  await addTableRows(LOG_TABLE_NAME, rowsToWrite);
+  await addCanonicalTableRows(dealLogTableName(), rowsToWrite);
   await loadHistory();
 }
 /* Advances a deal one step through the approval chain, writing the
@@ -2390,7 +2489,7 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
 async function approveDeal(dealId, file, transferOverrides){
   if(!dealId) return;
   await ensureFreshWorkbookSession();
-  const rows = await getTableRows(LOG_TABLE_NAME);
+  const rows = await getCanonicalTableRows(dealLogTableName());
   const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
   if(!matching.length) return;
   const currentStatus = matching[0].values[0][MC.status];
@@ -2412,15 +2511,21 @@ async function approveDeal(dealId, file, transferOverrides){
         }
       });
     }
-    const missingTransferTrades = [];
-    matching.forEach((r, idx)=>{
-      if(!String(r.values[0][MC.tigrsIrecName] || '').trim()) missingTransferTrades.push(idx + 1);
-    });
-    if(missingTransferTrades.length){
-      const dealRole = roleFromOrderType(matching[0].values[0][MC.supplyDemand]);
-      throw new Error('Please fill in the ' + transferAccountLabel(dealRole) + ' for Product ' + missingTransferTrades.join(', ') + ' before approving at Level 2.');
+    const stockOutR = isStockOutR(matching[0].values[0][MC.supplyDemand]);
+    if(stockOutR){
+      // Stock-Out (R) does not use a Buyer Receiving Account. Keep the saved field genuinely blank.
+      matching.forEach(r=>{ r.values[0][MC.tigrsIrecName] = ''; });
+    } else {
+      const missingTransferTrades = [];
+      matching.forEach((r, idx)=>{
+        if(!String(r.values[0][MC.tigrsIrecName] || '').trim()) missingTransferTrades.push(idx + 1);
+      });
+      if(missingTransferTrades.length){
+        const dealRole = roleFromOrderType(matching[0].values[0][MC.supplyDemand]);
+        throw new Error('Please fill in the ' + transferAccountLabel(dealRole) + ' for Product ' + missingTransferTrades.join(', ') + ' before approving at Level 2.');
+      }
     }
-    const liveColumnCount = await getTableColumnCount(LOG_TABLE_NAME);
+    const liveColumnCount = await getTableColumnCount(dealLogTableName());
     if(liveColumnCount < COL_COUNT){
       throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing the "Agreement File Name" and "Agreement File URL" columns needed to save the attachment. Ask an admin to add those two columns at the end of the table, then try again.');
     }
@@ -2455,7 +2560,7 @@ async function approveDeal(dealId, file, transferOverrides){
   // fully eliminate — the race window (the file upload / Deal ID
   // assignment above can take a moment, which is exactly when a second
   // approver could otherwise sneak in).
-  const recheckRows = await getTableRows(LOG_TABLE_NAME);
+  const recheckRows = await getCanonicalTableRows(dealLogTableName());
   const recheckMatching = recheckRows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
   const recheckStatus = recheckMatching.length ? recheckMatching[0].values[0][MC.status] : undefined;
   if(recheckStatus !== currentStatus){
@@ -2491,7 +2596,7 @@ async function approveDeal(dealId, file, transferOverrides){
     if(nextStatus === STATUS_APPROVED && values.length > MC.editChangeSummary){
       values[MC.editChangeSummary] = '';
     }
-    await updateTableRow(LOG_TABLE_NAME, r.index, values);
+    await updateCanonicalTableRow(dealLogTableName(), r.index, values);
     // Final sign-off (Pending Level 3 -> Approved): also copy this row into
     // the standalone "Approved" SharePoint list. Best-effort — if the write
     // fails (e.g. the list is missing a column the app expects), the row
@@ -2507,7 +2612,7 @@ async function approveDeal(dealId, file, transferOverrides){
         const approvedItemId = await addApprovedDealToList(values);
         if(approvedItemId){
           values[MC.approvedListItemId] = String(approvedItemId);
-          await updateTableRow(LOG_TABLE_NAME, r.index, values);
+          await updateCanonicalTableRow(dealLogTableName(), r.index, values);
         }
       }catch(err){
         console.error('Could not copy Product ' + tradeNum + ' into the "Approved" list — check that its column internal names match what this app sends (see the fields{} object in addApprovedDealToList).', err);
@@ -2555,7 +2660,7 @@ async function rejectDeal(dealId, reason){
   const trimmedReason = (reason||'').trim();
   if(!trimmedReason) throw new Error('A comment is required so the submitter knows why this was rejected.');
   await ensureFreshWorkbookSession();
-  const rows = await getTableRows(LOG_TABLE_NAME);
+  const rows = await getCanonicalTableRows(dealLogTableName());
   const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
   if(!matching.length) return;
   const currentStatus = matching[0].values[0][MC.status];
@@ -2580,7 +2685,7 @@ async function rejectDeal(dealId, reason){
     if(values.length > MC.editChangeSummary){
       values[MC.editChangeSummary] = '';
     }
-    await updateTableRow(LOG_TABLE_NAME, r.index, values);
+    await updateCanonicalTableRow(dealLogTableName(), r.index, values);
   }
   await notifySubmitter(STATUS_REJECTED, dealId, matching[0].values[0][MC.submittedBy], trimmedReason);
   await loadHistory();
@@ -2610,7 +2715,7 @@ async function rejectDeal(dealId, reason){
 async function requestBdMatchChange(dealId, edits, matchNote){
   if(!dealId) return;
   await ensureFreshWorkbookSession();
-  const rows = await getTableRows(LOG_TABLE_NAME);
+  const rows = await getCanonicalTableRows(dealLogTableName());
   const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
   if(!matching.length) throw new Error('Could not find this deal.');
   const currentStatus = dealGroupStatus(matching);
@@ -2640,7 +2745,7 @@ async function requestBdMatchChange(dealId, edits, matchNote){
       throw new Error('This deal\'s products have changed since you opened the edit form (Product ' + (i+1) + ' no longer matches what was shown). Please close and reopen "Request edit" to refresh, then try again.');
     }
   }
-  const liveColumnCount = await getTableColumnCount(LOG_TABLE_NAME);
+  const liveColumnCount = await getTableColumnCount(dealLogTableName());
   if(liveColumnCount < COL_COUNT){
     throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing the "Pending Matching", "Pending Buyer/Seller", "Pending Which Deal", "Pending No of RECs", "Pending Delivery Date", "Change Requested By", "Change Requested Date", "Pending Matching Note", "Pending Registry" and "Pending Tech" columns. Ask an admin to add those ten columns at the end of the table, then try again.');
   }
@@ -2720,7 +2825,7 @@ async function requestBdMatchChange(dealId, edits, matchNote){
     values[MC.rejectedBy] = '';
     values[MC.rejectedDate] = '';
     values[MC.rejectReason] = '';
-    await updateTableRow(LOG_TABLE_NAME, r.index, values);
+    await updateCanonicalTableRow(dealLogTableName(), r.index, values);
   }
   const notifyBody = changeLines.join('\n') + (matchNote ? '\n\nNote: ' + matchNote : '');
   await notifyNextApprover(STATUS_PENDING_CHANGE_3, dealId, matching[0].values[0][MC.description], notifyBody);
@@ -2736,7 +2841,7 @@ async function requestBdMatchChange(dealId, edits, matchNote){
 async function approveBdMatchChange(dealId){
   if(!dealId) return;
   await ensureFreshWorkbookSession();
-  const rows = await getTableRows(LOG_TABLE_NAME);
+  const rows = await getCanonicalTableRows(dealLogTableName());
   const allMatching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
   if(!allMatching.length) return;
   // Only the row(s) actually carrying a pending change get touched here —
@@ -2755,7 +2860,7 @@ async function approveBdMatchChange(dealId){
   // immediately before committing and abort if someone else got there
   // first (see the longer comment in approveDeal for why this can't be
   // made fully atomic against this API).
-  const recheckRows = await getTableRows(LOG_TABLE_NAME);
+  const recheckRows = await getCanonicalTableRows(dealLogTableName());
   const recheckStillPending = recheckRows.some(r =>
     String(r.values[0][MC.dealId] || '').trim() === dealId && r.values[0][MC.status] === STATUS_PENDING_CHANGE_3);
   if(!recheckStillPending){
@@ -2840,14 +2945,14 @@ async function approveBdMatchChange(dealId){
     values[MC.status] = STATUS_APPROVED;
     values[MC.approvedBy3] = currentAccount.username;
     values[MC.approvedDate3] = nowIso;
-    await updateTableRow(LOG_TABLE_NAME, r.index, values);
+    await updateCanonicalTableRow(dealLogTableName(), r.index, values);
     try{
       const approvedItemId = await addApprovedDealToList(values, changeNote);
       if(approvedItemId){
         // "Approved" list is append-only (a fresh entry per change, kept
         // as history), so this always advances to point at the newest one.
         values[MC.approvedListItemId] = String(approvedItemId);
-        await updateTableRow(LOG_TABLE_NAME, r.index, values);
+        await updateCanonicalTableRow(dealLogTableName(), r.index, values);
       }
     }catch(err){
       console.error('Could not copy Product ' + tradeNum + '\'s change into the "' + APPROVED_LIST_NAME + '" list — check that its column internal names match what this app sends (see the fields{} object in addApprovedDealToList).', err);
@@ -2869,7 +2974,7 @@ async function rejectBdMatchChange(dealId, reason){
   const trimmedReason = (reason || '').trim();
   if(!trimmedReason) throw new Error('A comment is required so the submitter knows why this change was rejected.');
   await ensureFreshWorkbookSession();
-  const rows = await getTableRows(LOG_TABLE_NAME);
+  const rows = await getCanonicalTableRows(dealLogTableName());
   const allMatching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
   if(!allMatching.length) return;
   // Same scoping as approveBdMatchChange: only the product(s) actually
@@ -2903,7 +3008,7 @@ async function rejectBdMatchChange(dealId, reason){
     values[MC.rejectedBy] = currentAccount.username;
     values[MC.rejectedDate] = nowIso;
     values[MC.rejectReason] = trimmedReason;
-    await updateTableRow(LOG_TABLE_NAME, r.index, values);
+    await updateCanonicalTableRow(dealLogTableName(), r.index, values);
   }
   await notifyChangeSubmitter(dealId, submitterEmail, 'rejected', trimmedReason);
   await loadHistory();
@@ -2928,10 +3033,12 @@ function groupByDealId(rows){
   const order = [];
   rows.forEach(r=>{
     const id = String(r.values[0][MC.dealId] || '').trim();
-    if(!groups[id]){ groups[id] = []; order.push(id); }
-    groups[id].push(r);
+    const sourceTable = r._sourceTable || STANDARD_LOG_TABLE_NAME;
+    const key = sourceTable + '::' + id;
+    if(!groups[key]){ groups[key] = {dealId:id, sourceTable, rows:[]}; order.push(key); }
+    groups[key].rows.push(r);
   });
-  return order.map(id => ({ dealId: id, rows: groups[id] }));
+  return order.map(key => groups[key]);
 }
 // ---- Filter bars for My saved confirmations / Approval queue / All
 // confirmations. Each list keeps its full, unfiltered groups cached here so
@@ -3008,7 +3115,7 @@ async function loadHistory(){
   const listEl = document.getElementById('history-list');
   listEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Loading…</p>';
   try{
-    const rows = await getTableRows(LOG_TABLE_NAME);
+    const rows = await getAllCanonicalDealRows();
     logRowsCache = rows;
     const myEmail = (currentAccount.username || '').toLowerCase();
     const mineGroups = groupByDealId(
@@ -3428,6 +3535,8 @@ function renderHistoryTable(el, groups, opts){
         '<strong>'+escapeHtml(regTechHeading)+'.</strong>'+
         '</span></span>'
       : '';
+    const rowSourceTable = g.sourceTable || (g.rows[0] && g.rows[0]._sourceTable) || STANDARD_LOG_TABLE_NAME;
+    const sourceAttr = ' data-logtable="'+escapeHtml(rowSourceTable)+'"';
     html += '<tr style="border-top:1px solid var(--border);">' +
       (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[MC.salesPic]||'')+'</td>' : '') +
       '<td style="padding:6px;">'+(isPendingDealId(v[MC.dealId]) ? '-' : escapeHtml(friendlyDealId(v[MC.dealId])))+'</td>' +
@@ -3440,11 +3549,11 @@ function renderHistoryTable(el, groups, opts){
       '</td>' +
       '<td style="padding:6px;white-space:nowrap;">' +
         regTechWarningIcon +
-        '<button type="button" class="secondary history-view-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;">View</button>' +
-        (canAct ? ' <button type="button" class="secondary history-approve-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;">Approve</button>' +
-                  ' <button type="button" class="secondary history-reject-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;color:#8a2d1f;border-color:#c1493a;">Reject</button>' : '') +
-        (canRequestEdit ? ' <button type="button" class="secondary history-request-edit-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;">Request edit</button>' : '') +
-        (canFullEdit ? ' <button type="button" class="secondary history-full-edit-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'" style="padding:4px 10px;font-size:12px;" title="Edit details/products — resends this deal through Level 1 approval again">Edit &amp; resend</button>' : '') +
+        '<button type="button" class="secondary history-view-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;">View</button>' +
+        (canAct ? ' <button type="button" class="secondary history-approve-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;">Approve</button>' +
+                  ' <button type="button" class="secondary history-reject-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#8a2d1f;border-color:#c1493a;">Reject</button>' : '') +
+        (canRequestEdit ? ' <button type="button" class="secondary history-request-edit-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;">Request edit</button>' : '') +
+        (canFullEdit ? ' <button type="button" class="secondary history-full-edit-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;" title="Edit details/products — resends this deal through Level 1 approval again">Edit &amp; resend</button>' : '') +
       '</td>' +
     '</tr>';
     if(status === STATUS_REJECTED && v[MC.rejectReason]){
@@ -3614,8 +3723,9 @@ function openApproveModal(dealId){
     .sort((a,b)=> a.index - b.index);
   const role = group.length ? roleFromOrderType(group[0].values[0][MC.supplyDemand]) : 'Buyer';
   const label = transferAccountLabel(role);
+  const stockOutR = group.length && isStockOutR(group[0].values[0][MC.supplyDemand]);
   const fieldsEl = document.getElementById('approve-modal-transfer-fields');
-  fieldsEl.innerHTML = group.map((r, idx)=>{
+  fieldsEl.innerHTML = stockOutR ? '' : group.map((r, idx)=>{
     const existing = escapeHtml(String(r.values[0][MC.tigrsIrecName] || ''));
     const productLabel = group.length > 1 ? label + ' — Product ' + (idx+1) : label;
     return '<div><label style="margin:0 0 4px;display:block;font-size:13px;">' + escapeHtml(productLabel) + '</label>' +
@@ -3882,7 +3992,7 @@ function openEditRequestModal(dealId){
     ? 'This deal is already Approved, so any correction here needs a fresh Level 3 sign-off before it takes effect. The current, live values stay in place everywhere until that happens.'
     : 'Level 2 has already approved this deal, so any correction here needs a fresh Level 3 sign-off before it takes effect. The current, live values stay in place everywhere until that happens.';
   const fieldsEl = document.getElementById('edit-request-modal-fields');
-  fieldsEl.innerHTML = group.map((r, idx)=>{
+  fieldsEl.innerHTML = stockOutR ? '' : group.map((r, idx)=>{
     const v = r.values[0];
     const matchingVal = v[MC.matching] || 'Open Position';
     const active = matchingVal && matchingVal !== 'Open Position';
@@ -4076,7 +4186,8 @@ document.addEventListener('click', (e)=>{
   const viewBtn = e.target.closest('.history-view-btn');
   if(viewBtn){
     const dealId = viewBtn.getAttribute('data-dealid');
-    const group = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+    setActiveDealLogTable(viewBtn.getAttribute('data-logtable'));
+    const group = logRowsCache.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId && (r._sourceTable||STANDARD_LOG_TABLE_NAME) === dealLogTableName());
     const withHtml = group.find(r => r.values[0][MC.generatedHtml]);
     if(!withHtml) return;
     const freshHtml = refreshBdMatchingInHtml(withHtml.values[0][MC.generatedHtml], group);
@@ -4086,6 +4197,7 @@ document.addEventListener('click', (e)=>{
   const approveBtn = e.target.closest('.history-approve-btn');
   if(approveBtn){
     const dealId = approveBtn.getAttribute('data-dealid');
+    setActiveDealLogTable(approveBtn.getAttribute('data-logtable'));
     const dealStatus = submittedDealStatus(dealId);
     if(dealStatus === STATUS_PENDING_2){
       openApproveModal(dealId);
@@ -4109,16 +4221,19 @@ document.addEventListener('click', (e)=>{
   }
   const rejectBtn = e.target.closest('.history-reject-btn');
   if(rejectBtn){
+    setActiveDealLogTable(rejectBtn.getAttribute('data-logtable'));
     openRejectModal(rejectBtn.getAttribute('data-dealid'));
     return;
   }
   const requestEditBtn = e.target.closest('.history-request-edit-btn');
   if(requestEditBtn){
+    setActiveDealLogTable(requestEditBtn.getAttribute('data-logtable'));
     openEditRequestModal(requestEditBtn.getAttribute('data-dealid'));
     return;
   }
   const fullEditBtn = e.target.closest('.history-full-edit-btn');
   if(fullEditBtn){
+    setActiveDealLogTable(fullEditBtn.getAttribute('data-logtable'));
     openFullEditModal(fullEditBtn.getAttribute('data-dealid'));
   }
 });
@@ -4395,8 +4510,13 @@ function comboHtml(id, listId, options, def){
 // with the ticked boxes as "SLR/WND" (codes joined in TECHS order), which is
 // exactly the short-code format that gets written to SharePoint.
 function techCheckboxesHtml(n, defaultCode){
-  const def = defaultCode || 'SLR';
-  const boxes = TECHS.map(code=>{
+  const allowedTechs = currentProductMode === 'carboncredit'
+    ? ['CC']
+    : TECHS.filter(code => code !== 'CC');
+  let def = defaultCode || 'SLR';
+  if(currentProductMode === 'carboncredit') def = 'CC';
+  else if(def === 'CC' || allowedTechs.indexOf(def) === -1) def = 'SLR';
+  const boxes = allowedTechs.map(code=>{
     const checked = code === def ? ' checked' : '';
     return '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;font-weight:400;">'+
       '<input type="checkbox" class="tech-checkbox" data-trade="'+n+'" value="'+code+'"'+checked+' style="width:auto;margin:0;"> '+(TECH_FULLNAMES[code]||code)+
@@ -4475,7 +4595,7 @@ function applyTechExclusivityUi(n){
 // wording. Only the on-screen labels change — the underlying field ids
 // (and what gets written to SharePoint/Excel) are unchanged.
 const CC_FIELD_LABELS = {
-  't{n}-remarks': ['Special remarks', 'Special Remarks (Project Name)'],
+  't{n}-remarks': ['Special remarks', 'Special Remarks'],
   't{n}-volume': ['Volume (RECs)', 'Volume (VCUs)'],
   't{n}-price': ['Price / REC', 'Price / VCU'],
   't{n}-m-recs': ['No of RECs', 'No of VCUs']
@@ -4500,6 +4620,12 @@ document.addEventListener('change', (e)=>{
     updateProductLabelsForTech(n);
   }
 });
+document.addEventListener('input', (e)=>{
+  if(e.target && e.target.id === 'h-project-id'){
+    e.target.value = e.target.value.replace(/\D/g,'');
+  }
+});
+
 /* COD (if applicable) — the user just ticks "Applicable" and picks a year;
    this composes the actual string that gets written into the generated
    table and to SharePoint ("1 Jan {year} or newer", or "N/A" if not
@@ -4621,6 +4747,8 @@ document.getElementById('header-fields').innerHTML =
   '<div id="h-role-wrap"><label for="h-role">Buyer or Seller</label>'+
   '<input type="text" id="h-role" value="Seller" readonly/></div>' +
   headerField('Buyer/Seller Full Name', textHtml('h-buyer','Company name'),'h-buyer') +
+  '<div id="h-project-name-wrap" style="display:none;grid-column:1 / -1;">'+lockableField('Project Name', '<textarea id="h-project-name" placeholder="Enter full project name"></textarea>', 'h-project-name')+'</div>' +
+  '<div id="h-project-id-wrap" style="display:none;">'+headerField('Project ID', '<input type="text" id="h-project-id" inputmode="numeric" pattern="[0-9]*" placeholder="Project ID"/>','h-project-id')+'</div>' +
   '<div style="grid-column:1 / -1;">'+
     lockableField('Broker', brokerYesHtml(), 'h-broker-yes')+
   '</div>'+
@@ -4656,9 +4784,19 @@ function updateRoleField(){
 function updateBuyerSellerFieldLabel(){
   const label = document.querySelector('label[for="h-buyer"]');
   if(label) label.textContent = currentRole() + ' Full Name';
+  const projectNameWrap = document.getElementById('h-project-name-wrap');
+  if(projectNameWrap) projectNameWrap.style.display = currentProductMode === 'carboncredit' ? '' : 'none';
+  const projectWrap = document.getElementById('h-project-id-wrap');
+  if(projectWrap) projectWrap.style.display = currentProductMode === 'carboncredit' ? '' : 'none';
+}
+function isStockOutR(orderType){
+  return String(orderType || '').trim() === 'Stock-Out (R)';
 }
 function transferAccountLabel(role){
   return role === 'Buyer' ? 'Buyer Receiving Account' : 'Seller Transfer Account';
+}
+function transferAccountValue(orderType, value){
+  return isStockOutR(orderType) ? '' : (value || '');
 }
 function updateTransferAccountLabels(){
   const role = currentRole();
@@ -4887,7 +5025,7 @@ function tradeBlockHtml(n){
     '<p class="trade-title">Product '+n+'</p>'+
     '<div class="grid">'+
     lockableField('Country (Full Name)', comboHtml('t'+n+'-country','t'+n+'-country-list',countryComboOptions(),'MY'),'t'+n+'-country')+
-    lockableField('Registry', selectWithFullNamesHtml('t'+n+'-registry', REGISTRIES, REGISTRY_DISPLAY_NAMES, 'IREC'),'t'+n+'-registry')+
+    lockableField('Registry', selectWithFullNamesHtml('t'+n+'-registry', currentProductMode === 'carboncredit' ? ['BCX','Verra','Gold Standard'] : REGISTRIES, REGISTRY_DISPLAY_NAMES, currentProductMode === 'carboncredit' ? 'BCX' : 'IREC'),'t'+n+'-registry')+
     lockableField('Tech', techCheckboxesHtml(n,'SLR'),'t'+n+'-tech')
       .replace('<div id=','<div style="grid-column:1 / -1;" id=')+
     lockableField('Vintage start month &amp; year',
@@ -4909,6 +5047,7 @@ function tradeBlockHtml(n){
     lockableField('Price currency', comboHtml('t'+n+'-currency','t'+n+'-currency-list',CURRENCIES,'USD'),'t'+n+'-currency')+
     lockableField('Price / REC', '<input type="text" inputmode="decimal" class="numeric-decimal-only" id="t'+n+'-price" placeholder="e.g. 0.27" value=""/>','t'+n+'-price')+
     lockableField('Payment term', textHtml('t'+n+'-payterm','30 days after invoice','30 days after invoice'),'t'+n+'-payterm')+
+    (currentProductMode === 'carboncredit' ? lockableField('Prepayment', '<textarea id="t'+n+'-prepayment" placeholder="Enter prepayment details"></textarea>', 't'+n+'-prepayment') : '')+
     lockableField('Special remarks', '<textarea id="t'+n+'-remarks" placeholder="N/A">N/A</textarea>', 't'+n+'-remarks')
       .replace('<div id=','<div style="grid-column:1 / -1;" id=')+
     // Custom label text is updated programmatically to reflect Buyer/Seller dynamically
@@ -4924,17 +5063,18 @@ function tradeBlockHtml(n){
     '<!-- Wrapper for matching dependent fields -->'+
     '<div id="t'+n+'-matching-dependent-fields" style="display:none;">'+
       '<div class="grid">'+
-        '<div id="t'+n+'-m-source-wrap">'+
-          '<label style="margin-bottom:6px;">Source</label>'+
-          '<div style="display:flex;gap:20px;flex-wrap:wrap;">'+
-            '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
-              '<input type="checkbox" id="t'+n+'-m-own" style="width:auto;margin:0;"> Own RECs'+
-            '</label>'+
-            '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
-              '<input type="checkbox" id="t'+n+'-m-proceed" style="width:auto;margin:0;"> Proceed Share'+
-            '</label>'+
-          '</div>'+
-        '</div>'+
+        (currentProductMode === 'carboncredit' ? '' :
+          '<div id="t'+n+'-m-source-wrap">'+
+            '<label style="margin-bottom:6px;">Source</label>'+ 
+            '<div style="display:flex;gap:20px;flex-wrap:wrap;">'+
+              '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
+                '<input type="checkbox" id="t'+n+'-m-own" style="width:auto;margin:0;"> Own RECs'+
+              '</label>'+
+              '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
+                '<input type="checkbox" id="t'+n+'-m-proceed" style="width:auto;margin:0;"> Proceed Share'+
+              '</label>'+
+            '</div>'+
+          '</div>')+
         lockableField('Buyer/Seller name', textHtml('t'+n+'-m-name','Name'),'t'+n+'-m-name')+
         lockableField('No of RECs', textHtml('t'+n+'-m-recs',''),'t'+n+'-m-recs')+
         lockableField('From which deal', '<div id="t'+n+'-m-deal-field">'+textHtml('t'+n+'-m-deal','Deal Recap ID')+'</div>','t'+n+'-m-deal')+
@@ -5203,6 +5343,50 @@ function dealLabelFor(n){
   return raw;
 }
 
+// Form = normal renewable technologies with Carbon Credit removed.
+// Carbon Credit Tech = the same agreement workflow, but every product is CC.
+function switchProductMode(mode){
+  mode = mode === 'carboncredit' ? 'carboncredit' : 'standard';
+  if(currentProductMode === mode){ setActiveDealLogTable(logTableForMode(mode)); return; }
+  const snapshot = document.getElementById('trades-container') && document.getElementById('trades-container').children.length
+    ? gatherFormData() : null;
+  currentProductMode = mode;
+  setActiveDealLogTable(logTableForMode(mode));
+  updateBuyerSellerFieldLabel();
+  renderTrades();
+  if(!snapshot) return;
+
+  suppressAutosave = true;
+  Object.keys(snapshot.allValues || {}).forEach(id=>{
+    if(/^t\d+-tech$/.test(id)) return;
+    const el = document.getElementById(id);
+    if(el) el.value = snapshot.allValues[id];
+  });
+  (snapshot.checkedIds || []).forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.checked = true;
+  });
+  refreshAllDateDisplays();
+  updateBrokerUi();
+  updateBrokerFeeUi();
+  const count = parseInt(document.getElementById('trade-count').value,10) || 1;
+  for(let i=1;i<=count;i++){
+    const tech = document.getElementById('t'+i+'-tech');
+    if(tech) tech.value = mode === 'carboncredit' ? 'CC' : 'SLR';
+    syncTechCheckboxesFromHidden(i);
+    updateDealField(i);
+    const dealEl = document.getElementById('t'+i+'-m-deal');
+    const savedDeal = snapshot.allValues && snapshot.allValues['t'+i+'-m-deal'];
+    if(dealEl && savedDeal !== undefined) dealEl.value = savedDeal;
+    handleMatchingChange(i);
+    syncCodUiFromHidden(i);
+    updateProductLabelsForTech(i);
+  }
+  refreshRoleDependentUi();
+  suppressAutosave = false;
+  requireRegenerateBeforeSave();
+}
+
 function renderTrades(){
   const countEl = document.getElementById('trade-count');
   let n = parseInt(countEl.value, 10);
@@ -5331,14 +5515,14 @@ function buildTradeGroup(startIdx, filled){
   const addRow = (label, cells, span, parts) => rows.push({label, cells, span: !!span, parts});
   const size = 3;
 
-  const tradeNos = [], registries=[], transfers=[], vintages=[], vintageParts=[], techs=[], countries=[], volumes=[], prices=[], priceParts=[], payterms=[], dstarts=[], dends=[], remarks=[];
+  const tradeNos = [], registries=[], transfers=[], vintages=[], vintageParts=[], techs=[], countries=[], volumes=[], prices=[], priceParts=[], payterms=[], prepayments=[], dstarts=[], dends=[], remarks=[];
   const mNames=[], mRecs=[], mDeals=[], mDdates=[], mMatchings=[], mCods=[];
   for(let j=0;j<size;j++){
     const i = startIdx + j;
     tradeNos.push(i <= filled ? String(i) : '');
     if(i <= filled){
       registries.push(val('t'+i+'-registry'));
-      transfers.push(val('t'+i+'-transfer'));
+      transfers.push(transferAccountValue(val('h-order'), val('t'+i+'-transfer')));
       vintages.push(val('t'+i+'-vintage-start-month')+' | '+val('t'+i+'-vintage-start-year')+' | '+val('t'+i+'-vintage-end-month')+' | '+val('t'+i+'-vintage-end-year'));
       vintageParts.push([val('t'+i+'-vintage-start-month'), val('t'+i+'-vintage-start-year'), val('t'+i+'-vintage-end-month'), val('t'+i+'-vintage-end-year')]);
       techs.push(val('t'+i+'-tech'));
@@ -5347,6 +5531,7 @@ function buildTradeGroup(startIdx, filled){
       prices.push(val('t'+i+'-currency')+' | '+val('t'+i+'-price'));
       priceParts.push([val('t'+i+'-currency'), val('t'+i+'-price')]);
       payterms.push(val('t'+i+'-payterm'));
+      prepayments.push(currentProductMode === 'carboncredit' ? val('t'+i+'-prepayment') : '');
       dstarts.push(fmtDateOrdinal(val('t'+i+'-dstart')));
       dends.push(fmtDateOrdinal(val('t'+i+'-dend')));
       remarks.push(remarksVal(i));
@@ -5359,7 +5544,7 @@ function buildTradeGroup(startIdx, filled){
     } else {
       registries.push(''); transfers.push('');
       vintages.push(''); vintageParts.push(['','','','']); techs.push(''); countries.push(''); volumes.push(''); prices.push(''); priceParts.push(['','']);
-      payterms.push(''); dstarts.push(''); dends.push(''); remarks.push('');
+      payterms.push(''); prepayments.push(''); dstarts.push(''); dends.push(''); remarks.push('');
       mNames.push(''); mRecs.push(''); mDeals.push(''); mDdates.push(''); mMatchings.push(''); mCods.push('');
     }
   }
@@ -5372,6 +5557,7 @@ function buildTradeGroup(startIdx, filled){
   addRow('Volume (RECs)', volumes);
   addRow('Price / RECs', prices, false, priceParts);
   addRow('Payment Term', payterms);
+  if(currentProductMode === 'carboncredit') addRow('Prepayment', prepayments);
   addRow('Delivery Start Date', dstarts);
   addRow('Delivery End Date', dends);
   addRow('License Commencement Date (if applicable)', mCods);
@@ -5399,6 +5585,8 @@ function buildTable(){
   addHeaderRow('Entity', [val('h-entity')]);
   addHeaderRow('Commercial Executive', [val('h-bd')]);
   addHeaderRow(currentRole(), [val('h-buyer')]);
+  if(currentProductMode === 'carboncredit') addHeaderRow('Project Name', [val('h-project-name')]);
+  if(currentProductMode === 'carboncredit') addHeaderRow('Project ID', [val('h-project-id')]);
   addHeaderRow('Order Type', [val('h-order')]);
   addHeaderRow('Broker (if any)', [val('h-broker')]);
 
@@ -5610,6 +5798,8 @@ function buildPointFormat(){
   addField('Deal Date', fmtDate(val('h-date')));
   addField('Commercial Executive', val('h-bd'));
   addField(currentRole(), val('h-buyer'));
+  if(currentProductMode === 'carboncredit') addField('Project Name', val('h-project-name'));
+  if(currentProductMode === 'carboncredit') addField('Project ID', val('h-project-id'));
   // Counterparty line: our own side is always "Saxon" internally, shown here
   // with its full legal entity name (SG vs MY), with whichever role is the
   // opposite of the agreement's Buyer/Seller above.
@@ -5633,7 +5823,7 @@ function buildPointFormat(){
     addBlank();
     lines.push({type:'tradeTitle', text:'Product '+i});
     addLiveField(i, 'registry', 'Registry', registryDisplayName(val('t'+i+'-registry')));
-    addField(transferAccountLabel(currentRole()), val('t'+i+'-transfer'));
+    addField(transferAccountLabel(currentRole()), transferAccountValue(val('h-order'), val('t'+i+'-transfer')));
     addField('Vintage', val('t'+i+'-vintage-start-month')+' '+val('t'+i+'-vintage-start-year')+' - '+val('t'+i+'-vintage-end-month')+' '+val('t'+i+'-vintage-end-year'));
     addLiveField(i, 'tech', 'Technology', techFullName(val('t'+i+'-tech')));
     addField('Country', countryFullName(val('t'+i+'-country')));
@@ -5643,9 +5833,10 @@ function buildPointFormat(){
     addField(isCC_i ? 'Volume (VCUs)' : 'Volume (RECs)', val('t'+i+'-volume'));
     addField(isCC_i ? 'Price / VCU' : 'Price / REC', val('t'+i+'-currency')+' '+val('t'+i+'-price'));
     addField('Payment Term', val('t'+i+'-payterm'));
+    if(isCC_i) addField('Prepayment', val('t'+i+'-prepayment'));
     addField('Delivery', fmtDateOrdinal(val('t'+i+'-dstart'))+' - '+fmtDateOrdinal(val('t'+i+'-dend')));
     addField('License Commencement Date (if applicable)', val('t'+i+'-m-cod'));
-    addField(isCC_i ? 'Special Remarks (Project Name)' : 'Special Remarks Request', remarksVal(i));
+    addField(isCC_i ? 'Special Remarks' : 'Special Remarks Request', remarksVal(i));
     // Internal-only from here down — see the addField comment above. Product
     // number is this trade's position (i), 1-based, matching the order
     // products are written as rows in TradeDealLog (see saveConfirmationToHistory).
@@ -5832,7 +6023,7 @@ function buildRecapLinesFromRows(dealId, sortedGroup){
     addBlank();
     lines.push({type:'tradeTitle', text:'Product '+i});
     addLiveField(i, 'registry', 'Registry', registryDisplayName(v[MC.registry]));
-    addField(transferAccountLabel(role), v[MC.tigrsIrecName]);
+    addField(transferAccountLabel(role), transferAccountValue(head[MC.supplyDemand], v[MC.tigrsIrecName]));
     addField('Vintage', (v[MC.vFromMM]||'')+' '+(v[MC.vFromYY]||'')+' - '+(v[MC.vToMM]||'')+' '+(v[MC.vToYY]||''));
     addLiveField(i, 'tech', 'Technology', techFullName(v[MC.tech]) || v[MC.tech] || '');
     addField('Country', countryFullName(v[MC.country]) || v[MC.country] || '');
@@ -5940,7 +6131,9 @@ async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
 
   const hDate = rv('re-h-date'), hEntity = rv('re-h-entity'), hBd = rv('re-h-bd'), hCompany = rv('re-h-company');
   if(!hDate || !hEntity || !hBd || !hCompany){
-    errEl.textContent = 'Deal Date, Entity, BD in-charge and the Buyer/Seller full name can\'t be blank.';
+    errEl.textContent = currentProductMode === 'carboncredit'
+      ? 'Deal Date, Entity, BD in-charge and the Project Name can\'t be blank.'
+      : 'Deal Date, Entity, BD in-charge and the Buyer/Seller full name can\'t be blank.';
     errEl.style.display = 'block';
     return;
   }
@@ -6003,7 +6196,7 @@ async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
   btn.textContent = 'Saving\u2026';
   try{
     for(const r of updatedRows){
-      await updateTableRow(LOG_TABLE_NAME, r.index, r.values[0]);
+      await updateCanonicalTableRow(dealLogTableName(), r.index, r.values[0]);
     }
     await loadHistory(); // refresh logRowsCache so every other view of this deal picks up the edit too
     const refreshedGroup = logRowsCache
@@ -6191,7 +6384,9 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
 
   const hDate = rv('fe-h-date'), hEntity = rv('fe-h-entity'), hBd = rv('fe-h-bd'), hCompany = rv('fe-h-company');
   if(!hDate || !hEntity || !hBd || !hCompany){
-    errEl.textContent = 'Deal Date, Entity, BD in-charge and the Buyer/Seller full name can\'t be blank.';
+    errEl.textContent = currentProductMode === 'carboncredit'
+      ? 'Deal Date, Entity, BD in-charge and the Project Name can\'t be blank.'
+      : 'Deal Date, Entity, BD in-charge and the Buyer/Seller full name can\'t be blank.';
     errEl.style.display = 'block';
     return;
   }
@@ -6284,7 +6479,7 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
   btn.textContent = 'Saving\u2026';
   try{
     for(const r of updatedRows){
-      await updateTableRow(LOG_TABLE_NAME, r.index, r.values[0]);
+      await updateCanonicalTableRow(dealLogTableName(), r.index, r.values[0]);
     }
     await notifyNextApprover(STATUS_PENDING_1, dealId, updatedRows[0].values[0][MC.description], changeSummary);
     await loadHistory(); // refresh logRowsCache and re-render every history/queue view
@@ -6328,6 +6523,10 @@ function detailFieldDefs(requireDealId){
     {id:'h-entity', label:'Entity'},
     {id:'h-bd', label:'BD in-charge'},
     {id:'h-buyer', label:currentRole()+' Full Name'},
+    ...(currentProductMode === 'carboncredit' ? [
+      {id:'h-project-name', label:'Project Name'},
+      {id:'h-project-id', label:'Project ID', validate:(v)=>/^[0-9]+$/.test((v||'').trim())}
+    ] : []),
     {id:'h-order', label:'Order type'},
     {id:'h-description', label:'Commercial Justification'}
   );
