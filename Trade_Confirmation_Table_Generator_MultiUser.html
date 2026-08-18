@@ -3169,7 +3169,7 @@ function renderAnalysisTab(){
   }
   let html = '<table><tr>' +
     '<th>BD in-charge</th><th>Deal ID</th><th>Deal Date</th><th>Counterparty</th>' +
-    '<th>Products</th><th>Total Volume</th><th>Total No of RECs</th><th>Status</th></tr>';
+    '<th>Products</th><th>Total Volume</th><th>Total Matched Volume</th><th>Status</th></tr>';
   groups.forEach(g=>{
     const v = g.rows[0].values[0];
     const status = dealGroupStatus(g.rows);
@@ -3188,7 +3188,7 @@ function renderAnalysisTab(){
       '<td>'+escapeHtml(v[MC.company]||'')+'</td>' +
       '<td>'+g.rows.length+'</td>' +
       '<td>'+(totalVolume ? totalVolume.toLocaleString() : '')+'</td>' +
-      '<td>'+(totalRecs || '')+'</td>' +
+      '<td>'+totalRecs+'</td>' +
       '<td>'+statusBadge(status)+'</td>' +
     '</tr>';
   });
@@ -3207,7 +3207,7 @@ function exportAnalysisToExcel(){
     return;
   }
   const groups = getFilteredAnalysisGroups();
-  const header = ['BD in-charge', 'Deal ID', 'Deal Date', 'Counterparty', 'Products', 'Total Volume', 'Total No of RECs', 'Status'];
+  const header = ['BD in-charge', 'Deal ID', 'Deal Date', 'Counterparty', 'Products', 'Total Volume', 'Total Matched Volume', 'Status'];
   const rows = groups.map(g=>{
     const v = g.rows[0].values[0];
     const status = dealGroupStatus(g.rows);
