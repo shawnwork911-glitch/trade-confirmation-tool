@@ -908,7 +908,8 @@ const MC = {
   projectId:62, projectName:63, prepayment:64
 };
 const COL_COUNT = 59;
-const DRAFT_TABLE_NAME = "TradeDealDrafts";   // must match the Excel Table name you create
+const STANDARD_DRAFT_TABLE_NAME = "TradeDealDrafts";   // Excel Table on the TradeDealDrafts sheet
+const CC_DRAFT_TABLE_NAME = "TradeDealDrafts9";           // Excel Table on the CCDealDrafts sheet
 // Small generic key/value settings table. Currently holds one row:
 // key="dealIdStart", value=the lowest 5-digit number the next new Deal ID
 // is allowed to start from (superadmin-editable — see "Deal ID numbering").
@@ -1001,7 +1002,8 @@ let currentDealDocId = null;
 // session recognize its own submission again after a reload — currentDealDocId
 // alone can no longer be trusted for that once the swap has happened.
 let currentSubmittedDate = null;
-let draftRowIndex = null;      // this user's row index in the Drafts table, or null if none saved yet
+let draftRowIndex = null;      // this user's row index in the currently active draft table, or null if none saved yet
+let draftRowTableName = null;  // tracks which draft table draftRowIndex belongs to
 let logRowsCache = [];         // last-fetched rows from the log table, for the "View" buttons
 let userRolesCache = [];       // last-fetched rows from the TradeUserRoles table
 let currentUserRole = 'user';
@@ -1009,6 +1011,10 @@ let isAdmin = false;           // true for admin1/admin2/admin3/superadmin — a
 let currentTab = 'form';       // which main tab is active — see setActiveTab()
 let currentProductMode = 'standard'; // normal Form excludes CC; Carbon Credit Tech is CC-only
 let activeDealLogTableName = STANDARD_LOG_TABLE_NAME;
+// Cache of live Excel table widths. This must exist before getTableColumnCount()
+// is called; keeping it explicit also lets us invalidate/refresh widths when a
+// workbook table has been expanded (e.g. TradeDealLog from 59 to 62 columns).
+const tableColumnCountCache = {};
 let settingsCacheByTable = {};
 let dealIdStartOverrideByTable = {};
 let settingsCache = [];
@@ -1966,8 +1972,11 @@ async function addApprovedDealToList(values, changeNote){
     }
 }
 
-async function getTableColumnCount(tableName){
-  if(tableColumnCountCache[tableName]) return tableColumnCountCache[tableName];
+async function getTableColumnCount(tableName, forceRefresh){
+  // Table widths can change as columns are added to TradeDealLog/CCDealLog.
+  // Use the cache for ordinary reads, but callers that are about to write can
+  // force a fresh schema read so a stale width never makes Graph reject a PATCH.
+  if(!forceRefresh && tableColumnCountCache[tableName]) return tableColumnCountCache[tableName];
   const data = await graphFetch(workbookTablePath(tableName) + '/columns?$select=name');
   const count = (data.value || []).length;
   tableColumnCountCache[tableName] = count;
@@ -1985,6 +1994,8 @@ function fitRowToColumnCount(values, count){
 function dealLogTableName(){ return activeDealLogTableName || STANDARD_LOG_TABLE_NAME; }
 function logTableForMode(mode){ return mode === 'carboncredit' ? CC_LOG_TABLE_NAME : STANDARD_LOG_TABLE_NAME; }
 function settingsTableForLog(tableName){ return tableName === CC_LOG_TABLE_NAME ? CC_SETTINGS_TABLE_NAME : STANDARD_SETTINGS_TABLE_NAME; }
+function draftTableForMode(mode){ return mode === 'carboncredit' ? CC_DRAFT_TABLE_NAME : STANDARD_DRAFT_TABLE_NAME; }
+function draftTableName(){ return draftTableForMode(currentProductMode); }
 function setActiveDealLogTable(tableName){
   activeDealLogTableName = tableName === CC_LOG_TABLE_NAME ? CC_LOG_TABLE_NAME : STANDARD_LOG_TABLE_NAME;
   settingsCache = settingsCacheByTable[activeDealLogTableName] || [];
@@ -2032,7 +2043,7 @@ async function getAllCanonicalDealRows(){
   return standardRows.concat(ccRows);
 }
 async function addTableRow(tableName, values){
-  const count = await getTableColumnCount(tableName);
+  const count = await getTableColumnCount(tableName, true);
   return graphFetch(workbookTablePath(tableName) + '/rows/add', {
     method: 'POST',
     body: JSON.stringify({ values: [fitRowToColumnCount(values, count)] })
@@ -2047,14 +2058,17 @@ async function addTableRow(tableName, values){
 // is free to be resubmitted immediately.
 async function addTableRows(tableName, rowsArray){
   if(!rowsArray.length) return;
-  const count = await getTableColumnCount(tableName);
+  const count = await getTableColumnCount(tableName, true);
   return graphFetch(workbookTablePath(tableName) + '/rows/add', {
     method: 'POST',
     body: JSON.stringify({ values: rowsArray.map(v => fitRowToColumnCount(v, count)) })
   });
 }
 async function updateTableRow(tableName, rowIndex, values){
-  const count = await getTableColumnCount(tableName);
+  // Approval updates whole Excel table rows. Re-read the live width first so
+  // recently added trailing columns (TradeDealLog currently 62; CCDealLog 65)
+  // are preserved/padded correctly instead of causing a width mismatch.
+  const count = await getTableColumnCount(tableName, true);
   return graphFetch(workbookTablePath(tableName) + '/rows/itemAt(index=' + rowIndex + ')', {
     method: 'PATCH',
     body: JSON.stringify({ values: [fitRowToColumnCount(values, count)] })
@@ -2184,16 +2198,31 @@ async function saveDraft(){
   setDraftStatus('Saving…');
   const json = JSON.stringify(gatherFormData());
   const nowIso = new Date().toISOString();
+  const tableName = draftTableName();
+  const myEmail = (currentAccount.username || '').toLowerCase();
   try{
-    if(draftRowIndex !== null){
-      await updateTableRow(DRAFT_TABLE_NAME, draftRowIndex, [currentAccount.username, json, nowIso]);
-    }else{
-      await addTableRow(DRAFT_TABLE_NAME, [currentAccount.username, json, nowIso]);
-      const rows = await getTableRows(DRAFT_TABLE_NAME);
-      const mine = rows.find(r => (r.values[0][0] || '').toLowerCase() === (currentAccount.username || '').toLowerCase());
+    // draftRowIndex is only meaningful within the table it came from. When
+    // switching between RECs and Carbon Credit, re-resolve the user's row in
+    // the corresponding draft table before updating so we never overwrite a
+    // different user's row that happens to share the same numeric index.
+    if(draftRowTableName !== tableName){
+      draftRowIndex = null;
+      draftRowTableName = tableName;
+    }
+    if(draftRowIndex === null){
+      const rows = await getTableRows(tableName);
+      const mine = rows.find(r => (r.values[0][0] || '').toLowerCase() === myEmail);
       if(mine) draftRowIndex = mine.index;
     }
-    setDraftStatus('Draft saved');
+    if(draftRowIndex !== null){
+      await updateTableRow(tableName, draftRowIndex, [currentAccount.username, json, nowIso]);
+    }else{
+      await addTableRow(tableName, [currentAccount.username, json, nowIso]);
+      const rows = await getTableRows(tableName);
+      const mine = rows.find(r => (r.values[0][0] || '').toLowerCase() === myEmail);
+      if(mine) draftRowIndex = mine.index;
+    }
+    setDraftStatus(currentProductMode === 'carboncredit' ? 'Carbon Credit draft saved' : 'Draft saved');
   }catch(err){
     console.error('Draft save failed', err);
     setDraftStatus('Draft save failed');
@@ -2247,9 +2276,11 @@ async function loadDraftAndHistory(){
   }
   setDraftStatus('Loading…');
   try{
-    const rows = await getTableRows(DRAFT_TABLE_NAME);
+    const tableName = draftTableName();
+    const rows = await getTableRows(tableName);
     const myEmail = (currentAccount.username || '').toLowerCase();
     const mine = rows.find(r => (r.values[0][0] || '').toLowerCase() === myEmail);
+    draftRowTableName = tableName;
     draftRowIndex = mine ? mine.index : null;
     if(mine){
       try{ applyDraftData(JSON.parse(mine.values[0][1])); setDraftStatus('Draft loaded'); }
@@ -2380,7 +2411,15 @@ document.addEventListener('change', ()=>{
 // still visible in Saved agreements).
 async function resetToBlankForm(){
   try{
-    if(draftRowIndex !== null) await deleteTableRow(DRAFT_TABLE_NAME, draftRowIndex);
+    const tableName = draftTableName();
+    let rowIndex = (draftRowTableName === tableName) ? draftRowIndex : null;
+    if(rowIndex === null && currentAccount){
+      const rows = await getTableRows(tableName);
+      const myEmail = (currentAccount.username || '').toLowerCase();
+      const mine = rows.find(r => (r.values[0][0] || '').toLowerCase() === myEmail);
+      if(mine) rowIndex = mine.index;
+    }
+    if(rowIndex !== null) await deleteTableRow(tableName, rowIndex);
   }catch(err){ console.error('Could not clear draft row', err); }
   location.reload();
 }
@@ -5411,6 +5450,8 @@ function switchProductMode(mode){
     ? gatherFormData() : null;
   currentProductMode = mode;
   setActiveDealLogTable(logTableForMode(mode));
+  draftRowIndex = null;
+  draftRowTableName = draftTableName();
   updateBuyerSellerFieldLabel();
   renderTrades();
   if(!snapshot) return;
