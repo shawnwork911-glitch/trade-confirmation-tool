@@ -767,6 +767,10 @@ const LOG_TABLE_NAME = "TradeDealLog";        // must match the Excel Table name
 // change-diff shown to approvers (see the editChangeSummary comment on the
 // MC object below); not required for anything else in this app to work:
 // Edit Change Summary.
+// OPTIONAL 62nd column, only needed for a post-approval Volume (RECs)
+// correction requested via the same "Request edit" flow as Registry/Tech
+// (see the pendingVolume comment on the MC object below); not required for
+// anything else in this app to work: Pending Volume.
 // NOTE: if you're adding this to an existing workbook, add any new column
 // ("Broker Fee Type"/"Broker Fee Currency"/"Broker Fee Price" included, the
 // 7 "Pending ..."/"Change Requested ..." columns used for post-approval BD
@@ -775,11 +779,13 @@ const LOG_TABLE_NAME = "TradeDealLog";        // must match the Excel Table name
 // Requested By, Change Requested Date), "Row Uid"/"Approved List Item
 // Id", "Pending Registry"/"Pending Tech" (staging columns for a
 // post-approval Registry/Tech correction — see the pendingRegistry/
-// pendingTech comment on the MC object below), and now "Edit Change
+// pendingTech comment on the MC object below), "Edit Change
 // Summary" (what a post-Level-1 "Edit & resend" changed — see the
-// editChangeSummary comment on the MC object below)) at the END of the live
-// TradeDealLog Excel Table — don't insert them in the middle, or every
-// existing column index below will point at the wrong data.
+// editChangeSummary comment on the MC object below), and now "Pending
+// Volume" (a post-approval Volume (RECs) correction — see the pendingVolume
+// comment on the MC object below)) at the END of the live TradeDealLog
+// Excel Table — don't insert them in the middle, or every existing column
+// index below will point at the wrong data.
 // "Row Uid": a permanent, per-TRADE-ROW random ID, stamped once at Save
 // agreement time and never touched again — unlike Deal ID (shared by every
 // row of a multi-product agreement) or the Excel row index (which can shift
@@ -839,15 +845,18 @@ const MC = {
   // signs off, exactly like the other pending* columns.
   pendingRegistry:57, pendingTech:58,
   // Optional column for the "1 month before Delivery End Date" Registry/
-  // Tech reminder email — that reminder is sent by an external, separately
-  // configured Power Automate flow (scheduled/timer-triggered, so it can
-  // fire on the right day regardless of whether anyone has this app open —
-  // this app itself has no server/cron and can't do that), NOT by any code
-  // in this file. This column exists purely so that flow has somewhere to
-  // stamp "last reminded" for its own dedupe/resend logic, and so this app
-  // can clear it once a row's Registry/Tech is actually fixed (see
-  // approveBdMatchChange) — a fresh ambiguity later then starts a clean
-  // reminder cycle rather than inheriting a stale timestamp. Deliberately
+  // Tech/Volume reminder email — that reminder is sent by an external,
+  // separately configured Power Automate flow (scheduled/timer-triggered,
+  // so it can fire on the right day regardless of whether anyone has this
+  // app open — this app itself has no server/cron and can't do that), NOT
+  // by any code in this file. This column exists purely so that flow has
+  // somewhere to stamp "last reminded" for its own dedupe/resend logic, and
+  // so this app can clear it once a row's Registry/Tech and Volume are
+  // actually fixed (see approveBdMatchChange) — a fresh ambiguity later
+  // then starts a clean reminder cycle rather than inheriting a stale
+  // timestamp. Same column, same stamp, for both kinds of ambiguity — see
+  // needsRegistryTechFix/needsVolumeFix — since either one needs the exact
+  // same "confirm 1 month before Delivery End Date" nudge. Deliberately
   // NOT counted in COL_COUNT below — it's optional/additive, so a workbook
   // that hasn't added this one extra column yet doesn't get blocked out of
   // any OTHER feature that guards on COL_COUNT (saving, approving, BD
@@ -866,7 +875,16 @@ const MC = {
   // pendingMatchNote. Also optional/additive, same reasoning as
   // regTechReminderSentDate above — guard on values.length before
   // reading/writing it.
-  editChangeSummary:60
+  editChangeSummary:60,
+  // Staging area for a Volume (RECs) correction — same "Pending Change -
+  // Level 3" pattern as pendingRegistry/pendingTech above, for a product
+  // whose Volume is still saved as an unconfirmed range (e.g. "170-220";
+  // see needsVolumeFix). Nothing here touches the live Volume column until
+  // a Level 3 approver signs off, exactly like the other pending* columns.
+  // Optional/additive, same reasoning as regTechReminderSentDate/
+  // editChangeSummary above — guard on values.length before reading/
+  // writing it.
+  pendingVolume:61
 };
 const COL_COUNT = 59;
 const DRAFT_TABLE_NAME = "TradeDealDrafts";   // must match the Excel Table name you create
@@ -2332,16 +2350,18 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
     row[MC.approvedListItemId] = '';
     // Optional 60th column (see the regTechReminderSentDate comment on MC) —
     // only stamp it if the live table actually has it, and only when this
-    // product's Registry and/or Tech is genuinely ambiguous at save time.
-    // Stamping it with the row's own Delivery End Date (rather than
+    // product's Registry and/or Tech is genuinely ambiguous, OR its Volume
+    // (RECs) is still an unconfirmed range (see needsVolumeFix), at save
+    // time. Stamping it with the row's own Delivery End Date (rather than
     // "today") lets the external Power Automate reminder flow dedupe
     // against the CURRENT Delivery End Date: if that date is later edited
     // (see saveRecapEdits), the stamp no longer matches it and the flow's
     // own comparison naturally treats this as not-yet-reminded again — no
     // extra clearing logic needed here for that case. The existing
-    // "cleared once Registry/Tech is actually fixed" logic in
+    // "cleared once Registry/Tech/Volume is actually fixed" logic in
     // approveBdMatchChange is unaffected by this and still applies.
-    if(liveColumnCount > MC.regTechReminderSentDate && needsRegistryTechFix(row[MC.registry], row[MC.tech])){
+    if(liveColumnCount > MC.regTechReminderSentDate &&
+       (needsRegistryTechFix(row[MC.registry], row[MC.tech]) || needsVolumeFix(row[MC.volume]))){
       row[MC.regTechReminderSentDate] = row[MC.deliveryEnd];
     }
     rowsToWrite.push(row);
@@ -2645,6 +2665,9 @@ async function requestBdMatchChange(dealId, edits, matchNote){
     if((rv[MC.tech]||'') !== (edit.tech||'')){
       lines.push('Tech: ' + techFullName(rv[MC.tech]) + ' \u2192 ' + techFullName(edit.tech));
     }
+    if(edit.volume !== undefined && (rv[MC.volume]||'') !== (edit.volume||'')){
+      lines.push('Volume (RECs): ' + (rv[MC.volume]||'(blank)') + ' \u2192 ' + (edit.volume||'(blank)'));
+    }
     if(lines.length){
       rowChanged[i] = true;
       changeLines.push((matching.length > 1 ? 'Product ' + (i+1) + ' \u2014 ' : '') + lines.join(', '));
@@ -2671,6 +2694,10 @@ async function requestBdMatchChange(dealId, edits, matchNote){
     values[MC.pendingDeliveryDateM] = edit.deliveryDateM || '';
     values[MC.pendingRegistry] = edit.registry || '';
     values[MC.pendingTech] = edit.tech || '';
+    // Optional column (see pendingVolume on MC) — only stage it if the
+    // live table actually has it; a workbook that hasn't added it yet
+    // just won't carry a Volume fix through this flow.
+    if(values.length > MC.pendingVolume) values[MC.pendingVolume] = edit.volume || '';
     values[MC.pendingMatchNote] = matchNote || '';
     values[MC.pendingRequestedBy] = currentAccount.username;
     values[MC.pendingRequestedDate] = nowIso;
@@ -2753,6 +2780,9 @@ async function approveBdMatchChange(dealId){
     if((values[MC.tech]||'') !== (values[MC.pendingTech]||'')){
       noteLines.push('Tech: ' + techFullName(values[MC.tech]) + ' \u2192 ' + techFullName(values[MC.pendingTech]));
     }
+    if(values.length > MC.pendingVolume && (values[MC.volume]||'') !== (values[MC.pendingVolume]||'')){
+      noteLines.push('Volume (RECs): ' + (values[MC.volume]||'(blank)') + ' \u2192 ' + (values[MC.pendingVolume]||'(blank)'));
+    }
     const submitterNote = values[MC.pendingMatchNote] || '';
     const changeNote = 'BD source matching change' + (noteLines.length ? ': ' + noteLines.join(', ') : '') +
       (submitterNote ? ' \u2014 Note: ' + submitterNote : '');
@@ -2770,13 +2800,17 @@ async function approveBdMatchChange(dealId){
     // an already-correct Registry/Tech.
     if(values[MC.pendingRegistry]) values[MC.registry] = values[MC.pendingRegistry];
     if(values[MC.pendingTech]) values[MC.tech] = values[MC.pendingTech];
+    // Same idea, for a Volume (RECs) fix (see pendingVolume on MC) —
+    // optional column, guard on values.length before reading/writing it.
+    if(values.length > MC.pendingVolume && values[MC.pendingVolume]) values[MC.volume] = values[MC.pendingVolume];
     // Fixed now (or was never ambiguous) — clear any reminder-sent stamp
     // so a future, unrelated ambiguity on this row starts its own fresh
     // reminder window rather than inheriting an old timestamp. Guarded on
     // values.length since the "Reg/Tech Reminder Sent Date" column is
     // optional (see MC.regTechReminderSentDate) — on a table that hasn't
     // added it yet, this row's values array simply won't reach that index.
-    if(values.length > MC.regTechReminderSentDate && !needsRegistryTechFix(values[MC.registry], values[MC.tech])){
+    if(values.length > MC.regTechReminderSentDate &&
+       !needsRegistryTechFix(values[MC.registry], values[MC.tech]) && !needsVolumeFix(values[MC.volume])){
       values[MC.regTechReminderSentDate] = '';
     }
     values[MC.pendingMatching] = '';
@@ -2786,6 +2820,7 @@ async function approveBdMatchChange(dealId){
     values[MC.pendingDeliveryDateM] = '';
     values[MC.pendingRegistry] = '';
     values[MC.pendingTech] = '';
+    if(values.length > MC.pendingVolume) values[MC.pendingVolume] = '';
     values[MC.pendingMatchNote] = '';
     values[MC.pendingRequestedBy] = '';
     values[MC.pendingRequestedDate] = '';
@@ -2848,6 +2883,7 @@ async function rejectBdMatchChange(dealId, reason){
     values[MC.pendingDeliveryDateM] = '';
     values[MC.pendingRegistry] = '';
     values[MC.pendingTech] = '';
+    if(values.length > MC.pendingVolume) values[MC.pendingVolume] = '';
     values[MC.pendingMatchNote] = '';
     values[MC.pendingRequestedBy] = '';
     values[MC.pendingRequestedDate] = '';
@@ -3109,17 +3145,18 @@ function renderAnalysisTab(){
   // ---- summary stat cards ----
   // Rejected deals don't represent real transacted volume, so they're
   // excluded from the Total volume figure (unlike Total confirmations,
-  // which counts every deal regardless of status).
+  // which counts every deal regardless of status). A product still saved
+  // as an unconfirmed Volume range (see needsVolumeFix) is estimated at
+  // its midpoint (see parseVolumeForTotals) rather than silently counted
+  // as 0.
   const totalVolumeAll = groups.reduce((sum, g) => {
     if(dealGroupStatus(g.rows) === STATUS_REJECTED) return sum;
-    return sum + g.rows.reduce((s, r)=>{
-      const n = Number(r.values[0][MC.volume]);
-      return s + (isFinite(n) ? n : 0);
-    }, 0);
+    return sum + g.rows.reduce((s, r)=> s + parseVolumeForTotals(r.values[0][MC.volume]), 0);
   }, 0);
+  const anyVolumeUnconfirmed = groups.some(g => dealGroupStatus(g.rows) !== STATUS_REJECTED && g.rows.some(r => needsVolumeFix(r.values[0][MC.volume])));
   document.getElementById('analysis-stats').innerHTML = [
     ['Total confirmations', total, ''],
-    ['Total volume', totalVolumeAll.toLocaleString(), ''],
+    ['Total volume', totalVolumeAll.toLocaleString(), anyVolumeUnconfirmed ? '⚠ includes estimated (unconfirmed range) volume' : ''],
     ['Approved', approvedCount, pct(approvedCount)+'% of total'],
     ['Pending (any level)', pendingCount, pct(pendingCount)+'% of total'],
     ['Rejected', rejectedCount, pct(rejectedCount)+'% of total']
@@ -3173,10 +3210,17 @@ function renderAnalysisTab(){
   groups.forEach(g=>{
     const v = g.rows[0].values[0];
     const status = dealGroupStatus(g.rows);
-    const totalVolume = g.rows.reduce((sum, r)=>{
-      const n = Number(r.values[0][MC.volume]);
-      return sum + (isFinite(n) ? n : 0);
-    }, 0);
+    const totalVolume = g.rows.reduce((sum, r)=> sum + parseVolumeForTotals(r.values[0][MC.volume]), 0);
+    // Per-product raw range text (e.g. "170-220") for any product whose
+    // Volume is still unconfirmed — shown in red under the estimated
+    // total so the actual, un-averaged figures stay visible rather than
+    // being hidden behind the midpoint estimate (see parseVolumeForTotals).
+    const volumeRangeParts = g.rows.map((r, idx)=>{
+      const vol = r.values[0][MC.volume];
+      if(!needsVolumeFix(vol)) return null;
+      return (g.rows.length > 1 ? 'Product '+(idx+1)+': ' : '') + String(vol).trim();
+    }).filter(Boolean);
+    const volumeUnconfirmed = volumeRangeParts.length > 0;
     const totalRecs = g.rows.reduce((sum, r)=>{
       const n = Number(r.values[0][MC.noOfRecs]);
       return sum + (isFinite(n) ? n : 0);
@@ -3187,7 +3231,10 @@ function renderAnalysisTab(){
       '<td>'+escapeHtml(formatStoredDate(v[MC.agreementDate]))+'</td>' +
       '<td>'+escapeHtml(v[MC.company]||'')+'</td>' +
       '<td>'+g.rows.length+'</td>' +
-      '<td>'+(totalVolume ? totalVolume.toLocaleString() : '')+'</td>' +
+      '<td>'+(totalVolume ? totalVolume.toLocaleString() : '')+
+        (volumeUnconfirmed ? ' <span title="Contains an unconfirmed Volume (RECs) range — figure uses the midpoint as an estimate until confirmed" style="color:#c1493a;cursor:help;">⚠</span>'+
+          '<div style="color:#c1493a;font-size:11px;margin-top:2px;">Actual: '+escapeHtml(volumeRangeParts.join('; '))+'</div>' : '')+
+      '</td>' +
       '<td>'+totalRecs+'</td>' +
       '<td>'+statusBadge(status)+'</td>' +
     '</tr>';
@@ -3207,14 +3254,17 @@ function exportAnalysisToExcel(){
     return;
   }
   const groups = getFilteredAnalysisGroups();
-  const header = ['BD in-charge', 'Deal ID', 'Deal Date', 'Counterparty', 'Products', 'Total Volume', 'Total Matched Volume', 'Status'];
+  const header = ['BD in-charge', 'Deal ID', 'Deal Date', 'Counterparty', 'Products', 'Total Volume', 'Volume Confirmed', 'Actual Volume Range(s)', 'Total Matched Volume', 'Status'];
   const rows = groups.map(g=>{
     const v = g.rows[0].values[0];
     const status = dealGroupStatus(g.rows);
-    const totalVolume = g.rows.reduce((sum, r)=>{
-      const n = Number(r.values[0][MC.volume]);
-      return sum + (isFinite(n) ? n : 0);
-    }, 0);
+    const totalVolume = g.rows.reduce((sum, r)=> sum + parseVolumeForTotals(r.values[0][MC.volume]), 0);
+    const volumeRangeParts = g.rows.map((r, idx)=>{
+      const vol = r.values[0][MC.volume];
+      if(!needsVolumeFix(vol)) return null;
+      return (g.rows.length > 1 ? 'Product '+(idx+1)+': ' : '') + String(vol).trim();
+    }).filter(Boolean);
+    const volumeUnconfirmed = volumeRangeParts.length > 0;
     const totalRecs = g.rows.reduce((sum, r)=>{
       const n = Number(r.values[0][MC.noOfRecs]);
       return sum + (isFinite(n) ? n : 0);
@@ -3226,12 +3276,14 @@ function exportAnalysisToExcel(){
       v[MC.company] || '',
       g.rows.length,
       totalVolume,
+      volumeUnconfirmed ? 'No — estimated (range)' : 'Yes',
+      volumeRangeParts.join('; '),
       totalRecs,
       status
     ];
   });
   const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
-  ws['!cols'] = [{wch:20},{wch:12},{wch:12},{wch:26},{wch:9},{wch:14},{wch:16},{wch:22}];
+  ws['!cols'] = [{wch:20},{wch:12},{wch:12},{wch:26},{wch:9},{wch:14},{wch:18},{wch:24},{wch:16},{wch:22}];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Analysis');
   const stamp = new Date().toISOString().slice(0,10);
@@ -3343,21 +3395,33 @@ function renderHistoryTable(el, groups, opts){
     '</tr>';
     // Shown to whoever's looking at this table — including admin
     // Level 1/2/3 in the Approval queue, not just after the deal is
-    // already Approved — so an ambiguous Registry/Tech can be caught
-    // (or at least flagged to the submitter) as early as possible, before
-    // it ever needs the heavier post-approval "Request edit" + fresh
-    // Level 3 sign-off round-trip. See needsRegistryTechFix.
+    // already Approved — so an ambiguous Registry/Tech, or an unconfirmed
+    // Volume (RECs) range (e.g. "170-220" — see needsVolumeFix), can be
+    // caught (or at least flagged to the submitter) as early as possible,
+    // before it ever needs the heavier post-approval "Request edit" +
+    // fresh Level 3 sign-off round-trip. See needsRegistryTechFix.
+    let anyRegTechFlag = false, anyVolumeFlag = false;
     const regTechFlags = g.rows.map((r, idx)=>{
       const rv = r.values[0];
-      if(!needsRegistryTechFix(rv[MC.registry], rv[MC.tech])) return '';
       const label = g.rows.length > 1 ? 'Product '+(idx+1)+': ' : '';
-      return label + regTechIssueText(rv[MC.registry], rv[MC.tech]);
+      const parts = [];
+      if(needsRegistryTechFix(rv[MC.registry], rv[MC.tech])){
+        anyRegTechFlag = true;
+        parts.push(regTechIssueText(rv[MC.registry], rv[MC.tech]));
+      }
+      if(needsVolumeFix(rv[MC.volume])){
+        anyVolumeFlag = true;
+        parts.push(volumeIssueText(rv[MC.volume]));
+      }
+      return parts.length ? label + parts.join('; ') : '';
     }).filter(Boolean);
     if(regTechFlags.length){
+      const heading = anyRegTechFlag && anyVolumeFlag ? 'Registry/Tech/Volume needs confirmation'
+        : anyVolumeFlag ? 'Volume needs confirmation' : 'Registry/Tech needs confirmation';
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
         '<div style="background:#fdecea;border:1px solid #e2a49a;color:#8a2d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
-        '<strong>⚠ Registry/Tech needs confirmation:</strong> '+escapeHtml(regTechFlags.join(' · '))+
-        '. Please edit to the correct Registry/Tech, deadline given 1 month before the Delivery End Date.' +
+        '<strong>⚠ '+heading+':</strong> '+escapeHtml(regTechFlags.join(' · '))+
+        '. Please edit to the correct value(s), deadline given 1 month before the Delivery End Date.' +
         '</div></td></tr>';
     }
     if(status === STATUS_REJECTED && v[MC.rejectReason]){
@@ -3400,6 +3464,9 @@ function renderHistoryTable(el, groups, opts){
         }
         if((rv[MC.tech]||'') !== (rv[MC.pendingTech]||'')){
           lines.push('Tech: <s>'+escapeHtml(techFullName(rv[MC.tech])||'(blank)')+'</s> → <strong>'+escapeHtml(techFullName(rv[MC.pendingTech])||'(blank)')+'</strong>');
+        }
+        if(rv.length > MC.pendingVolume && (rv[MC.volume]||'') !== (rv[MC.pendingVolume]||'')){
+          lines.push('Volume (RECs): <s>'+escapeHtml(rv[MC.volume]||'(blank)')+'</s> → <strong>'+escapeHtml(rv[MC.pendingVolume]||'(blank)')+'</strong>');
         }
         if(!lines.length) return '';
         return '<div style="margin-top:'+(idx>0?'6px':'0')+';">'+(g.rows.length>1?'<strong>Product '+(idx+1)+':</strong> ':'')+lines.join(' · ')+'</div>';
@@ -3749,12 +3816,37 @@ function editRequestRegistryTechHtml(idx, registry, tech, rowUid){
       '</label>' +
     '</div>';
 }
+// Same idea as editRequestRegistryTechHtml, for a Volume (RECs) still saved
+// as an unconfirmed range (e.g. "170-220" — see needsVolumeFix). Only ever
+// rendered as a live, editable text field (plus a required confirmation
+// checkbox) when the product's Volume is genuinely still a range —
+// otherwise it's a hidden input carrying the product's current, unchanged
+// Volume through to submit, same reasoning as the Registry/Tech version.
+function editRequestVolumeHtml(idx, volume, rowUid){
+  const uidAttr = ' data-uid="'+escapeHtml(rowUid||'')+'"';
+  if(!needsVolumeFix(volume)){
+    return '<input type="hidden" class="edit-request-volume" data-idx="'+idx+'"'+uidAttr+' value="'+escapeHtml(volume||'')+'"/>';
+  }
+  return '<div style="border:1px solid #e2a49a;background:#fdecea;border-radius:6px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;">' +
+      '<p style="margin:0;font-size:12px;color:#8a2d1f;font-weight:600;">Volume (RECs) needs confirmation</p>' +
+      '<p style="margin:0;font-size:12px;color:#8a2d1f;">This product\'s Volume (RECs) is currently saved as a range ('+
+        escapeHtml(volume)+'). Please enter the single, confirmed volume and confirm before submitting.</p>' +
+      '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Volume (RECs)</label>' +
+        '<input type="text" class="edit-request-volume edit-request-volume-fix" data-idx="'+idx+'"'+uidAttr+' placeholder="e.g. 200"/></div>' +
+      '<label style="display:flex;align-items:flex-start;gap:6px;font-size:12px;color:#8a2d1f;cursor:pointer;">' +
+        '<input type="checkbox" class="edit-request-volume-confirm" data-idx="'+idx+'" style="width:auto;margin:2px 0 0;"> ' +
+        'I confirm the Volume (RECs) entered above is correct — a single confirmed number, not a range.' +
+      '</label>' +
+    '</div>';
+}
 // Populates one editable block per product on the deal, prefilled from its
 // current (live, already-Approved) Matching/Buyer-Seller/Which deal/No of
 // RECs/Delivery date values, plus — only for a product whose Registry
-// and/or Tech currently holds more than one value — a Registry/Tech fix
-// block (see editRequestRegistryTechHtml/needsRegistryTechFix). Deliberately
-// only these fields; the rest of an Approved deal's data stays locked.
+// and/or Tech currently holds more than one value, or whose Volume (RECs)
+// is still an unconfirmed range — a Registry/Tech and/or Volume fix block
+// (see editRequestRegistryTechHtml/editRequestVolumeHtml/
+// needsRegistryTechFix/needsVolumeFix). Deliberately only these fields; the
+// rest of an Approved deal's data stays locked.
 function openEditRequestModal(dealId){
   editRequestModalDealId = dealId;
   document.getElementById('edit-request-modal-dealid').textContent = friendlyDealId(dealId);
@@ -3777,6 +3869,7 @@ function openEditRequestModal(dealId){
     const label = group.length > 1 ? 'Product ' + (idx+1) : 'Product';
     const dealField = editRequestDealFieldHtml(idx, v[MC.whichDeal]||'', v[MC.rowUid]||'');
     const regTechHtml = editRequestRegistryTechHtml(idx, v[MC.registry]||'', v[MC.tech]||'', v[MC.rowUid]||'');
+    const volumeHtml = editRequestVolumeHtml(idx, v[MC.volume]||'', v[MC.rowUid]||'');
     // data-uid carries this row's permanent Row Uid — requestBdMatchChange
     // uses it to confirm, at submit time, that it's still writing this
     // edit onto the exact same physical row the modal showed (rather than
@@ -3812,6 +3905,7 @@ function openEditRequestModal(dealId){
           '</div></div>' +
       '</div>' +
       regTechHtml +
+      volumeHtml +
       '</div>';
   }).join('') +
     // Single note shared across every product on this deal — explains WHY
@@ -3889,6 +3983,12 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
     edits[idx].tech = el.value;
     edits[idx].rowUid = edits[idx].rowUid || el.getAttribute('data-uid') || '';
   });
+  document.querySelectorAll('#edit-request-modal-fields .edit-request-volume').forEach(el=>{
+    const idx = parseInt(el.getAttribute('data-idx'), 10);
+    edits[idx] = edits[idx] || {};
+    edits[idx].volume = el.value;
+    edits[idx].rowUid = edits[idx].rowUid || el.getAttribute('data-uid') || '';
+  });
   // A product flagged with needsRegistryTechFix renders its Registry/Tech
   // as live <select> fields (class edit-request-regtech-fix) plus a
   // required confirmation checkbox — block submit here until both are
@@ -3910,8 +4010,27 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
     if(!techSel || !techSel.value) regTechErrors.push('Select a single Tech for ' + productLabel + '.');
     if(!confirmCb || !confirmCb.checked) regTechErrors.push('Confirm the Registry/Tech selection for ' + productLabel + '.');
   });
-  if(regTechErrors.length){
-    errEl.textContent = regTechErrors.join(' ');
+  // Same idea, for a product flagged with needsVolumeFix (class
+  // edit-request-volume-fix) — an editable text field plus a required
+  // confirmation checkbox. Kept as its own loop/error list (rather than
+  // folded into fixIdxSeen above) since a product can need a Volume fix
+  // without needing a Registry/Tech fix, or vice versa.
+  const volumeErrors = [];
+  const volumeFixIdxSeen = new Set();
+  document.querySelectorAll('#edit-request-modal-fields .edit-request-volume-fix').forEach(el=>{
+    volumeFixIdxSeen.add(el.getAttribute('data-idx'));
+  });
+  volumeFixIdxSeen.forEach(idx=>{
+    const productLabel = volumeFixIdxSeen.size > 1 || document.querySelectorAll('#edit-request-modal-fields .edit-request-matching').length > 1
+      ? 'Product ' + (parseInt(idx,10)+1) : 'this product';
+    const volInp = document.querySelector('#edit-request-modal-fields .edit-request-volume[data-idx="'+idx+'"]');
+    const confirmCb = document.querySelector('#edit-request-modal-fields .edit-request-volume-confirm[data-idx="'+idx+'"]');
+    if(!volInp || !volInp.value.trim()) volumeErrors.push('Enter a confirmed Volume (RECs) for ' + productLabel + '.');
+    else if(needsVolumeFix(volInp.value)) volumeErrors.push('Volume (RECs) for ' + productLabel + ' still looks like a range — enter a single confirmed number.');
+    if(!confirmCb || !confirmCb.checked) volumeErrors.push('Confirm the Volume (RECs) entered for ' + productLabel + '.');
+  });
+  if(regTechErrors.length || volumeErrors.length){
+    errEl.textContent = regTechErrors.concat(volumeErrors).join(' ');
     errEl.style.display = 'block';
     return;
   }
@@ -4081,6 +4200,40 @@ function regTechIssueText(registry, tech){
   if(reg.indexOf('/') !== -1) issues.push('Registry is '+registryDisplayName(registry)+' (needs to select one)');
   if(t.indexOf('/') !== -1 || t === 'ANY') issues.push('Tech is '+techFullName(tech)+' (needs to select one)');
   return issues.join('; ');
+}
+// A product's Volume (RECs) should hold one confirmed number. True if it's
+// currently saved as a range (e.g. "170-220") — that "-" between two
+// numbers means the actual volume was never confirmed. Mirrors
+// needsRegistryTechFix: same "flag it everywhere, deadline 1 month before
+// Delivery End Date" treatment as an ambiguous Registry/Tech (see
+// regTechFlags/regTechReminderSentDate), just for the Volume field instead.
+function needsVolumeFix(volume){
+  const v = String(volume||'').trim();
+  return /\d\s*-\s*\d/.test(v);
+}
+function volumeIssueText(volume){
+  return 'Volume (RECs) is '+String(volume||'').trim()+' (needs to confirm exact volume)';
+}
+// Parses a Volume (RECs) value for aggregate math (Analysis tab totals/
+// export). A confirmed value parses straight through as a number. An
+// unconfirmed range (see needsVolumeFix, e.g. "170-220") used to just fail
+// Number() and silently count as 0 — invisible in the totals, with no sign
+// the deal even had a volume. Using the midpoint of the range instead means
+// it still shows up in the numbers; the row itself is still flagged (⚠) in
+// the Analysis table/export so nobody mistakes the estimate for a confirmed
+// figure.
+function parseVolumeForTotals(volume){
+  const v = String(volume||'').trim();
+  if(!v) return 0;
+  const n = Number(v.replace(/,/g,''));
+  if(isFinite(n)) return n;
+  const m = v.match(/(-?[\d,]+(?:\.\d+)?)\s*-\s*(-?[\d,]+(?:\.\d+)?)/);
+  if(m){
+    const lo = Number(m[1].replace(/,/g,''));
+    const hi = Number(m[2].replace(/,/g,''));
+    if(isFinite(lo) && isFinite(hi)) return (lo+hi)/2;
+  }
+  return 0;
 }
 const ORDER_TYPES = ["Stock-In (T)","Stock-Out (T)","Stock-Out (R)"];
 const CURRENCIES = ["USD","SGD","MYR"];
@@ -5803,13 +5956,14 @@ async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
     const remarksRaw = rv(idp+'remarks');
     values[MC.specialReq] = (!remarksRaw || remarksRaw.toUpperCase() === 'NA') ? 'N/A' : remarksRaw;
     // Same optional-column stamping as saveConfirmationToHistory (see the
-    // comment there) — this editor can also change Registry, Tech, and/or
-    // Delivery End Date directly, so re-derive the stamp here too: set it
-    // to the (possibly just-edited) Delivery End Date if still ambiguous,
-    // or clear it if this edit just fixed the ambiguity (mirrors the
+    // comment there) — this editor can also change Registry, Tech, Volume,
+    // and/or Delivery End Date directly, so re-derive the stamp here too:
+    // set it to the (possibly just-edited) Delivery End Date if still
+    // ambiguous (Registry/Tech) or still an unconfirmed range (Volume), or
+    // clear it if this edit just fixed the ambiguity (mirrors the
     // clear-on-fix logic in approveBdMatchChange).
     if(values.length > MC.regTechReminderSentDate){
-      values[MC.regTechReminderSentDate] = needsRegistryTechFix(values[MC.registry], values[MC.tech])
+      values[MC.regTechReminderSentDate] = (needsRegistryTechFix(values[MC.registry], values[MC.tech]) || needsVolumeFix(values[MC.volume]))
         ? values[MC.deliveryEnd] : '';
     }
     updatedRows.push({ index: sortedGroup[idx].index, values: [values] });
@@ -6251,29 +6405,48 @@ function showValidationWarning(missing, versionLabel){
 function hideValidationWarning(){
   document.getElementById('validation-warning').style.display = 'none';
 }
-// Doesn't block generating/saving (Registry and Tech are both technically
-// filled in) — this is a heads-up to the submitter, shown alongside the
-// generated table, for any product whose Registry and/or Tech currently
-// holds more than one value (e.g. "IREC/TIGR") or an unspecified Tech
-// ("Any tech"). Mirrors the "⚠ Registry/Tech needs confirmation" flag shown
-// to the Level 3 approver (see the regTechFlags block) so both the
-// submitter and the admin get told to pick exactly one Registry and one
-// Tech per product, at their respective points in the flow.
+// Doesn't block generating/saving (Registry, Tech, and Volume are all
+// technically filled in) — this is a heads-up to the submitter, shown
+// alongside the generated table, for any product whose Registry and/or
+// Tech currently holds more than one value (e.g. "IREC/TIGR") or an
+// unspecified Tech ("Any tech"), or whose Volume (RECs) is still an
+// unconfirmed range (e.g. "170-220" — see needsVolumeFix). Mirrors the
+// "⚠ Registry/Tech needs confirmation" flag shown to the Level 3 approver
+// (see the regTechFlags block) so both the submitter and the admin get
+// told to pick exactly one Registry, one Tech, and one confirmed Volume
+// per product, at their respective points in the flow.
 function regTechWarningItems(filled){
   const items = [];
+  let anyRegTechFlag = false, anyVolumeFlag = false;
   for(let i=1;i<=filled;i++){
     const registry = val('t'+i+'-registry');
     const tech = val('t'+i+'-tech');
+    const volume = val('t'+i+'-volume');
+    const parts = [];
     if(needsRegistryTechFix(registry, tech)){
-      items.push('Product '+i+': '+regTechIssueText(registry, tech));
+      anyRegTechFlag = true;
+      parts.push(regTechIssueText(registry, tech));
     }
+    if(needsVolumeFix(volume)){
+      anyVolumeFlag = true;
+      parts.push(volumeIssueText(volume));
+    }
+    if(parts.length) items.push('Product '+i+': '+parts.join('; '));
   }
+  items.anyRegTechFlag = anyRegTechFlag;
+  items.anyVolumeFlag = anyVolumeFlag;
   return items;
 }
 function showRegTechWarning(items){
   const box = document.getElementById('regtech-warning');
   if(!box) return;
-  box.innerHTML = '<strong>⚠ Registry/Tech needs confirmation:</strong> Each product should only ever have one Registry and one Tech (not a combination, and not "Any"). Please remember to edit for each below once confirmation done. You could still save this agreement like usual.<ul>'+
+  const anyRegTechFlag = !!items.anyRegTechFlag, anyVolumeFlag = !!items.anyVolumeFlag;
+  const heading = anyRegTechFlag && anyVolumeFlag ? 'Registry/Tech/Volume needs confirmation'
+    : anyVolumeFlag ? 'Volume needs confirmation' : 'Registry/Tech needs confirmation';
+  const explain = (anyRegTechFlag ? 'Each product should only ever have one Registry and one Tech (not a combination, and not "Any").' : '') +
+    (anyRegTechFlag && anyVolumeFlag ? ' ' : '') +
+    (anyVolumeFlag ? 'Each product\'s Volume (RECs) should be a single confirmed number, not a range.' : '');
+  box.innerHTML = '<strong>⚠ '+heading+':</strong> '+explain+' Please remember to edit for each below once confirmation done. You could still save this agreement like usual.<ul>'+
     items.map(t=>'<li>'+escapeHtml(t)+'</li>').join('')+'</ul>';
   box.style.display = 'block';
 }
@@ -6295,9 +6468,9 @@ function requireRegenerateBeforeSave(){
   if(btn && !btn.disabled) setSaveAgreementEnabled(false);
 }
 // Live version of the regTechWarningItems check used inside generateOutput()
-// — re-runs it immediately whenever a Registry dropdown or Tech checkbox
-// changes, so the submitter sees the warning the moment they pick an
-// ambiguous value rather than only after clicking Generate table.
+// — re-runs it immediately whenever a Registry dropdown, Tech checkbox, or
+// Volume field changes, so the submitter sees the warning the moment they
+// enter an ambiguous value rather than only after clicking Generate table.
 function liveRegTechCheck(){
   const filled = parseInt(document.getElementById('trade-count').value,10) || 0;
   const items = regTechWarningItems(filled);
@@ -6308,12 +6481,13 @@ document.addEventListener('input', (e)=>{
   const wrap = e.target.closest('[id$="-wrap"]');
   if(wrap) wrap.classList.remove('field-missing');
   if(e.target.closest('#header-fields, #trades-container') || e.target.id==='trade-count') requireRegenerateBeforeSave();
+  if(/-volume$/.test(e.target.id)) liveRegTechCheck();
 });
 document.addEventListener('change', (e)=>{
   const wrap = e.target.closest('[id$="-wrap"]');
   if(wrap) wrap.classList.remove('field-missing');
   if(e.target.closest('#header-fields, #trades-container') || e.target.id==='trade-count') requireRegenerateBeforeSave();
-  if(/-registry$/.test(e.target.id) || e.target.classList.contains('tech-checkbox') || e.target.id==='trade-count') liveRegTechCheck();
+  if(/-registry$/.test(e.target.id) || e.target.classList.contains('tech-checkbox') || /-volume$/.test(e.target.id) || e.target.id==='trade-count') liveRegTechCheck();
 });
 
 // Validates and builds the preview. Returns true/false for which version was
