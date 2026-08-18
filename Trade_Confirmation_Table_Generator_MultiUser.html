@@ -2896,11 +2896,21 @@ const CONFIRMATION_FILTER_OPTS = {
 };
 const ALL_CONFIRMATION_STATUSES = [STATUS_PENDING_1, STATUS_PENDING_2, STATUS_PENDING_3, STATUS_PENDING_CHANGE_3, STATUS_APPROVED, STATUS_REJECTED];
 function populateConfirmationFilterSelects(){
-  ['history-filter-status','queue-filter-status','admin-filter-status'].forEach(id=>{
+  // Approval queue never contains Approved/Rejected deals (its cache is
+  // pre-filtered to PENDING_STATUSES — see wireConfirmationFilterBars), so
+  // offering those two as filter options there would just be dead choices
+  // that always return zero results. My saved confirmations / All
+  // confirmations can genuinely hold any status, so they keep the full list.
+  const optsFor = {
+    'history-filter-status': ALL_CONFIRMATION_STATUSES,
+    'admin-filter-status': ALL_CONFIRMATION_STATUSES,
+    'queue-filter-status': PENDING_STATUSES
+  };
+  Object.keys(optsFor).forEach(id=>{
     const sel = document.getElementById(id);
     if(!sel || sel.options.length) return; // already populated
     sel.innerHTML = '<option value="">All statuses</option>' +
-      ALL_CONFIRMATION_STATUSES.map(s=>'<option value="'+escapeHtml(s)+'">'+escapeHtml(s)+'</option>').join('');
+      optsFor[id].map(s=>'<option value="'+escapeHtml(s)+'">'+escapeHtml(s)+'</option>').join('');
   });
 }
 function confirmationGroupMatchesFilter(g, searchLower, statusFilter){
