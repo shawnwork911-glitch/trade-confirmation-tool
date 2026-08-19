@@ -6025,8 +6025,29 @@ function dealLabelForStoredValue(raw){
 
 function refreshBdMatchingInHtml(html, group){
   if(!html || !group || !group.length) return html;
-  let out = html;
   const sorted = group.slice().sort((a,b)=> a.index - b.index);
+
+  // The patch loop below only overwrites values inside "Product N" blocks
+  // that already exist in the stored snapshot — it can't add a block for a
+  // product that wasn't there when the snapshot was last baked. If the
+  // snapshot's product count doesn't match how many rows this deal
+  // actually has now (e.g. a product was added, or removed, since the
+  // snapshot was generated), patching in place would silently show too
+  // few (or stale) products. Detect that mismatch via the data-product
+  // attribute every per-product field carries, and fall back to a full
+  // rebuild from the live rows — the same rebuild the superadmin recap
+  // editor uses (see buildRecapLinesFromRows/renderPointFormatHtml) —
+  // instead of a partial, product-dropping patch.
+  const productNums = new Set();
+  const productRe = /data-product="(\d+)"/g;
+  let pm;
+  while((pm = productRe.exec(html))){ productNums.add(pm[1]); }
+  if(productNums.size !== sorted.length){
+    const dealId = sorted[0].values[0][MC.dealId] || '';
+    return renderPointFormatHtml(buildRecapLinesFromRows(dealId, sorted));
+  }
+
+  let out = html;
   sorted.forEach((r, idx)=>{
     const v = r.values[0];
     const product = idx + 1;
