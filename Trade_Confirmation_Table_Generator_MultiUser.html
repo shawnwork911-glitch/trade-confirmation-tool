@@ -4088,6 +4088,7 @@ function openEditRequestModal(dealId){
         '<div><label style="margin:0 0 4px;display:block;font-size:12px;">'+escapeHtml(noOfRecsLabel)+'</label>' +
           '<input type="text" class="edit-request-norecs" data-idx="'+idx+'"'+uidAttr+' value="'+escapeHtml(v[MC.noOfRecs]||'')+'"/></div>' +
         '<div>' +
+          (isCC ? '' :
           '<label style="margin:0 0 6px;display:block;font-size:12px;">Source</label>' +
           '<div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:8px;">' +
             '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">' +
@@ -4096,7 +4097,7 @@ function openEditRequestModal(dealId){
             '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">' +
               '<input type="checkbox" id="er-'+idx+'-proceed" style="width:auto;margin:0;"'+(dealField.proceed?' checked':'')+'> Proceed Share' +
             '</label>' +
-          '</div>' +
+          '</div>') +
           '<label style="margin:0 0 4px;display:block;font-size:12px;">Which deal</label>' +
           '<div id="er-'+idx+'-deal-field">'+dealField.fieldHtml+'</div>' +
         '</div>' +
