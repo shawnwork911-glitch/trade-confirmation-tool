@@ -4021,20 +4021,21 @@ function editRequestRegistryTechHtml(idx, registry, tech, rowUid){
 // checkbox) when the product's Volume is genuinely still a range —
 // otherwise it's a hidden input carrying the product's current, unchanged
 // Volume through to submit, same reasoning as the Registry/Tech version.
-function editRequestVolumeHtml(idx, volume, rowUid){
+function editRequestVolumeHtml(idx, volume, rowUid, isCC){
   const uidAttr = ' data-uid="'+escapeHtml(rowUid||'')+'"';
+  const volumeLabel = isCC ? 'Volume (CC)' : 'Volume (RECs)';
   if(!needsVolumeFix(volume)){
     return '<input type="hidden" class="edit-request-volume" data-idx="'+idx+'"'+uidAttr+' value="'+escapeHtml(volume||'')+'"/>';
   }
   return '<div style="border:1px solid #e2a49a;background:#fdecea;border-radius:6px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;">' +
-      '<p style="margin:0;font-size:12px;color:#8a2d1f;font-weight:600;">Volume (RECs) needs confirmation</p>' +
-      '<p style="margin:0;font-size:12px;color:#8a2d1f;">This product\'s Volume (RECs) is currently saved as a range ('+
+      '<p style="margin:0;font-size:12px;color:#8a2d1f;font-weight:600;">'+escapeHtml(volumeLabel)+' needs confirmation</p>' +
+      '<p style="margin:0;font-size:12px;color:#8a2d1f;">This product\'s '+escapeHtml(volumeLabel)+' is currently saved as a range ('+
         escapeHtml(volume)+'). Please enter the single, confirmed volume and confirm before submitting.</p>' +
-      '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Volume (RECs)</label>' +
+      '<div><label style="margin:0 0 4px;display:block;font-size:12px;">'+escapeHtml(volumeLabel)+'</label>' +
         '<input type="text" class="edit-request-volume edit-request-volume-fix" data-idx="'+idx+'"'+uidAttr+' placeholder="e.g. 200"/></div>' +
       '<label style="display:flex;align-items:flex-start;gap:6px;font-size:12px;color:#8a2d1f;cursor:pointer;">' +
         '<input type="checkbox" class="edit-request-volume-confirm" data-idx="'+idx+'" style="width:auto;margin:2px 0 0;"> ' +
-        'I confirm the Volume (RECs) entered above is correct — a single confirmed number, not a range.' +
+        'I confirm the '+escapeHtml(volumeLabel)+' entered above is correct — a single confirmed number, not a range.' +
       '</label>' +
     '</div>';
 }
@@ -4057,8 +4058,10 @@ function openEditRequestModal(dealId){
   document.getElementById('edit-request-modal-intro').textContent = currentStatus === STATUS_APPROVED
     ? 'This deal is already Approved, so any correction here needs a fresh Level 3 sign-off before it takes effect. The current, live values stay in place everywhere until that happens.'
     : 'Level 2 has already approved this deal, so any correction here needs a fresh Level 3 sign-off before it takes effect. The current, live values stay in place everywhere until that happens.';
+  const isCC = dealLogTableName() === CC_LOG_TABLE_NAME;
+  const noOfRecsLabel = isCC ? 'No of VCUs' : 'No of RECs';
   const fieldsEl = document.getElementById('edit-request-modal-fields');
-  fieldsEl.innerHTML = stockOutR ? '' : group.map((r, idx)=>{
+  fieldsEl.innerHTML = group.map((r, idx)=>{
     const v = r.values[0];
     const matchingVal = v[MC.matching] || 'Open Position';
     const active = matchingVal && matchingVal !== 'Open Position';
@@ -4068,7 +4071,7 @@ function openEditRequestModal(dealId){
     const label = group.length > 1 ? 'Product ' + (idx+1) : 'Product';
     const dealField = editRequestDealFieldHtml(idx, v[MC.whichDeal]||'', v[MC.rowUid]||'');
     const regTechHtml = editRequestRegistryTechHtml(idx, v[MC.registry]||'', v[MC.tech]||'', v[MC.rowUid]||'');
-    const volumeHtml = editRequestVolumeHtml(idx, v[MC.volume]||'', v[MC.rowUid]||'');
+    const volumeHtml = editRequestVolumeHtml(idx, v[MC.volume]||'', v[MC.rowUid]||'', isCC);
     // data-uid carries this row's permanent Row Uid — requestBdMatchChange
     // uses it to confirm, at submit time, that it's still writing this
     // edit onto the exact same physical row the modal showed (rather than
@@ -4082,7 +4085,7 @@ function openEditRequestModal(dealId){
       '<div id="er-'+idx+'-dependent" style="display:flex;flex-direction:column;gap:8px;'+(active?'':'display:none;')+'">' +
         '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Buyer/Seller</label>' +
           '<input type="text" id="er-'+idx+'-buyerseller" class="edit-request-buyerseller" data-idx="'+idx+'"'+uidAttr+' value="'+escapeHtml(v[MC.buyerSeller]||'')+'"/></div>' +
-        '<div><label style="margin:0 0 4px;display:block;font-size:12px;">No of RECs</label>' +
+        '<div><label style="margin:0 0 4px;display:block;font-size:12px;">'+escapeHtml(noOfRecsLabel)+'</label>' +
           '<input type="text" class="edit-request-norecs" data-idx="'+idx+'"'+uidAttr+' value="'+escapeHtml(v[MC.noOfRecs]||'')+'"/></div>' +
         '<div>' +
           '<label style="margin:0 0 6px;display:block;font-size:12px;">Source</label>' +
