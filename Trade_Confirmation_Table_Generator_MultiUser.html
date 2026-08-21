@@ -567,6 +567,8 @@
       <input type="text" id="history-filter-search" placeholder="Search Deal ID or Counterparty…">
       <select id="history-filter-type"><option value="">All types</option><option value="recs">RECs</option><option value="carboncredit">Carbon Credit</option></select>
       <select id="history-filter-status"></select>
+      <select id="history-filter-delivery-month"><option value="">All delivery months</option><option value="1">Jan</option><option value="2">Feb</option><option value="3">Mar</option><option value="4">Apr</option><option value="5">May</option><option value="6">Jun</option><option value="7">Jul</option><option value="8">Aug</option><option value="9">Sep</option><option value="10">Oct</option><option value="11">Nov</option><option value="12">Dec</option></select>
+      <select id="history-filter-delivery-year"><option value="">All delivery years</option></select>
       <span class="confirmation-filter-count" id="history-filter-count"></span>
     </div>
     <div id="history-list"><p style="font-size:13px;color:var(--text-secondary);">Loading...</p></div>
@@ -579,6 +581,8 @@
       <input type="text" id="queue-filter-search" placeholder="Search Deal ID or Counterparty…">
       <select id="queue-filter-type"><option value="">All types</option><option value="recs">RECs</option><option value="carboncredit">Carbon Credit</option></select>
       <select id="queue-filter-status"></select>
+      <select id="queue-filter-delivery-month"><option value="">All delivery months</option><option value="1">Jan</option><option value="2">Feb</option><option value="3">Mar</option><option value="4">Apr</option><option value="5">May</option><option value="6">Jun</option><option value="7">Jul</option><option value="8">Aug</option><option value="9">Sep</option><option value="10">Oct</option><option value="11">Nov</option><option value="12">Dec</option></select>
+      <select id="queue-filter-delivery-year"><option value="">All delivery years</option></select>
       <span class="confirmation-filter-count" id="queue-filter-count"></span>
     </div>
     <div id="approval-queue-list"><p style="font-size:13px;color:var(--text-secondary);">Loading...</p></div>
@@ -591,6 +595,8 @@
       <input type="text" id="admin-filter-search" placeholder="Search Deal ID or Counterparty…">
       <select id="admin-filter-type"><option value="">All types</option><option value="recs">RECs</option><option value="carboncredit">Carbon Credit</option></select>
       <select id="admin-filter-status"></select>
+      <select id="admin-filter-delivery-month"><option value="">All delivery months</option><option value="1">Jan</option><option value="2">Feb</option><option value="3">Mar</option><option value="4">Apr</option><option value="5">May</option><option value="6">Jun</option><option value="7">Jul</option><option value="8">Aug</option><option value="9">Sep</option><option value="10">Oct</option><option value="11">Nov</option><option value="12">Dec</option></select>
+      <select id="admin-filter-delivery-year"><option value="">All delivery years</option></select>
       <span class="confirmation-filter-count" id="admin-filter-count"></span>
     </div>
     <div id="admin-history-list"><p style="font-size:13px;color:var(--text-secondary);">Loading...</p></div>
@@ -3125,9 +3131,36 @@ function populateConfirmationFilterSelects(){
       optsFor[id].map(s=>'<option value="'+escapeHtml(s)+'">'+escapeHtml(s)+'</option>').join('');
   });
 }
-function confirmationGroupMatchesFilter(g, searchLower, statusFilter, typeFilter){
+function confirmationGroupDeliveryParts(g){
+  const months = new Set(), years = new Set();
+  (g && g.rows || []).forEach(r=>{
+    const d = parseStoredDateToDate(r.values[0][MC.deliveryEnd]);
+    if(!d) return;
+    months.add(d.getUTCMonth()+1);
+    years.add(d.getUTCFullYear());
+  });
+  return { months:[...months].sort((a,b)=>a-b), years:[...years].sort((a,b)=>a-b) };
+}
+function populateDeliveryYearSelects(){
+  const years = new Set();
+  Object.values(historyGroupsCache).forEach(groups=>groups.forEach(g=>confirmationGroupDeliveryParts(g).years.forEach(y=>years.add(y))));
+  const sorted = [...years].sort((a,b)=>b-a);
+  ['history-filter-delivery-year','admin-filter-delivery-year','queue-filter-delivery-year'].forEach(id=>{
+    const sel = document.getElementById(id);
+    if(!sel) return;
+    const previous = sel.value;
+    sel.innerHTML = '<option value="">All delivery years</option>' + sorted.map(y=>'<option value="'+y+'">'+y+'</option>').join('');
+    if(sorted.map(String).includes(previous)) sel.value = previous;
+  });
+}
+function confirmationGroupMatchesFilter(g, searchLower, statusFilter, typeFilter, deliveryMonthFilter, deliveryYearFilter){
   if(typeFilter && confirmationGroupType(g) !== typeFilter) return false;
   if(statusFilter && dealGroupStatus(g.rows) !== statusFilter) return false;
+  if(deliveryMonthFilter || deliveryYearFilter){
+    const parts = confirmationGroupDeliveryParts(g);
+    if(deliveryMonthFilter && !parts.months.includes(Number(deliveryMonthFilter))) return false;
+    if(deliveryYearFilter && !parts.years.includes(Number(deliveryYearFilter))) return false;
+  }
   if(searchLower){
     const v = g.rows[0].values[0];
     const haystack = (
@@ -3139,37 +3172,44 @@ function confirmationGroupMatchesFilter(g, searchLower, statusFilter, typeFilter
   }
   return true;
 }
-function applyConfirmationFilter(key, listElId, searchElId, statusElId, typeElId, countElId){
+function applyConfirmationFilter(key, listElId, searchElId, statusElId, typeElId, deliveryMonthElId, deliveryYearElId, countElId){
   const listEl = document.getElementById(listElId);
   if(!listEl) return;
   const searchEl = document.getElementById(searchElId);
   const statusEl = document.getElementById(statusElId);
   const typeEl = document.getElementById(typeElId);
+  const monthEl = document.getElementById(deliveryMonthElId);
+  const yearEl = document.getElementById(deliveryYearElId);
   const search = ((searchEl && searchEl.value) || '').trim().toLowerCase();
   const status = (statusEl && statusEl.value) || '';
   const type = (typeEl && typeEl.value) || '';
+  const deliveryMonth = (monthEl && monthEl.value) || '';
+  const deliveryYear = (yearEl && yearEl.value) || '';
   const full = historyGroupsCache[key] || [];
-  const filtered = (search || status || type) ? full.filter(g=>confirmationGroupMatchesFilter(g, search, status, type)) : full;
+  const hasFilter = search || status || type || deliveryMonth || deliveryYear;
+  const filtered = hasFilter ? full.filter(g=>confirmationGroupMatchesFilter(g, search, status, type, deliveryMonth, deliveryYear)) : full;
   const opts = Object.assign({}, CONFIRMATION_FILTER_OPTS[key]);
-  if(search || status || type) opts.emptyText = 'No confirmations match your filter.';
+  if(hasFilter) opts.emptyText = 'No confirmations match your filter.';
   renderHistoryTable(listEl, filtered, opts);
   const countEl = document.getElementById(countElId);
-  if(countEl) countEl.textContent = (search || status || type) ? ('Showing ' + filtered.length + ' of ' + full.length) : '';
+  if(countEl) countEl.textContent = hasFilter ? ('Showing ' + filtered.length + ' of ' + full.length) : '';
 }
-function wireConfirmationFilterBar(key, listElId, searchElId, statusElId, typeElId, countElId){
-  const run = ()=> applyConfirmationFilter(key, listElId, searchElId, statusElId, typeElId, countElId);
+function wireConfirmationFilterBar(key, listElId, searchElId, statusElId, typeElId, deliveryMonthElId, deliveryYearElId, countElId){
+  const run = ()=> applyConfirmationFilter(key, listElId, searchElId, statusElId, typeElId, deliveryMonthElId, deliveryYearElId, countElId);
   const searchEl = document.getElementById(searchElId);
   const statusEl = document.getElementById(statusElId);
   const typeEl = document.getElementById(typeElId);
+  const monthEl = document.getElementById(deliveryMonthElId);
+  const yearEl = document.getElementById(deliveryYearElId);
   if(searchEl && !searchEl.dataset.wired){ searchEl.addEventListener('input', run); searchEl.dataset.wired = '1'; }
-  if(statusEl && !statusEl.dataset.wired){ statusEl.addEventListener('change', run); statusEl.dataset.wired = '1'; }
-  if(typeEl && !typeEl.dataset.wired){ typeEl.addEventListener('change', run); typeEl.dataset.wired = '1'; }
+  [statusEl,typeEl,monthEl,yearEl].forEach(el=>{ if(el && !el.dataset.wired){ el.addEventListener('change', run); el.dataset.wired = '1'; } });
 }
 function wireConfirmationFilterBars(){
   populateConfirmationFilterSelects();
-  wireConfirmationFilterBar('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-type', 'history-filter-count');
-  wireConfirmationFilterBar('admin', 'admin-history-list', 'admin-filter-search', 'admin-filter-status', 'admin-filter-type', 'admin-filter-count');
-  wireConfirmationFilterBar('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-type', 'queue-filter-count');
+  populateDeliveryYearSelects();
+  wireConfirmationFilterBar('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-type', 'history-filter-delivery-month', 'history-filter-delivery-year', 'history-filter-count');
+  wireConfirmationFilterBar('admin', 'admin-history-list', 'admin-filter-search', 'admin-filter-status', 'admin-filter-type', 'admin-filter-delivery-month', 'admin-filter-delivery-year', 'admin-filter-count');
+  wireConfirmationFilterBar('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-type', 'queue-filter-delivery-month', 'queue-filter-delivery-year', 'queue-filter-count');
 }
 
 async function loadHistory(){
@@ -3207,10 +3247,10 @@ async function loadHistory(){
     }
 
     wireConfirmationFilterBars();
-    applyConfirmationFilter('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-type', 'history-filter-count');
-    applyConfirmationFilter('admin', 'admin-history-list', 'admin-filter-search', 'admin-filter-status', 'admin-filter-type', 'admin-filter-count');
+    applyConfirmationFilter('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-type', 'history-filter-delivery-month', 'history-filter-delivery-year', 'history-filter-count');
+    applyConfirmationFilter('admin', 'admin-history-list', 'admin-filter-search', 'admin-filter-status', 'admin-filter-type', 'admin-filter-delivery-month', 'admin-filter-delivery-year', 'admin-filter-count');
     if(isAdmin){
-      applyConfirmationFilter('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-type', 'queue-filter-count');
+      applyConfirmationFilter('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-type', 'queue-filter-delivery-month', 'queue-filter-delivery-year', 'queue-filter-count');
     }
     refreshAnalysisBdOptions();
     wireAnalysisFilterBar();
@@ -3508,7 +3548,7 @@ function renderHistoryTable(el, groups, opts){
   const showActions = !!opts.showActions;
   const showRequestEdit = !!opts.showRequestEdit;
   const showFullEdit = !!opts.showFullEdit;
-  const colCount = showOwner ? 7 : 6;
+  const colCount = showOwner ? 9 : 8;
   if(!groups.length){
     el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">'+escapeHtml(opts.emptyText || 'No saved confirmations yet.')+'</p>';
     return;
@@ -3518,6 +3558,8 @@ function renderHistoryTable(el, groups, opts){
     '<th style="text-align:left;padding:6px;">Agreement Date</th>' +
     '<th style="text-align:left;padding:6px;">Counterparty</th>' +
     '<th style="text-align:left;padding:6px;">Products</th>' +
+    '<th style="text-align:left;padding:6px;">Delivery End Month</th>' +
+    '<th style="text-align:left;padding:6px;">Delivery End Year</th>' +
     '<th style="text-align:left;padding:6px;">Status</th>' +
     '<th style="padding:6px;"></th></tr>';
   const restrictOthers = !!opts.restrictOthers;
@@ -3533,6 +3575,9 @@ function renderHistoryTable(el, groups, opts){
     // Same underlying data either way; this only changes what's rendered.
     const ownerEmail = (v[MC.submittedBy] || '').toLowerCase();
     const isOwnerOrAdmin = isAdmin || (ownerEmail && ownerEmail === myEmailLower);
+    const deliveryParts = confirmationGroupDeliveryParts(g);
+    const deliveryMonthsText = deliveryParts.months.map(m=>MONTH_ABBR[m-1]).join(', ');
+    const deliveryYearsText = deliveryParts.years.join(', ');
     if(restrictOthers && !isOwnerOrAdmin){
       html += '<tr class="confirmation-row-restricted" style="border-top:1px solid var(--border);">' +
         (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[MC.salesPic]||'')+'</td>' : '') +
@@ -3540,6 +3585,8 @@ function renderHistoryTable(el, groups, opts){
         '<td style="padding:6px;">'+escapeHtml(formatStoredDate(v[MC.agreementDate]))+'</td>' +
         '<td style="padding:6px;">'+escapeHtml(v[MC.company]||'')+'</td>' +
         '<td style="padding:6px;">—</td>' +
+        '<td style="padding:6px;">'+escapeHtml(deliveryMonthsText||'—')+'</td>' +
+        '<td style="padding:6px;">'+escapeHtml(deliveryYearsText||'—')+'</td>' +
         '<td style="padding:6px;">'+statusBadge(status)+'</td>' +
         '<td style="padding:6px;white-space:nowrap;"><span class="row-lock-note">Owner only</span></td>' +
       '</tr>';
@@ -3609,6 +3656,8 @@ function renderHistoryTable(el, groups, opts){
       '<td style="padding:6px;">'+escapeHtml(formatStoredDate(v[MC.agreementDate]))+'</td>' +
       '<td style="padding:6px;">'+escapeHtml(v[MC.company]||'')+'</td>' +
       '<td style="padding:6px;">'+g.rows.length+'</td>' +
+      '<td style="padding:6px;">'+escapeHtml(deliveryMonthsText||'—')+'</td>' +
+      '<td style="padding:6px;">'+escapeHtml(deliveryYearsText||'—')+'</td>' +
       '<td style="padding:6px;">'+statusBadge(status)+
         (trail ? '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">'+trail+'</div>' : '')+
         agreementLink+
