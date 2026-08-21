@@ -3157,9 +3157,20 @@ function confirmationGroupMatchesFilter(g, searchLower, statusFilter, typeFilter
   if(typeFilter && confirmationGroupType(g) !== typeFilter) return false;
   if(statusFilter && dealGroupStatus(g.rows) !== statusFilter) return false;
   if(deliveryMonthFilter || deliveryYearFilter){
-    const parts = confirmationGroupDeliveryParts(g);
-    if(deliveryMonthFilter && !parts.months.includes(Number(deliveryMonthFilter))) return false;
-    if(deliveryYearFilter && !parts.years.includes(Number(deliveryYearFilter))) return false;
+    // Month + year must belong to the SAME product. For example, a deal with
+    // Product 1 ending Jun-2026 and Product 2 ending Jul-2027 must NOT match
+    // a Jun + 2027 filter just because the month and year exist somewhere in
+    // the same agreement independently.
+    const wantedMonth = deliveryMonthFilter ? Number(deliveryMonthFilter) : null;
+    const wantedYear = deliveryYearFilter ? Number(deliveryYearFilter) : null;
+    const hasMatchingProduct = (g && g.rows || []).some(r=>{
+      const d = parseStoredDateToDate(r.values[0][MC.deliveryEnd]);
+      if(!d) return false;
+      if(wantedMonth && (d.getUTCMonth()+1) !== wantedMonth) return false;
+      if(wantedYear && d.getUTCFullYear() !== wantedYear) return false;
+      return true;
+    });
+    if(!hasMatchingProduct) return false;
   }
   if(searchLower){
     const v = g.rows[0].values[0];
@@ -3776,9 +3787,75 @@ function htmlToPlainFallback(html){
 let viewModalHtml = '';
 let viewModalDealId = '';
 let viewModalGroup = [];
-function openViewModal(dealId, html, agreementUrl, group){
+
+// Reads the Delivery End Month/Year dropdowns belonging to whichever
+// confirmation list the View button was clicked from. This keeps the filter
+// context local to that list (Mine / Approval queue / All confirmations).
+function deliveryFilterForViewButton(btn){
+  if(!btn) return null;
+  const list = btn.closest('#history-list, #approval-queue-list, #admin-history-list');
+  if(!list) return null;
+  const prefix = list.id === 'history-list' ? 'history' : (list.id === 'approval-queue-list' ? 'queue' : 'admin');
+  const monthEl = document.getElementById(prefix+'-filter-delivery-month');
+  const yearEl = document.getElementById(prefix+'-filter-delivery-year');
+  const month = monthEl && monthEl.value ? Number(monthEl.value) : null;
+  const year = yearEl && yearEl.value ? Number(yearEl.value) : null;
+  return (month || year) ? {month, year} : null;
+}
+function rowMatchesDeliveryFilter(row, filter){
+  if(!row || !filter) return false;
+  const d = parseStoredDateToDate(row.values[0][MC.deliveryEnd]);
+  if(!d) return false;
+  if(filter.month && (d.getUTCMonth()+1) !== filter.month) return false;
+  if(filter.year && d.getUTCFullYear() !== filter.year) return false;
+  return true;
+}
+// The saved confirmation remains complete. When View is opened from a
+// month/year-filtered list, only the matching products are visually called
+// out: Product heading + Delivery line in red, with a small Matches filter
+// badge. The saved HTML/copy output is untouched because this only decorates
+// the modal DOM after rendering.
+function applyDeliveryFilterHighlight(container, group, filter){
+  if(!container || !filter || !(group||[]).length) return;
+  const sorted = (group||[]).slice().sort((a,b)=>a.index-b.index);
+  const matchingProducts = new Set();
+  sorted.forEach((r, idx)=>{ if(rowMatchesDeliveryFilter(r, filter)) matchingProducts.add(idx+1); });
+  if(!matchingProducts.size) return;
+
+  const root = container.firstElementChild;
+  if(!root) return;
+  const blocks = Array.from(root.children).filter(el=>el.tagName === 'DIV');
+  let currentProduct = null;
+  blocks.forEach(block=>{
+    const text = (block.textContent || '').trim();
+    const m = /^Product\s+(\d+)$/i.exec(text);
+    if(m){
+      currentProduct = Number(m[1]);
+      if(matchingProducts.has(currentProduct)){
+        block.style.color = '#b3261e';
+        block.style.fontWeight = '700';
+        const badge = document.createElement('span');
+        badge.textContent = 'Matches filter';
+        badge.style.cssText = 'display:inline-block;margin-left:8px;padding:1px 6px;border:1px solid #b3261e;border-radius:999px;font-size:10px;font-weight:600;color:#b3261e;vertical-align:1px;';
+        block.appendChild(badge);
+      }
+      return;
+    }
+    if(currentProduct && matchingProducts.has(currentProduct)){
+      const strong = block.querySelector(':scope > strong');
+      const label = strong ? (strong.textContent || '').trim().replace(/:$/, '') : '';
+      if(label === 'Delivery'){
+        block.style.color = '#b3261e';
+        block.style.fontWeight = '600';
+      }
+    }
+  });
+}
+function openViewModal(dealId, html, agreementUrl, group, deliveryFilter){
   document.getElementById('view-modal-dealid').textContent = friendlyDealId(dealId);
-  document.getElementById('view-modal-table').innerHTML = html;
+  const viewTable = document.getElementById('view-modal-table');
+  viewTable.innerHTML = html;
+  applyDeliveryFilterHighlight(viewTable, group, deliveryFilter);
   document.getElementById('view-modal-agreement-link').innerHTML = agreementUrl
     ? '<a href="'+escapeHtml(agreementUrl)+'" target="_blank" rel="noopener">📄 View agreement</a>' : '';
   // Copy table stays hidden until Level 1 approval assigns a real Deal ID —
@@ -4310,7 +4387,8 @@ document.addEventListener('click', (e)=>{
     const withHtml = group.find(r => r.values[0][MC.generatedHtml]);
     if(!withHtml) return;
     const freshHtml = refreshBdMatchingInHtml(withHtml.values[0][MC.generatedHtml], group);
-    openViewModal(dealId, freshHtml, withHtml.values[0][MC.agreementFileUrl], group);
+    const deliveryFilter = deliveryFilterForViewButton(viewBtn);
+    openViewModal(dealId, freshHtml, withHtml.values[0][MC.agreementFileUrl], group, deliveryFilter);
     return;
   }
   const approveBtn = e.target.closest('.history-approve-btn');
