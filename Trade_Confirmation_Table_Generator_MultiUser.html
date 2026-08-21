@@ -1961,19 +1961,19 @@ async function addApprovedDealToList(values, changeNote){
         'Project Name': values[MC.projectName],
         'Broker': values[MC.broker],
         'Country': values[MC.country],
-        'Registry': values[MC.registry],
+        'Registry/Clearing account': ccRegistryClearingDisplay(values[MC.registry], values[MC.cod]),
         'Match/Open Position': values[MC.matching],
         'Volume (VCUs)': values[MC.volume],
         'Delivery (Start date)': values[MC.deliveryStart],
         'Delivery (End date)': values[MC.deliveryEnd],
-        'V (From MM)': values[MC.vFromMM],
-        'V (From YY)': values[MC.vFromYY],
-        'V (To MM)': values[MC.vToMM],
-        'V (To YY)': values[MC.vToYY],
-        'Currency': values[MC.currency],
+        'Project Type': values[MC.vFromMM],
+        'Vintage Start Year': values[MC.vFromYY],
+        'Vintage End Year': values[MC.vToYY],
+        'Methodology': values[MC.vToMM],
+                'Currency': values[MC.currency],
         'Unit Price': values[MC.unitPrice],
         'Special Requirement': values[MC.specialReq],
-        'COD': values[MC.cod],
+        'Transfer Account Name': values[MC.tigrsIrecName],
         'Payment Term': values[MC.paymentTerm],
         'Prepayment': values[MC.prepayment],
         'Buyer/Seller': values[MC.buyerSeller],
@@ -1988,7 +1988,7 @@ async function addApprovedDealToList(values, changeNote){
         'Broker Fee Type': values[MC.brokerFeeType],
         'Broker Fee Currency': values[MC.brokerFeeCurrency],
         'Broker Fee Price / VCU': values[MC.brokerFeePrice],
-        'Pending Matching Note': changeNote || 'Initial Level 3 approval',
+        'Change Note': changeNote || 'Initial Level 3 approval',
         'Row Uid': values[MC.rowUid]
     } : {
         'Title': values[MC.salesPic],
@@ -2075,9 +2075,12 @@ function fitRowToColumnCount(values, count){
   return values.concat(new Array(count - values.length).fill(''));
 }
 
-// Dedicated REC/Carbon Credit workbook routing. CCDealLog inserts Project ID,
-// Project Name and Prepayment, so translate it to the canonical MC layout at
-// the workbook boundary and keep the rest of the approval/history code shared.
+// Dedicated REC/Carbon Credit workbook routing. The REC table keeps the
+// legacy canonical column order. CCDealLog now has its own compact 62-column
+// schema containing only Carbon Credit business fields plus the SAME approval,
+// rejection, attachment and post-approval audit fields used by the shared
+// 3-level approval flow. Translation happens only at the workbook boundary, so
+// the approval/history code below can stay shared between REC and Carbon Credit.
 function dealLogTableName(){ return activeDealLogTableName || STANDARD_LOG_TABLE_NAME; }
 function logTableForMode(mode){ return mode === 'carboncredit' ? CC_LOG_TABLE_NAME : STANDARD_LOG_TABLE_NAME; }
 function settingsTableForLog(tableName){ return tableName === CC_LOG_TABLE_NAME ? CC_SETTINGS_TABLE_NAME : STANDARD_SETTINGS_TABLE_NAME; }
@@ -2088,24 +2091,121 @@ function setActiveDealLogTable(tableName){
   settingsCache = settingsCacheByTable[activeDealLogTableName] || [];
   dealIdStartOverride = dealIdStartOverrideByTable[activeDealLogTableName] || 0;
 }
+// Physical column indexes in the CLEAN CCDealLog table (62 columns).
+// IMPORTANT: create/rename the Excel Table columns in exactly this order.
+const CC = {
+  salesPic:0, entity:1, agreementDate:2, dealId:3, supplyDemand:4, company:5,
+  projectId:6, projectName:7, projectType:8, methodology:9,
+  broker:10, country:11, registryClearingAccount:12, vintageStartYear:13, vintageEndYear:14,
+  matching:15, volume:16, deliveryStart:17, deliveryEnd:18,
+  currency:19, unitPrice:20, specialReq:21, transferAccount:22, paymentTerm:23, prepayment:24,
+  buyerSeller:25, noOfVcus:26, whichDeal:27, deliveryDateM:28,
+  submittedBy:29, submittedDate:30, generatedHtml:31, status:32,
+  approvedBy1:33, approvedDate1:34, approvedBy2:35, approvedDate2:36,
+  approvedBy3:37, approvedDate3:38, rejectedBy:39, rejectedDate:40, rejectReason:41,
+  agreementFileName:42, agreementFileUrl:43, description:44,
+  brokerFeeType:45, brokerFeeCurrency:46, brokerFeePrice:47,
+  pendingMatching:48, pendingBuyerSeller:49, pendingWhichDeal:50,
+  pendingNoOfVcus:51, pendingDeliveryDateM:52, pendingRequestedBy:53, pendingRequestedDate:54,
+  rowUid:55, approvedListItemId:56, pendingMatchNote:57, pendingRegistry:58,
+  regVolumeReminderSentDate:59, editChangeSummary:60, pendingVolume:61
+};
+const CC_COL_COUNT = 62;
+const CC_REGISTRY_CLEARING_OPTIONS = [
+  'Verra','Gold Standard','BCX','CIX'
+];
+const CC_REGISTRY_CLEARING_DISPLAY_NAMES = {
+  'Verra':'Verified Carbon Standard (Verra)',
+  'Gold Standard':'Gold Standard',
+  'BCX':'BCX',
+  'CIX':'CIX'
+};
+function ccRegistryClearingValue(registry, clearingAccount){
+  const r = String(registry||'').trim();
+  const c = String(clearingAccount||'').trim();
+  return r && c ? r + ' / ' + c : (r || c);
+}
+function splitCcRegistryClearing(value){
+  const v = String(value||'').trim();
+  if(v === 'BCX' || v === 'CIX') return { registry:'', clearingAccount:v };
+  return { registry:v, clearingAccount:'' };
+}
+function ccRegistryClearingDisplay(registry, clearingAccount){
+  const r = registryDisplayName(registry);
+  const c = String(clearingAccount||'').trim();
+  return r && c ? r + ' / ' + c : (r || c);
+}
 function ccRawToCanonical(raw){
   const out = new Array(65).fill('');
-  for(let i=0;i<=5;i++) out[i] = raw[i] ?? '';
-  out[MC.projectId] = raw[6] ?? '';
-  out[MC.projectName] = raw[7] ?? '';
-  for(let i=6;i<=23;i++) out[i] = raw[i+2] ?? '';
-  out[MC.prepayment] = raw[26] ?? '';
-  for(let i=24;i<=61;i++) out[i] = raw[i+3] ?? '';
+  out[MC.salesPic]=raw[CC.salesPic]??''; out[MC.entity]=raw[CC.entity]??'';
+  out[MC.agreementDate]=raw[CC.agreementDate]??''; out[MC.dealId]=raw[CC.dealId]??'';
+  out[MC.supplyDemand]=raw[CC.supplyDemand]??''; out[MC.company]=raw[CC.company]??'';
+  out[MC.projectId]=raw[CC.projectId]??''; out[MC.projectName]=raw[CC.projectName]??'';
+  out[MC.vFromMM]=raw[CC.projectType]??''; out[MC.vToMM]=raw[CC.methodology]??'';
+  out[MC.broker]=raw[CC.broker]??''; out[MC.country]=raw[CC.country]??'';
+  { const rc = splitCcRegistryClearing(raw[CC.registryClearingAccount]??''); out[MC.registry]=rc.registry; out[MC.cod]=rc.clearingAccount; }
+  out[MC.vFromYY]=raw[CC.vintageStartYear]??''; out[MC.vToYY]=raw[CC.vintageEndYear]??''; out[MC.tech]='CC';
+  out[MC.matching]=raw[CC.matching]??''; out[MC.volume]=raw[CC.volume]??'';
+  out[MC.deliveryStart]=raw[CC.deliveryStart]??''; out[MC.deliveryEnd]=raw[CC.deliveryEnd]??'';
+  out[MC.currency]=raw[CC.currency]??''; out[MC.unitPrice]=raw[CC.unitPrice]??'';
+  out[MC.specialReq]=raw[CC.specialReq]??''; out[MC.tigrsIrecName]=raw[CC.transferAccount]??'';
+  out[MC.paymentTerm]=raw[CC.paymentTerm]??''; out[MC.prepayment]=raw[CC.prepayment]??'';
+  out[MC.buyerSeller]=raw[CC.buyerSeller]??''; out[MC.noOfRecs]=raw[CC.noOfVcus]??'';
+  out[MC.whichDeal]=raw[CC.whichDeal]??''; out[MC.deliveryDateM]=raw[CC.deliveryDateM]??'';
+  out[MC.submittedBy]=raw[CC.submittedBy]??''; out[MC.submittedDate]=raw[CC.submittedDate]??'';
+  out[MC.generatedHtml]=raw[CC.generatedHtml]??''; out[MC.status]=raw[CC.status]??'';
+  out[MC.approvedBy1]=raw[CC.approvedBy1]??''; out[MC.approvedDate1]=raw[CC.approvedDate1]??'';
+  out[MC.approvedBy2]=raw[CC.approvedBy2]??''; out[MC.approvedDate2]=raw[CC.approvedDate2]??'';
+  out[MC.approvedBy3]=raw[CC.approvedBy3]??''; out[MC.approvedDate3]=raw[CC.approvedDate3]??'';
+  out[MC.rejectedBy]=raw[CC.rejectedBy]??''; out[MC.rejectedDate]=raw[CC.rejectedDate]??'';
+  out[MC.rejectReason]=raw[CC.rejectReason]??''; out[MC.agreementFileName]=raw[CC.agreementFileName]??'';
+  out[MC.agreementFileUrl]=raw[CC.agreementFileUrl]??''; out[MC.description]=raw[CC.description]??'';
+  out[MC.brokerFeeType]=raw[CC.brokerFeeType]??''; out[MC.brokerFeeCurrency]=raw[CC.brokerFeeCurrency]??'';
+  out[MC.brokerFeePrice]=raw[CC.brokerFeePrice]??''; out[MC.pendingMatching]=raw[CC.pendingMatching]??'';
+  out[MC.pendingBuyerSeller]=raw[CC.pendingBuyerSeller]??''; out[MC.pendingWhichDeal]=raw[CC.pendingWhichDeal]??'';
+  out[MC.pendingNoOfRecs]=raw[CC.pendingNoOfVcus]??''; out[MC.pendingDeliveryDateM]=raw[CC.pendingDeliveryDateM]??'';
+  out[MC.pendingRequestedBy]=raw[CC.pendingRequestedBy]??''; out[MC.pendingRequestedDate]=raw[CC.pendingRequestedDate]??'';
+  out[MC.rowUid]=raw[CC.rowUid]??''; out[MC.approvedListItemId]=raw[CC.approvedListItemId]??'';
+  out[MC.pendingMatchNote]=raw[CC.pendingMatchNote]??''; out[MC.pendingRegistry]=raw[CC.pendingRegistry]??'';
+  out[MC.pendingTech]=''; // Tech is fixed to CC, so no physical Pending Tech column is needed.
+  out[MC.regTechReminderSentDate]=raw[CC.regVolumeReminderSentDate]??'';
+  out[MC.editChangeSummary]=raw[CC.editChangeSummary]??''; out[MC.pendingVolume]=raw[CC.pendingVolume]??'';
   return out;
 }
 function canonicalToCcRaw(values){
-  const raw = new Array(65).fill('');
-  for(let i=0;i<=5;i++) raw[i] = values[i] ?? '';
-  raw[6] = values[MC.projectId] ?? '';
-  raw[7] = values[MC.projectName] ?? '';
-  for(let i=6;i<=23;i++) raw[i+2] = values[i] ?? '';
-  raw[26] = values[MC.prepayment] ?? '';
-  for(let i=24;i<=61;i++) raw[i+3] = values[i] ?? '';
+  const raw = new Array(CC_COL_COUNT).fill('');
+  raw[CC.salesPic]=values[MC.salesPic]??''; raw[CC.entity]=values[MC.entity]??'';
+  raw[CC.agreementDate]=values[MC.agreementDate]??''; raw[CC.dealId]=values[MC.dealId]??'';
+  raw[CC.supplyDemand]=values[MC.supplyDemand]??''; raw[CC.company]=values[MC.company]??'';
+  raw[CC.projectId]=values[MC.projectId]??''; raw[CC.projectName]=values[MC.projectName]??'';
+  raw[CC.projectType]=values[MC.vFromMM]??''; raw[CC.methodology]=values[MC.vToMM]??'';
+  raw[CC.broker]=values[MC.broker]??''; raw[CC.country]=values[MC.country]??'';
+  raw[CC.registryClearingAccount]=ccRegistryClearingValue(values[MC.registry], values[MC.cod]);
+  raw[CC.vintageStartYear]=values[MC.vFromYY]??''; raw[CC.vintageEndYear]=values[MC.vToYY]??''; raw[CC.matching]=values[MC.matching]??'';
+  raw[CC.volume]=values[MC.volume]??''; raw[CC.deliveryStart]=values[MC.deliveryStart]??'';
+  raw[CC.deliveryEnd]=values[MC.deliveryEnd]??''; raw[CC.currency]=values[MC.currency]??'';
+  raw[CC.unitPrice]=values[MC.unitPrice]??''; raw[CC.specialReq]=values[MC.specialReq]??'';
+  raw[CC.transferAccount]=values[MC.tigrsIrecName]??''; raw[CC.paymentTerm]=values[MC.paymentTerm]??'';
+  raw[CC.prepayment]=values[MC.prepayment]??''; raw[CC.buyerSeller]=values[MC.buyerSeller]??'';
+  raw[CC.noOfVcus]=values[MC.noOfRecs]??''; raw[CC.whichDeal]=values[MC.whichDeal]??'';
+  raw[CC.deliveryDateM]=values[MC.deliveryDateM]??''; raw[CC.submittedBy]=values[MC.submittedBy]??'';
+  raw[CC.submittedDate]=values[MC.submittedDate]??''; raw[CC.generatedHtml]=values[MC.generatedHtml]??'';
+  raw[CC.status]=values[MC.status]??''; raw[CC.approvedBy1]=values[MC.approvedBy1]??'';
+  raw[CC.approvedDate1]=values[MC.approvedDate1]??''; raw[CC.approvedBy2]=values[MC.approvedBy2]??'';
+  raw[CC.approvedDate2]=values[MC.approvedDate2]??''; raw[CC.approvedBy3]=values[MC.approvedBy3]??'';
+  raw[CC.approvedDate3]=values[MC.approvedDate3]??''; raw[CC.rejectedBy]=values[MC.rejectedBy]??'';
+  raw[CC.rejectedDate]=values[MC.rejectedDate]??''; raw[CC.rejectReason]=values[MC.rejectReason]??'';
+  raw[CC.agreementFileName]=values[MC.agreementFileName]??''; raw[CC.agreementFileUrl]=values[MC.agreementFileUrl]??'';
+  raw[CC.description]=values[MC.description]??''; raw[CC.brokerFeeType]=values[MC.brokerFeeType]??'';
+  raw[CC.brokerFeeCurrency]=values[MC.brokerFeeCurrency]??''; raw[CC.brokerFeePrice]=values[MC.brokerFeePrice]??'';
+  raw[CC.pendingMatching]=values[MC.pendingMatching]??''; raw[CC.pendingBuyerSeller]=values[MC.pendingBuyerSeller]??'';
+  raw[CC.pendingWhichDeal]=values[MC.pendingWhichDeal]??''; raw[CC.pendingNoOfVcus]=values[MC.pendingNoOfRecs]??'';
+  raw[CC.pendingDeliveryDateM]=values[MC.pendingDeliveryDateM]??''; raw[CC.pendingRequestedBy]=values[MC.pendingRequestedBy]??'';
+  raw[CC.pendingRequestedDate]=values[MC.pendingRequestedDate]??''; raw[CC.rowUid]=values[MC.rowUid]??'';
+  raw[CC.approvedListItemId]=values[MC.approvedListItemId]??''; raw[CC.pendingMatchNote]=values[MC.pendingMatchNote]??'';
+  raw[CC.pendingRegistry]=values[MC.pendingRegistry]??'';
+  raw[CC.regVolumeReminderSentDate]=values[MC.regTechReminderSentDate]??'';
+  raw[CC.editChangeSummary]=values[MC.editChangeSummary]??''; raw[CC.pendingVolume]=values[MC.pendingVolume]??'';
   return raw;
 }
 function canonicalizeLogRow(row, tableName){
@@ -2153,7 +2253,7 @@ async function addTableRows(tableName, rowsArray){
 }
 async function updateTableRow(tableName, rowIndex, values){
   // Approval updates whole Excel table rows. Re-read the live width first so
-  // recently added trailing columns (TradeDealLog currently 62; CCDealLog 65)
+  // recently added trailing columns (REC and CC tables may have different widths)
   // are preserved/padded correctly instead of causing a width mismatch.
   const count = await getTableColumnCount(tableName, true);
   return graphFetch(workbookTablePath(tableName) + '/rows/itemAt(index=' + rowIndex + ')', {
@@ -2347,7 +2447,7 @@ function applyDraftData(data){
       else if((draftTech.value||'').trim().toUpperCase() === 'CC') draftTech.value = 'SLR';
     }
     syncTechCheckboxesFromHidden(i);
-    syncCodUiFromHidden(i); // hidden field's restored value drives toggle/year/visibility
+    if(currentProductMode !== 'carboncredit') syncCodUiFromHidden(i); // REC-only COD UI
   }
   refreshRoleDependentUi();
   currentDealDocId = data.dealId || val('h-dealid-num') || null;
@@ -2559,20 +2659,28 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
     if(currentProductMode === 'carboncredit'){ row[MC.projectId] = val('h-project-id'); row[MC.projectName] = val('h-project-name'); }
     row[MC.broker] = val('h-broker');
     row[MC.country] = val('t'+n+'-country');
-    row[MC.registry] = val('t'+n+'-registry');
+    if(currentProductMode === 'carboncredit'){ const rc = splitCcRegistryClearing(val('t'+n+'-registry-clearing')); row[MC.registry] = rc.registry; row[MC.cod] = rc.clearingAccount; }
+    else row[MC.registry] = val('t'+n+'-registry');
     row[MC.tech] = currentProductMode === 'carboncredit' ? 'CC' : val('t'+n+'-tech');
     row[MC.matching] = matching;
     row[MC.volume] = val('t'+n+'-volume');
     row[MC.deliveryStart] = val('t'+n+'-dstart');
     row[MC.deliveryEnd] = val('t'+n+'-dend');
-    row[MC.vFromMM] = val('t'+n+'-vintage-start-month');
-    row[MC.vFromYY] = val('t'+n+'-vintage-start-year');
-    row[MC.vToMM] = val('t'+n+'-vintage-end-month');
-    row[MC.vToYY] = val('t'+n+'-vintage-end-year');
+    if(currentProductMode === 'carboncredit'){
+      row[MC.vFromMM] = val('h-project-type');
+      row[MC.vFromYY] = val('t'+n+'-vintage-start-year');
+      row[MC.vToMM] = val('h-methodology');
+      row[MC.vToYY] = val('t'+n+'-vintage-end-year');
+    }else{
+      row[MC.vFromMM] = val('t'+n+'-vintage-start-month');
+      row[MC.vFromYY] = val('t'+n+'-vintage-start-year');
+      row[MC.vToMM] = val('t'+n+'-vintage-end-month');
+      row[MC.vToYY] = val('t'+n+'-vintage-end-year');
+    }
     row[MC.currency] = val('t'+n+'-currency');
     row[MC.unitPrice] = val('t'+n+'-price');
     row[MC.specialReq] = remarksVal(n);
-    row[MC.cod] = val('t'+n+'-m-cod');
+    if(currentProductMode !== 'carboncredit') row[MC.cod] = val('t'+n+'-m-cod');
     row[MC.tigrsIrecName] = transferAccountValue(val('h-order'), val('t'+n+'-transfer'));
     row[MC.paymentTerm] = val('t'+n+'-payterm');
     if(currentProductMode === 'carboncredit') row[MC.prepayment] = val('t'+n+'-prepayment');
@@ -4518,6 +4626,7 @@ document.addEventListener('click', (e)=>{
 
 
 const COUNTRIES = ["MY","BN","CN","JP","SA","TH","IN","PH","SG","VN","ID","AU","TW"];
+const CC_COUNTRIES = ["Cambodia", "Kenya", "Uganda", "Brazil", "China", "Turkey", "India", "Vietnam", "Colombia", "Pakistan", "UK / Australia", "Nigeria", "Indonesia", "Uzbekistan", "Uruguay", "Bangladesh", "Egypt", "Nigera", "DRC", "Thailand", "Panama", "Sri Lanka", "Chile", "Mozambique", "Chad", "Madagascar", "Combodia", "Romania", "Laos", "Ethiopia", "Nicaragua, Central America", "USA", "CAN - Ontario", "CAN - Quebec", "Lithunia", "Bulgaria", "Netherlands", "Zambia & zimbabwe", "Dominican Republic", "Philippines", "Paraguay", "Malaysia", "Mauritius", "Argentina", "Mexcio", "Peru", "Myanmar", "Lao", "Nepal", "Canada", "UK/Australia", "Belize, America", "Zimbabwe", "Tanazania", "Zambia", "Mexico", "Gautemala", "Guatemala", "Denmark", "Romania(EU)", "South Africa", "Republic of Congo", "Togo", "Lao PDR", "US", "Papua New Guinea", "Congo"];
 const TECHS = ["ANY","SLR","GEO","BIO","HYD","BGS","SHY","LHY","WND","CC"];
 
 // Hardcoded code -> full name lookups for the Customer version output (per
@@ -4563,7 +4672,8 @@ function saxonEntityName(entity){
 // preview should show it as "I-REC" (and "IREC/TIGR" as "I-REC/TIGR"). Only
 // touches those two exact known forms; anything else passes through as-is.
 const REGISTRY_DISPLAY_NAMES = {
-  'IREC':'I-REC', 'IREC/TIGR':'I-REC/TIGR'
+  'IREC':'I-REC', 'IREC/TIGR':'I-REC/TIGR',
+  'Verra':'Verified Carbon Standard (Verra)', 'VERRA':'Verified Carbon Standard (Verra)'
 };
 function registryDisplayName(value){
   const raw = String(value||'');
@@ -5036,6 +5146,8 @@ document.getElementById('header-fields').innerHTML =
   headerField('Buyer/Seller Full Name', textHtml('h-buyer','Company name'),'h-buyer') +
   '<div id="h-project-name-wrap" style="display:none;grid-column:1 / -1;">'+lockableField('Project Name', '<textarea id="h-project-name" placeholder="Enter full project name"></textarea>', 'h-project-name')+'</div>' +
   '<div id="h-project-id-wrap" style="display:none;">'+headerField('Project ID', '<input type="text" id="h-project-id" inputmode="numeric" pattern="[0-9]*" placeholder="Project ID"/>','h-project-id')+'</div>' +
+  '<div id="h-project-type-wrap" style="display:none;">'+headerField('Project type', textHtml('h-project-type','Enter project type'),'h-project-type')+'</div>' +
+  '<div id="h-methodology-wrap" style="display:none;">'+headerField('Methodology', textHtml('h-methodology','Enter methodology'),'h-methodology')+'</div>' +
   '<div style="grid-column:1 / -1;">'+
     lockableField('Broker', brokerYesHtml(), 'h-broker-yes')+
   '</div>'+
@@ -5075,6 +5187,10 @@ function updateBuyerSellerFieldLabel(){
   if(projectNameWrap) projectNameWrap.style.display = currentProductMode === 'carboncredit' ? '' : 'none';
   const projectWrap = document.getElementById('h-project-id-wrap');
   if(projectWrap) projectWrap.style.display = currentProductMode === 'carboncredit' ? '' : 'none';
+  const projectTypeWrap = document.getElementById('h-project-type-wrap');
+  if(projectTypeWrap) projectTypeWrap.style.display = currentProductMode === 'carboncredit' ? '' : 'none';
+  const methodologyWrap = document.getElementById('h-methodology-wrap');
+  if(methodologyWrap) methodologyWrap.style.display = currentProductMode === 'carboncredit' ? '' : 'none';
 }
 function isStockOutR(orderType){
   return String(orderType || '').trim() === 'Stock-Out (R)';
@@ -5320,28 +5436,29 @@ function tradeBlockHtml(n){
   return '<div class="trade-block" data-trade-num="'+n+'">'+
     '<p class="trade-title">Product '+n+'</p>'+
     '<div class="grid">'+
-    lockableField('Country (Full Name)', comboHtml('t'+n+'-country','t'+n+'-country-list',countryComboOptions(),'MY'),'t'+n+'-country')+
-    lockableField('Registry', selectWithFullNamesHtml('t'+n+'-registry', currentProductMode === 'carboncredit' ? ['BCX','Verra','Gold Standard'] : REGISTRIES, REGISTRY_DISPLAY_NAMES, currentProductMode === 'carboncredit' ? 'BCX' : 'IREC'),'t'+n+'-registry')+
+    (currentProductMode === 'carboncredit'
+      ? lockableField('Country', selectHtml('t'+n+'-country', CC_COUNTRIES, 'Malaysia'),'t'+n+'-country')
+      : lockableField('Country (Full Name)', comboHtml('t'+n+'-country','t'+n+'-country-list',countryComboOptions(),'MY'),'t'+n+'-country'))+
+    (currentProductMode === 'carboncredit'
+      ? lockableField('Registry/Clearing account', selectWithFullNamesHtml('t'+n+'-registry-clearing', CC_REGISTRY_CLEARING_OPTIONS, CC_REGISTRY_CLEARING_DISPLAY_NAMES, 'Verra'),'t'+n+'-registry-clearing')
+      : lockableField('Registry', selectWithFullNamesHtml('t'+n+'-registry', REGISTRIES, REGISTRY_DISPLAY_NAMES, 'IREC'),'t'+n+'-registry'))+
     (currentProductMode === 'carboncredit'
       ? '<input type="hidden" id="t'+n+'-tech" value="CC"/>'
       : lockableField('Tech', techCheckboxesHtml(n,'SLR'),'t'+n+'-tech')
           .replace('<div id=','<div style="grid-column:1 / -1;" id='))+
-    lockableField('Vintage start month &amp; year',
-      '<div style="display:flex;gap:6px;">'+
-        selectHtml('t'+n+'-vintage-start-month', MONTHS, 'Jan')+
-        comboHtml('t'+n+'-vintage-start-year','t'+n+'-start-year-list', YEARS, '2025')+
-      '</div>',
-      ['t'+n+'-vintage-start-month','t'+n+'-vintage-start-year'])+
-    lockableField('Vintage end month &amp; year',
-      '<div style="display:flex;gap:6px;">'+
-        selectHtml('t'+n+'-vintage-end-month', MONTHS, 'Dec')+
-        comboHtml('t'+n+'-vintage-end-year','t'+n+'-end-year-list', YEARS, '2025')+
-      '</div>',
-      ['t'+n+'-vintage-end-month','t'+n+'-vintage-end-year'])+
+    (currentProductMode === 'carboncredit'
+      ? lockableField('Vintage Start Year', comboHtml('t'+n+'-vintage-start-year','t'+n+'-vintage-start-year-list', YEARS, '2025'),'t'+n+'-vintage-start-year')+
+        lockableField('Vintage End Year', comboHtml('t'+n+'-vintage-end-year','t'+n+'-vintage-end-year-list', YEARS, '2025'),'t'+n+'-vintage-end-year')
+      : lockableField('Vintage start month &amp; year',
+          '<div style="display:flex;gap:6px;">'+selectHtml('t'+n+'-vintage-start-month', MONTHS, 'Jan')+comboHtml('t'+n+'-vintage-start-year','t'+n+'-start-year-list', YEARS, '2025')+'</div>',
+          ['t'+n+'-vintage-start-month','t'+n+'-vintage-start-year'])+
+        lockableField('Vintage end month &amp; year',
+          '<div style="display:flex;gap:6px;">'+selectHtml('t'+n+'-vintage-end-month', MONTHS, 'Dec')+comboHtml('t'+n+'-vintage-end-year','t'+n+'-end-year-list', YEARS, '2025')+'</div>',
+          ['t'+n+'-vintage-end-month','t'+n+'-vintage-end-year']))+
     lockableField('Volume (RECs)', textHtml('t'+n+'-volume','e.g. 30,000'),'t'+n+'-volume')+
     lockableField('Delivery start date', dateHtml('t'+n+'-dstart'),'t'+n+'-dstart')+
     lockableField('Delivery end date', dateHtml('t'+n+'-dend'),'t'+n+'-dend')+
-    lockableField('COD (if applicable)', codHtml(n),'t'+n+'-m-cod')+
+    (currentProductMode === 'carboncredit' ? '' : lockableField('COD (if applicable)', codHtml(n),'t'+n+'-m-cod'))+
     lockableField('Price currency', comboHtml('t'+n+'-currency','t'+n+'-currency-list',CURRENCIES,'USD'),'t'+n+'-currency')+
     lockableField('Price / REC', '<input type="text" inputmode="decimal" class="numeric-decimal-only" id="t'+n+'-price" placeholder="e.g. 0.27" value=""/>','t'+n+'-price')+
     lockableField('Payment term', textHtml('t'+n+'-payterm','30 days after invoice','30 days after invoice'),'t'+n+'-payterm')+
@@ -5691,7 +5808,7 @@ function switchProductMode(mode){
     const savedDeal = snapshot.allValues && snapshot.allValues['t'+i+'-m-deal'];
     if(dealEl && savedDeal !== undefined) dealEl.value = savedDeal;
     handleMatchingChange(i);
-    syncCodUiFromHidden(i);
+    if(currentProductMode !== 'carboncredit') syncCodUiFromHidden(i);
     updateProductLabelsForTech(i);
   }
   refreshRoleDependentUi();
@@ -5828,15 +5945,16 @@ function buildTradeGroup(startIdx, filled){
   const size = 3;
 
   const tradeNos = [], registries=[], transfers=[], vintages=[], vintageParts=[], techs=[], countries=[], volumes=[], prices=[], priceParts=[], payterms=[], prepayments=[], dstarts=[], dends=[], remarks=[];
-  const mNames=[], mRecs=[], mDeals=[], mDdates=[], mMatchings=[], mCods=[];
+  const mNames=[], mRecs=[], mDeals=[], mDdates=[], mMatchings=[], mCods=[], registryClearings=[];
   for(let j=0;j<size;j++){
     const i = startIdx + j;
     tradeNos.push(i <= filled ? String(i) : '');
     if(i <= filled){
-      registries.push(val('t'+i+'-registry'));
+      registries.push(currentProductMode === 'carboncredit' ? splitCcRegistryClearing(val('t'+i+'-registry-clearing')).registry : val('t'+i+'-registry'));
+      registryClearings.push(currentProductMode === 'carboncredit' ? val('t'+i+'-registry-clearing') : '');
       transfers.push(transferAccountValue(val('h-order'), val('t'+i+'-transfer')));
-      vintages.push(val('t'+i+'-vintage-start-month')+' | '+val('t'+i+'-vintage-start-year')+' | '+val('t'+i+'-vintage-end-month')+' | '+val('t'+i+'-vintage-end-year'));
-      vintageParts.push([val('t'+i+'-vintage-start-month'), val('t'+i+'-vintage-start-year'), val('t'+i+'-vintage-end-month'), val('t'+i+'-vintage-end-year')]);
+      vintages.push(currentProductMode === 'carboncredit' ? val('t'+i+'-vintage-start-year')+' - '+val('t'+i+'-vintage-end-year') : val('t'+i+'-vintage-start-month')+' | '+val('t'+i+'-vintage-start-year')+' | '+val('t'+i+'-vintage-end-month')+' | '+val('t'+i+'-vintage-end-year'));
+      vintageParts.push(currentProductMode === 'carboncredit' ? [val('t'+i+'-vintage-start-year'), val('t'+i+'-vintage-end-year')] : [val('t'+i+'-vintage-start-month'), val('t'+i+'-vintage-start-year'), val('t'+i+'-vintage-end-month'), val('t'+i+'-vintage-end-year')]);
       techs.push(currentProductMode === 'carboncredit' ? 'CC' : val('t'+i+'-tech'));
       countries.push(val('t'+i+'-country'));
       volumes.push(val('t'+i+'-volume'));
@@ -5852,16 +5970,17 @@ function buildTradeGroup(startIdx, filled){
       mDeals.push(dealCodeFor(i));
       mDdates.push(fmtDateShort(val('t'+i+'-m-ddate')));
       mMatchings.push(val('t'+i+'-m-matching'));
-      mCods.push(val('t'+i+'-m-cod'));
+      mCods.push(currentProductMode === 'carboncredit' ? splitCcRegistryClearing(val('t'+i+'-registry-clearing')).clearingAccount : val('t'+i+'-m-cod'));
     } else {
-      registries.push(''); transfers.push('');
+      registries.push(''); registryClearings.push(''); transfers.push('');
       vintages.push(''); vintageParts.push(['','','','']); techs.push(''); countries.push(''); volumes.push(''); prices.push(''); priceParts.push(['','']);
       payterms.push(''); prepayments.push(''); dstarts.push(''); dends.push(''); remarks.push('');
       mNames.push(''); mRecs.push(''); mDeals.push(''); mDdates.push(''); mMatchings.push(''); mCods.push('');
     }
   }
   addRow('Product', tradeNos);
-  addRow('Registry', registries.map(registryDisplayName));
+  if(currentProductMode === 'carboncredit') addRow('Registry/Clearing account', registryClearings.map(v=>{const rc=splitCcRegistryClearing(v);return ccRegistryClearingDisplay(rc.registry,rc.clearingAccount);}));
+  else addRow('Registry', registries.map(registryDisplayName));
   addRow(transferAccountLabel(currentRole()), transfers);
   addRow('Vintage', vintages, false, vintageParts);
   if(currentProductMode !== 'carboncredit') addRow('Tech', techs);
@@ -5872,7 +5991,7 @@ function buildTradeGroup(startIdx, filled){
   if(currentProductMode === 'carboncredit') addRow('Prepayment', prepayments);
   addRow('Delivery Start Date', dstarts);
   addRow('Delivery End Date', dends);
-  addRow('License Commencement Date (if applicable)', mCods);
+  if(currentProductMode !== 'carboncredit') addRow('License Commencement Date (if applicable)', mCods);
   addRow('Special Remarks Request', remarks);
   addRow('BD Source Matching: 1. Buyer/Seller', mNames);
   addRow('2. No of RECs', mRecs);
@@ -6112,6 +6231,8 @@ function buildPointFormat(){
   addField(currentRole(), val('h-buyer'));
   if(currentProductMode === 'carboncredit') addField('Project Name', val('h-project-name'));
   if(currentProductMode === 'carboncredit') addField('Project ID', val('h-project-id'));
+  if(currentProductMode === 'carboncredit') addField('Project type', val('h-project-type'));
+  if(currentProductMode === 'carboncredit') addField('Methodology', val('h-methodology'));
   // Counterparty line: our own side is always "Saxon" internally, shown here
   // with its full legal entity name (SG vs MY), with whichever role is the
   // opposite of the agreement's Buyer/Seller above.
@@ -6134,9 +6255,10 @@ function buildPointFormat(){
   for(let i=1;i<=filled;i++){
     addBlank();
     lines.push({type:'tradeTitle', text:'Product '+i});
-    addLiveField(i, 'registry', 'Registry', registryDisplayName(val('t'+i+'-registry')));
+    if(currentProductMode === 'carboncredit'){ const rc=splitCcRegistryClearing(val('t'+i+'-registry-clearing')); addLiveField(i, 'registry', 'Registry/Clearing account', ccRegistryClearingDisplay(rc.registry, rc.clearingAccount)); }
+    else addLiveField(i, 'registry', 'Registry', registryDisplayName(val('t'+i+'-registry')));
     addField(transferAccountLabel(currentRole()), transferAccountValue(val('h-order'), val('t'+i+'-transfer')));
-    addField('Vintage', val('t'+i+'-vintage-start-month')+' '+val('t'+i+'-vintage-start-year')+' - '+val('t'+i+'-vintage-end-month')+' '+val('t'+i+'-vintage-end-year'));
+    addField('Vintage', currentProductMode === 'carboncredit' ? val('t'+i+'-vintage-start-year')+' - '+val('t'+i+'-vintage-end-year') : val('t'+i+'-vintage-start-month')+' '+val('t'+i+'-vintage-start-year')+' - '+val('t'+i+'-vintage-end-month')+' '+val('t'+i+'-vintage-end-year'));
     if(currentProductMode !== 'carboncredit') addLiveField(i, 'tech', 'Technology', techFullName(val('t'+i+'-tech')));
     addField('Country', countryFullName(val('t'+i+'-country')));
     // Carbon Credit products are described/priced/counted in project-name and
@@ -6147,7 +6269,7 @@ function buildPointFormat(){
     addField('Payment Term', val('t'+i+'-payterm'));
     if(isCC_i) addField('Prepayment', val('t'+i+'-prepayment'));
     addField('Delivery', fmtDateOrdinal(val('t'+i+'-dstart'))+' - '+fmtDateOrdinal(val('t'+i+'-dend')));
-    addField('License Commencement Date (if applicable)', val('t'+i+'-m-cod'));
+    if(!isCC_i) addField('License Commencement Date (if applicable)', val('t'+i+'-m-cod'));
     addField(isCC_i ? 'Special Remarks' : 'Special Remarks Request', remarksVal(i));
     // Internal-only from here down — see the addField comment above. Product
     // number is this trade's position (i), 1-based, matching the order
@@ -6332,6 +6454,7 @@ function buildRecapLinesFromRows(dealId, sortedGroup){
   const addBlank = () => lines.push({type:'blank'});
   const head = sortedGroup[0].values[0];
   const role = roleFromOrderType(head[MC.supplyDemand]);
+  const isCC = (sortedGroup[0]._sourceTable || STANDARD_LOG_TABLE_NAME) === CC_LOG_TABLE_NAME;
 
   lines.push({type:'title', text:transactionRecapTitle((sortedGroup[0]._sourceTable || STANDARD_LOG_TABLE_NAME) === CC_LOG_TABLE_NAME)});
   addBlank();
@@ -6339,6 +6462,7 @@ function buildRecapLinesFromRows(dealId, sortedGroup){
   addField('Deal Date', formatStoredDate(head[MC.agreementDate]));
   addField('Commercial Executive', head[MC.salesPic]);
   addField(role, head[MC.company]);
+  if(isCC){ addField('Project Name', head[MC.projectName]); addField('Project ID', head[MC.projectId]); addField('Project type', head[MC.vFromMM]); addField('Methodology', head[MC.vToMM]); }
   addField(role === 'Seller' ? 'Buyer' : 'Seller', saxonEntityName(head[MC.entity]));
 
   if(head[MC.broker]){
@@ -6355,20 +6479,21 @@ function buildRecapLinesFromRows(dealId, sortedGroup){
     const i = idx + 1;
     addBlank();
     lines.push({type:'tradeTitle', text:'Product '+i});
-    addLiveField(i, 'registry', 'Registry', registryDisplayName(v[MC.registry]));
+    if(isCC) addLiveField(i, 'registry', 'Registry/Clearing account', ccRegistryClearingDisplay(v[MC.registry], v[MC.cod]));
+    else addLiveField(i, 'registry', 'Registry', registryDisplayName(v[MC.registry]));
     addField(transferAccountLabel(role), transferAccountValue(head[MC.supplyDemand], v[MC.tigrsIrecName]));
-    addField('Vintage', (v[MC.vFromMM]||'')+' '+(v[MC.vFromYY]||'')+' - '+(v[MC.vToMM]||'')+' '+(v[MC.vToYY]||''));
-    addLiveField(i, 'tech', 'Technology', techFullName(v[MC.tech]) || v[MC.tech] || '');
+    addField('Vintage', isCC ? (v[MC.vFromYY]||'')+' - '+(v[MC.vToYY]||'') : (v[MC.vFromMM]||'')+' '+(v[MC.vFromYY]||'')+' - '+(v[MC.vToMM]||'')+' '+(v[MC.vToYY]||''));
+    if(!isCC) addLiveField(i, 'tech', 'Technology', techFullName(v[MC.tech]) || v[MC.tech] || '');
     addField('Country', countryFullName(v[MC.country]) || v[MC.country] || '');
-    addField('Volume (RECs)', v[MC.volume]);
-    addField('Price / REC', (v[MC.currency]||'')+' '+(v[MC.unitPrice]||''));
+    addField(isCC ? 'Volume (VCUs)' : 'Volume (RECs)', v[MC.volume]);
+    addField(isCC ? 'Price / VCU' : 'Price / REC', (v[MC.currency]||'')+' '+(v[MC.unitPrice]||''));
     addField('Payment Term', v[MC.paymentTerm]);
     addField('Delivery', fmtDateOrdinalStored(v[MC.deliveryStart])+' - '+fmtDateOrdinalStored(v[MC.deliveryEnd]));
-    addField('License Commencement Date (if applicable)', v[MC.cod]);
-    addField('Special Remarks Request', v[MC.specialReq] || 'N/A');
+    if(!isCC) addField('License Commencement Date (if applicable)', v[MC.cod]);
+    addField(isCC ? 'Special Remarks' : 'Special Remarks Request', v[MC.specialReq] || 'N/A');
     addBdField(i, 'status', 'BD Matching \u2014 Status', matchingDisplayLabel(v[MC.matching]));
     addBdField(i, 'buyerseller', 'BD Matching \u2014 Buyer/Seller', v[MC.buyerSeller] || '-');
-    addBdField(i, 'norecs', 'BD Matching \u2014 No of RECs', v[MC.noOfRecs] || '-');
+    addBdField(i, 'norecs', isCC ? 'BD Matching \u2014 No of VCUs' : 'BD Matching \u2014 No of RECs', v[MC.noOfRecs] || '-');
     addBdField(i, 'whichdeal', 'BD Matching \u2014 Which deal', dealLabelForStoredValue(v[MC.whichDeal]) || '-');
     addBdField(i, 'deliverydate', 'BD Matching \u2014 Delivery Date', formatStoredDate(v[MC.deliveryDateM]) || '-');
   });
@@ -6405,32 +6530,38 @@ function recapEditFieldHtml(label, inputHtml){
 function recapEditFormHtml(dealId, sortedGroup){
   const head = sortedGroup[0].values[0];
   const role = roleFromOrderType(head[MC.supplyDemand]);
+  const isCC = (sortedGroup[0]._sourceTable || STANDARD_LOG_TABLE_NAME) === CC_LOG_TABLE_NAME;
   let html = '<div id="recap-edit-form" style="display:flex;flex-direction:column;gap:16px;">'+
-    '<p style="font-size:12px;color:var(--text-secondary);margin:0;">Superadmin edit — saves straight to the live TradeDealLog row(s) and regenerates the saved recap immediately, with no separate approval step. BD source matching isn\'t editable here; use "Request edit" for that.</p>'+
+    '<p style="font-size:12px;color:var(--text-secondary);margin:0;">Superadmin edit — saves straight to the live '+(isCC?'CCDealLog':'TradeDealLog')+' row(s) and regenerates the saved recap immediately, with no separate approval step. BD source matching isn\'t editable here; use "Request edit" for that.</p>'+
     '<div class="grid">'+
       recapEditFieldHtml('Deal Date', '<input type="date" id="re-h-date" value="'+escapeHtml(toDateInputValue(head[MC.agreementDate]))+'"/>')+
       recapEditFieldHtml('Entity', '<input type="text" id="re-h-entity" value="'+escapeHtml(head[MC.entity]||'')+'"/>')+
       recapEditFieldHtml('BD in-charge', '<input type="text" id="re-h-bd" value="'+escapeHtml(head[MC.salesPic]||'')+'"/>')+
       recapEditFieldHtml(role+' Full Name', '<input type="text" id="re-h-company" value="'+escapeHtml(head[MC.company]||'')+'"/>')+
+      (isCC ? recapEditFieldHtml('Project Name', '<input type="text" id="re-h-project-name" value="'+escapeHtml(head[MC.projectName]||'')+'"/>')+
+              recapEditFieldHtml('Project ID', '<input type="text" id="re-h-project-id" value="'+escapeHtml(head[MC.projectId]||'')+'"/>')+
+              recapEditFieldHtml('Project Type', '<input type="text" id="re-h-project-type" value="'+escapeHtml(head[MC.vFromMM]||'')+'"/>')+
+              recapEditFieldHtml('Methodology', '<input type="text" id="re-h-methodology" value="'+escapeHtml(head[MC.vToMM]||'')+'"/>') : '')+
     '</div>';
   sortedGroup.forEach((r, idx)=>{
     const v = r.values[0];
     const i = idx+1;
     const idp = 're-t'+i+'-';
     html += '<div class="trade-block"><p class="trade-title">Product '+i+'</p><div class="grid">'+
-      recapEditFieldHtml('Registry', selectWithFullNamesHtml(idp+'registry', REGISTRIES, REGISTRY_DISPLAY_NAMES, v[MC.registry]||'IREC'))+
+      (isCC ? recapEditFieldHtml('Registry/Clearing account', selectWithFullNamesHtml(idp+'registry-clearing', CC_REGISTRY_CLEARING_OPTIONS, CC_REGISTRY_CLEARING_DISPLAY_NAMES, ccRegistryClearingValue(v[MC.registry],v[MC.cod])||'Verra')) : recapEditFieldHtml('Registry', selectWithFullNamesHtml(idp+'registry', REGISTRIES, REGISTRY_DISPLAY_NAMES, v[MC.registry]||'IREC')))+
       recapEditFieldHtml(transferAccountLabel(role), '<input type="text" id="'+idp+'transfer" value="'+escapeHtml(v[MC.tigrsIrecName]||'')+'"/>')+
-      recapEditFieldHtml('Tech', comboHtml(idp+'tech', idp+'tech-list', TECHS, v[MC.tech]||''))+
-      recapEditFieldHtml('Country (Full Name)', comboHtml(idp+'country', idp+'country-list', countryComboOptions(), v[MC.country]||''))+
-      recapEditFieldHtml('Vintage start month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vstart-m', MONTHS, v[MC.vFromMM]||'Jan')+comboHtml(idp+'vstart-y', idp+'vstart-y-list', YEARS, v[MC.vFromYY]||'')+'</div>')+
-      recapEditFieldHtml('Vintage end month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vend-m', MONTHS, v[MC.vToMM]||'Dec')+comboHtml(idp+'vend-y', idp+'vend-y-list', YEARS, v[MC.vToYY]||'')+'</div>')+
-      recapEditFieldHtml('Volume (RECs)', '<input type="text" id="'+idp+'volume" value="'+escapeHtml(v[MC.volume]||'')+'"/>')+
+      (isCC ? '' : recapEditFieldHtml('Tech', comboHtml(idp+'tech', idp+'tech-list', TECHS, v[MC.tech]||'')))+
+      (isCC ? recapEditFieldHtml('Country', selectHtml(idp+'country', CC_COUNTRIES, v[MC.country]||'Malaysia')) : recapEditFieldHtml('Country (Full Name)', comboHtml(idp+'country', idp+'country-list', countryComboOptions(), v[MC.country]||'')))+
+      (isCC ? recapEditFieldHtml('Vintage Start Year', comboHtml(idp+'vintage-start-year', idp+'vintage-start-year-list', YEARS, v[MC.vFromYY]||''))+recapEditFieldHtml('Vintage End Year', comboHtml(idp+'vintage-end-year', idp+'vintage-end-year-list', YEARS, v[MC.vToYY]||'')) :
+        recapEditFieldHtml('Vintage start month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vstart-m', MONTHS, v[MC.vFromMM]||'Jan')+comboHtml(idp+'vstart-y', idp+'vstart-y-list', YEARS, v[MC.vFromYY]||'')+'</div>')+
+        recapEditFieldHtml('Vintage end month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vend-m', MONTHS, v[MC.vToMM]||'Dec')+comboHtml(idp+'vend-y', idp+'vend-y-list', YEARS, v[MC.vToYY]||'')+'</div>'))+
+      recapEditFieldHtml(isCC?'Volume (VCUs)':'Volume (RECs)', '<input type="text" id="'+idp+'volume" value="'+escapeHtml(v[MC.volume]||'')+'"/>')+
       recapEditFieldHtml('Price currency', comboHtml(idp+'currency', idp+'currency-list', CURRENCIES, v[MC.currency]||''))+
-      recapEditFieldHtml('Price / REC', '<input type="text" id="'+idp+'price" value="'+escapeHtml(v[MC.unitPrice]||'')+'"/>')+
+      recapEditFieldHtml(isCC?'Price / VCU':'Price / REC', '<input type="text" id="'+idp+'price" value="'+escapeHtml(v[MC.unitPrice]||'')+'"/>')+
       recapEditFieldHtml('Payment term', '<input type="text" id="'+idp+'payterm" value="'+escapeHtml(v[MC.paymentTerm]||'')+'"/>')+
       recapEditFieldHtml('Delivery start date', '<input type="date" id="'+idp+'dstart" value="'+escapeHtml(toDateInputValue(v[MC.deliveryStart]))+'"/>')+
       recapEditFieldHtml('Delivery end date', '<input type="date" id="'+idp+'dend" value="'+escapeHtml(toDateInputValue(v[MC.deliveryEnd]))+'"/>')+
-      recapEditFieldHtml('COD (if applicable)', '<input type="text" id="'+idp+'cod" value="'+escapeHtml(v[MC.cod]||'')+'"/>')+
+      (isCC ? recapEditFieldHtml('Prepayment', '<textarea id="'+idp+'prepayment">'+escapeHtml(v[MC.prepayment]||'')+'</textarea>') : recapEditFieldHtml('COD (if applicable)', '<input type="text" id="'+idp+'cod" value="'+escapeHtml(v[MC.cod]||'')+'"/>'))+
       recapEditFieldHtml('Special remarks', '<textarea id="'+idp+'remarks">'+escapeHtml(v[MC.specialReq]||'')+'</textarea>')+
     '</div></div>';
   });
@@ -6438,11 +6569,10 @@ function recapEditFormHtml(dealId, sortedGroup){
     '<div style="display:flex;gap:8px;justify-content:flex-end;">'+
       '<button type="button" class="secondary" id="recap-edit-cancel">Cancel</button>'+
       '<button type="button" id="recap-edit-save">Save changes</button>'+
-    '</div>'+
-  '</div>';
+    '</div>'+ '</div>';
   return html;
 }
-// Swaps containerEl's content for the edit form. restoreHtml is whatever
+// Swaps containerEl's content// Swaps containerEl's content for the edit form. restoreHtml is whatever
 // was showing before (so Cancel can put it straight back with no re-fetch),
 // onSaved(finalHtml) lets the caller update its own cached copy (lastHtml /
 // viewModalHtml) once a save succeeds.
@@ -6471,14 +6601,16 @@ async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
     return;
   }
 
+  const isCC = (sortedGroup[0]._sourceTable || STANDARD_LOG_TABLE_NAME) === CC_LOG_TABLE_NAME;
   const updatedRows = [];
   for(let idx = 0; idx < sortedGroup.length; idx++){
     const i = idx + 1;
     const idp = 're-t'+i+'-';
-    const registry = rv(idp+'registry');
+    const registryCombined = isCC ? rv(idp+'registry-clearing') : rv(idp+'registry');
+    const registry = isCC ? splitCcRegistryClearing(registryCombined).registry : registryCombined;
     const volume = rv(idp+'volume');
-    if(!registry || !volume){
-      errEl.textContent = 'Product '+i+': Registry and Volume (RECs) can\'t be blank.';
+    if(!registryCombined || !volume){
+      errEl.textContent = 'Product '+i+': '+(isCC?'Registry/Clearing account':'Registry')+' and '+(isCC?'Volume (VCUs)':'Volume (RECs)')+' can\'t be blank.';
       errEl.style.display = 'block';
       return;
     }
@@ -6489,19 +6621,30 @@ async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
     values[MC.company] = hCompany;
     values[MC.registry] = registry;
     values[MC.tigrsIrecName] = rv(idp+'transfer');
-    values[MC.tech] = rv(idp+'tech');
+    values[MC.tech] = isCC ? 'CC' : rv(idp+'tech');
     values[MC.country] = rv(idp+'country');
-    values[MC.vFromMM] = rv(idp+'vstart-m');
-    values[MC.vFromYY] = rv(idp+'vstart-y');
-    values[MC.vToMM] = rv(idp+'vend-m');
-    values[MC.vToYY] = rv(idp+'vend-y');
+    if(isCC){
+      values[MC.projectName] = rv('re-h-project-name');
+      values[MC.projectId] = rv('re-h-project-id');
+      values[MC.vFromMM] = rv('re-h-project-type');
+      values[MC.vFromYY] = rv(idp+'vintage-start-year');
+      values[MC.vToMM] = rv('re-h-methodology');
+      values[MC.vToYY] = rv(idp+'vintage-end-year');
+      values[MC.cod] = splitCcRegistryClearing(registryCombined).clearingAccount;
+      values[MC.prepayment] = rv(idp+'prepayment');
+    }else{
+      values[MC.vFromMM] = rv(idp+'vstart-m');
+      values[MC.vFromYY] = rv(idp+'vstart-y');
+      values[MC.vToMM] = rv(idp+'vend-m');
+      values[MC.vToYY] = rv(idp+'vend-y');
+    }
     values[MC.volume] = volume;
     values[MC.currency] = rv(idp+'currency');
     values[MC.unitPrice] = rv(idp+'price');
     values[MC.paymentTerm] = rv(idp+'payterm');
     values[MC.deliveryStart] = rv(idp+'dstart');
     values[MC.deliveryEnd] = rv(idp+'dend');
-    values[MC.cod] = rv(idp+'cod');
+    if(!isCC) values[MC.cod] = rv(idp+'cod');
     const remarksRaw = rv(idp+'remarks');
     values[MC.specialReq] = (!remarksRaw || remarksRaw.toUpperCase() === 'NA') ? 'N/A' : remarksRaw;
     // Same optional-column stamping as saveConfirmationToHistory (see the
@@ -6617,18 +6760,26 @@ function buildFullEditChangeSummary(oldGroup, updatedRows, role){
       const a = String(oldV||'').trim(), b = String(newV||'').trim();
       if(a !== b) lines.push(prefix+label+': '+(a||'(blank)')+' \u2192 '+(b||'(blank)'));
     };
-    pdiff('Registry', registryDisplayName(ov[MC.registry]), registryDisplayName(nv[MC.registry]));
+    if(!isCC) pdiff('Registry', registryDisplayName(ov[MC.registry]), registryDisplayName(nv[MC.registry]));
     pdiff(transferAccountLabel(role), ov[MC.tigrsIrecName], nv[MC.tigrsIrecName]);
-    pdiff('Tech', techFullName(ov[MC.tech])||ov[MC.tech]||'', techFullName(nv[MC.tech])||nv[MC.tech]||'');
-    pdiff('Country', countryFullName(ov[MC.country])||ov[MC.country]||'', countryFullName(nv[MC.country])||nv[MC.country]||'');
-    pdiff('Vintage', (ov[MC.vFromMM]||'')+' '+(ov[MC.vFromYY]||'')+' - '+(ov[MC.vToMM]||'')+' '+(ov[MC.vToYY]||''),
-                     (nv[MC.vFromMM]||'')+' '+(nv[MC.vFromYY]||'')+' - '+(nv[MC.vToMM]||'')+' '+(nv[MC.vToYY]||''));
-    pdiff('Volume (RECs)', ov[MC.volume], nv[MC.volume]);
-    pdiff('Price / REC', (ov[MC.currency]||'')+' '+(ov[MC.unitPrice]||''), (nv[MC.currency]||'')+' '+(nv[MC.unitPrice]||''));
+    if(isCC){
+      pdiff('Project Type', ov[MC.vFromMM], nv[MC.vFromMM]);
+      pdiff('Methodology', ov[MC.vToMM], nv[MC.vToMM]);
+      pdiff('Country', ov[MC.country], nv[MC.country]);
+      pdiff('Vintage Start Year', ov[MC.vFromYY], nv[MC.vFromYY]);
+      pdiff('Vintage End Year', ov[MC.vToYY], nv[MC.vToYY]);
+      pdiff('Registry/Clearing account', ccRegistryClearingDisplay(ov[MC.registry],ov[MC.cod]), ccRegistryClearingDisplay(nv[MC.registry],nv[MC.cod]));
+    }else{
+      pdiff('Tech', techFullName(ov[MC.tech])||ov[MC.tech]||'', techFullName(nv[MC.tech])||nv[MC.tech]||'');
+      pdiff('Country', countryFullName(ov[MC.country])||ov[MC.country]||'', countryFullName(nv[MC.country])||nv[MC.country]||'');
+      pdiff('Vintage', (ov[MC.vFromMM]||'')+' '+(ov[MC.vFromYY]||'')+' - '+(ov[MC.vToMM]||'')+' '+(ov[MC.vToYY]||''), (nv[MC.vFromMM]||'')+' '+(nv[MC.vFromYY]||'')+' - '+(nv[MC.vToMM]||'')+' '+(nv[MC.vToYY]||''));
+    }
+    pdiff(isCC?'Volume (VCUs)':'Volume (RECs)', ov[MC.volume], nv[MC.volume]);
+    pdiff(isCC?'Price / VCU':'Price / REC', (ov[MC.currency]||'')+' '+(ov[MC.unitPrice]||''), (nv[MC.currency]||'')+' '+(nv[MC.unitPrice]||''));
     pdiff('Payment Term', ov[MC.paymentTerm], nv[MC.paymentTerm]);
     pdiff('Delivery Start', formatStoredDate(ov[MC.deliveryStart]), formatStoredDate(nv[MC.deliveryStart]));
     pdiff('Delivery End', formatStoredDate(ov[MC.deliveryEnd]), formatStoredDate(nv[MC.deliveryEnd]));
-    pdiff('COD', ov[MC.cod], nv[MC.cod]);
+    if(!isCC) pdiff('COD', ov[MC.cod], nv[MC.cod]);
     pdiff('Special Remarks', ov[MC.specialReq], nv[MC.specialReq]);
   });
   return lines.join('\n');
@@ -6640,31 +6791,32 @@ function buildFullEditChangeSummary(oldGroup, updatedRows, role){
 function fullEditFormHtml(dealId, sortedGroup){
   const head = sortedGroup[0].values[0];
   const role = roleFromOrderType(head[MC.supplyDemand]);
+  const isCC = (sortedGroup[0]._sourceTable || STANDARD_LOG_TABLE_NAME) === CC_LOG_TABLE_NAME;
   let html = '<div id="full-edit-form" style="display:flex;flex-direction:column;gap:16px;">'+
     '<div class="grid">'+
       recapEditFieldHtml('Deal Date', '<input type="date" id="fe-h-date" value="'+escapeHtml(toDateInputValue(head[MC.agreementDate]))+'"/>')+
       recapEditFieldHtml('Entity', '<input type="text" id="fe-h-entity" value="'+escapeHtml(head[MC.entity]||'')+'"/>')+
       recapEditFieldHtml('BD in-charge', '<input type="text" id="fe-h-bd" value="'+escapeHtml(head[MC.salesPic]||'')+'"/>')+
       recapEditFieldHtml(role+' Full Name', '<input type="text" id="fe-h-company" value="'+escapeHtml(head[MC.company]||'')+'"/>')+
+      (isCC ? recapEditFieldHtml('Project Name', '<input type="text" id="fe-h-project-name" value="'+escapeHtml(head[MC.projectName]||'')+'"/>')+recapEditFieldHtml('Project ID', '<input type="text" id="fe-h-project-id" value="'+escapeHtml(head[MC.projectId]||'')+'"/>')+recapEditFieldHtml('Project Type', '<input type="text" id="fe-h-project-type" value="'+escapeHtml(head[MC.vFromMM]||'')+'"/>')+recapEditFieldHtml('Methodology', '<input type="text" id="fe-h-methodology" value="'+escapeHtml(head[MC.vToMM]||'')+'"/>') : '')+
     '</div>';
   sortedGroup.forEach((r, idx)=>{
     const v = r.values[0];
     const i = idx+1;
     const idp = 'fe-t'+i+'-';
     html += '<div class="trade-block"><p class="trade-title">Product '+i+'</p><div class="grid">'+
-      recapEditFieldHtml('Registry', selectWithFullNamesHtml(idp+'registry', REGISTRIES, REGISTRY_DISPLAY_NAMES, v[MC.registry]||'IREC'))+
+      (isCC ? recapEditFieldHtml('Registry/Clearing account', selectWithFullNamesHtml(idp+'registry-clearing', CC_REGISTRY_CLEARING_OPTIONS, CC_REGISTRY_CLEARING_DISPLAY_NAMES, ccRegistryClearingValue(v[MC.registry],v[MC.cod])||'Verra')) : recapEditFieldHtml('Registry', selectWithFullNamesHtml(idp+'registry', REGISTRIES, REGISTRY_DISPLAY_NAMES, v[MC.registry]||'IREC')))+
       recapEditFieldHtml(transferAccountLabel(role), '<input type="text" id="'+idp+'transfer" value="'+escapeHtml(v[MC.tigrsIrecName]||'')+'"/>')+
-      recapEditFieldHtml('Tech', comboHtml(idp+'tech', idp+'tech-list', TECHS, v[MC.tech]||''))+
-      recapEditFieldHtml('Country (Full Name)', comboHtml(idp+'country', idp+'country-list', countryComboOptions(), v[MC.country]||''))+
-      recapEditFieldHtml('Vintage start month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vstart-m', MONTHS, v[MC.vFromMM]||'Jan')+comboHtml(idp+'vstart-y', idp+'vstart-y-list', YEARS, v[MC.vFromYY]||'')+'</div>')+
-      recapEditFieldHtml('Vintage end month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vend-m', MONTHS, v[MC.vToMM]||'Dec')+comboHtml(idp+'vend-y', idp+'vend-y-list', YEARS, v[MC.vToYY]||'')+'</div>')+
-      recapEditFieldHtml('Volume (RECs)', '<input type="text" id="'+idp+'volume" value="'+escapeHtml(v[MC.volume]||'')+'"/>')+
+      (isCC ? '' : recapEditFieldHtml('Tech', comboHtml(idp+'tech', idp+'tech-list', TECHS, v[MC.tech]||'')))+
+      (isCC ? recapEditFieldHtml('Country', selectHtml(idp+'country', CC_COUNTRIES, v[MC.country]||'Malaysia')) : recapEditFieldHtml('Country (Full Name)', comboHtml(idp+'country', idp+'country-list', countryComboOptions(), v[MC.country]||'')))+
+      (isCC ? recapEditFieldHtml('Vintage Start Year', comboHtml(idp+'vintage-start-year', idp+'vintage-start-year-list', YEARS, v[MC.vFromYY]||''))+recapEditFieldHtml('Vintage End Year', comboHtml(idp+'vintage-end-year', idp+'vintage-end-year-list', YEARS, v[MC.vToYY]||'')) : recapEditFieldHtml('Vintage start month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vstart-m', MONTHS, v[MC.vFromMM]||'Jan')+comboHtml(idp+'vstart-y', idp+'vstart-y-list', YEARS, v[MC.vFromYY]||'')+'</div>')+recapEditFieldHtml('Vintage end month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vend-m', MONTHS, v[MC.vToMM]||'Dec')+comboHtml(idp+'vend-y', idp+'vend-y-list', YEARS, v[MC.vToYY]||'')+'</div>'))+
+      recapEditFieldHtml(isCC?'Volume (VCUs)':'Volume (RECs)', '<input type="text" id="'+idp+'volume" value="'+escapeHtml(v[MC.volume]||'')+'"/>')+
       recapEditFieldHtml('Price currency', comboHtml(idp+'currency', idp+'currency-list', CURRENCIES, v[MC.currency]||''))+
-      recapEditFieldHtml('Price / REC', '<input type="text" id="'+idp+'price" value="'+escapeHtml(v[MC.unitPrice]||'')+'"/>')+
+      recapEditFieldHtml(isCC?'Price / VCU':'Price / REC', '<input type="text" id="'+idp+'price" value="'+escapeHtml(v[MC.unitPrice]||'')+'"/>')+
       recapEditFieldHtml('Payment term', '<input type="text" id="'+idp+'payterm" value="'+escapeHtml(v[MC.paymentTerm]||'')+'"/>')+
       recapEditFieldHtml('Delivery start date', '<input type="date" id="'+idp+'dstart" value="'+escapeHtml(toDateInputValue(v[MC.deliveryStart]))+'"/>')+
       recapEditFieldHtml('Delivery end date', '<input type="date" id="'+idp+'dend" value="'+escapeHtml(toDateInputValue(v[MC.deliveryEnd]))+'"/>')+
-      recapEditFieldHtml('COD (if applicable)', '<input type="text" id="'+idp+'cod" value="'+escapeHtml(v[MC.cod]||'')+'"/>')+
+      (isCC ? recapEditFieldHtml('Prepayment', '<textarea id="'+idp+'prepayment">'+escapeHtml(v[MC.prepayment]||'')+'</textarea>') : recapEditFieldHtml('COD (if applicable)', '<input type="text" id="'+idp+'cod" value="'+escapeHtml(v[MC.cod]||'')+'"/>'))+
       recapEditFieldHtml('Special remarks', '<textarea id="'+idp+'remarks">'+escapeHtml(v[MC.specialReq]||'')+'</textarea>')+
     '</div></div>';
   });
@@ -6730,14 +6882,16 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
     return;
   }
 
+  const isCC = (sortedGroup[0]._sourceTable || STANDARD_LOG_TABLE_NAME) === CC_LOG_TABLE_NAME;
   const updatedRows = [];
   for(let idx = 0; idx < sortedGroup.length; idx++){
     const i = idx + 1;
     const idp = 'fe-t'+i+'-';
-    const registry = rv(idp+'registry');
+    const registryCombined = isCC ? rv(idp+'registry-clearing') : rv(idp+'registry');
+    const registry = isCC ? splitCcRegistryClearing(registryCombined).registry : registryCombined;
     const volume = rv(idp+'volume');
-    if(!registry || !volume){
-      errEl.textContent = 'Product '+i+': Registry and Volume (RECs) can\'t be blank.';
+    if(!registryCombined || !volume){
+      errEl.textContent = 'Product '+i+': '+(isCC?'Registry/Clearing account and Volume (VCUs)':'Registry and Volume (RECs)')+' can\'t be blank.';
       errEl.style.display = 'block';
       return;
     }
@@ -6748,19 +6902,30 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
     values[MC.company] = hCompany;
     values[MC.registry] = registry;
     values[MC.tigrsIrecName] = rv(idp+'transfer');
-    values[MC.tech] = rv(idp+'tech');
+    values[MC.tech] = isCC ? 'CC' : rv(idp+'tech');
     values[MC.country] = rv(idp+'country');
-    values[MC.vFromMM] = rv(idp+'vstart-m');
-    values[MC.vFromYY] = rv(idp+'vstart-y');
-    values[MC.vToMM] = rv(idp+'vend-m');
-    values[MC.vToYY] = rv(idp+'vend-y');
+    if(isCC){
+      values[MC.projectName] = rv('fe-h-project-name');
+      values[MC.projectId] = rv('fe-h-project-id');
+      values[MC.vFromMM] = rv('fe-h-project-type');
+      values[MC.vFromYY] = rv(idp+'vintage-start-year');
+      values[MC.vToMM] = rv('fe-h-methodology');
+      values[MC.vToYY] = rv(idp+'vintage-end-year');
+      values[MC.cod] = splitCcRegistryClearing(registryCombined).clearingAccount;
+      values[MC.prepayment] = rv(idp+'prepayment');
+    }else{
+      values[MC.vFromMM] = rv(idp+'vstart-m');
+      values[MC.vFromYY] = rv(idp+'vstart-y');
+      values[MC.vToMM] = rv(idp+'vend-m');
+      values[MC.vToYY] = rv(idp+'vend-y');
+    }
     values[MC.volume] = volume;
     values[MC.currency] = rv(idp+'currency');
     values[MC.unitPrice] = rv(idp+'price');
     values[MC.paymentTerm] = rv(idp+'payterm');
     values[MC.deliveryStart] = rv(idp+'dstart');
     values[MC.deliveryEnd] = rv(idp+'dend');
-    values[MC.cod] = rv(idp+'cod');
+    if(!isCC) values[MC.cod] = rv(idp+'cod');
     const remarksRaw = rv(idp+'remarks');
     values[MC.specialReq] = (!remarksRaw || remarksRaw.toUpperCase() === 'NA') ? 'N/A' : remarksRaw;
 
@@ -6883,8 +7048,18 @@ function fieldIsValid(f){
   return !!(v && v.trim());
 }
 function tradeFieldDefs(i){
-  // Fields to validate for a standard Trade section
-  const baseDefs = [
+  const baseDefs = currentProductMode === 'carboncredit' ? [
+    {ids:['t'+i+'-registry-clearing'], label:'Registry/Clearing account'},
+    {ids:['t'+i+'-vintage-start-year'], label:'Vintage Start Year'},
+    {ids:['t'+i+'-vintage-end-year'], label:'Vintage End Year'},
+    {ids:['t'+i+'-country'], label:'Country'},
+    {ids:['t'+i+'-volume'], label:'Volume (VCUs)'},
+    {ids:['t'+i+'-currency'], label:'Price currency'},
+    {ids:['t'+i+'-price'], label:'Price / VCU'},
+    {ids:['t'+i+'-payterm'], label:'Payment term'},
+    {ids:['t'+i+'-dstart'], label:'Delivery start date'},
+    {ids:['t'+i+'-dend'], label:'Delivery end date'}
+  ] : [
     {ids:['t'+i+'-registry'], label:'Registry'},
     {ids:['t'+i+'-vintage-start-month','t'+i+'-vintage-start-year'], label:'Vintage start month & year'},
     {ids:['t'+i+'-vintage-end-month','t'+i+'-vintage-end-year'], label:'Vintage end month & year'},
