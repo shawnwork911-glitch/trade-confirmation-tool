@@ -443,6 +443,7 @@
     #tab-panel-analysis .confirmation-filter-bar select,
     #tab-panel-analysis .confirmation-filter-bar input[type="date"]{width:100%;max-width:none;min-width:0;}
     #tab-panel-analysis .analysis-row-break{grid-column:1 / -1;height:0;}
+    #tab-panel-analysis .analysis-dealdate-label,
     #tab-panel-analysis .analysis-created-label{grid-column:1;}
     #tab-panel-analysis #analysis-filter-clear{justify-self:start;}
     #tab-panel-analysis #analysis-filter-count{justify-self:start;margin-left:0;}
@@ -489,6 +490,13 @@
   #user-mgmt-list table{width:100%;border-collapse:collapse;}
   #user-mgmt-list th{font-size:12px;color:var(--text-secondary);border-bottom:1px solid var(--border);text-align:left;padding:6px;}
   #user-mgmt-list td{padding:6px;font-size:13px;}
+
+  .confirmation-section-selector{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px;}
+  .confirmation-section-selector button{background:transparent;color:var(--text);border:1px solid var(--border-strong);padding:8px 14px;font-size:13px;}
+  .confirmation-section-selector button:hover{background:var(--surface-2);}
+  .confirmation-section-selector button.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+  .confirmation-section-selector button.active:hover{background:var(--accent-hover);}
+
 </style>
 <script>
 // Applied immediately (before body paints) so returning users don't see a
@@ -596,6 +604,12 @@
 
   <div id="tab-panel-confirmations" class="tab-panel" style="display:none;">
 
+  <div class="confirmation-section-selector" id="confirmation-section-selector">
+    <button type="button" id="confirmation-section-my" data-confirmation-section="my">My Saved Confirmations</button>
+    <button type="button" id="confirmation-section-queue" data-confirmation-section="queue">Approval Queue</button>
+    <button type="button" id="confirmation-section-all" data-confirmation-section="all">All Confirmations</button>
+  </div>
+
   <div class="card" id="my-history-card">
     <p class="card-title">My saved confirmations</p>
     <div class="confirmation-filter-bar">
@@ -647,7 +661,8 @@
     <div class="confirmation-filter-bar">
       <select id="analysis-filter-type"><option value="">All types</option><option value="recs">RECs</option><option value="carboncredit">Carbon Credit</option></select>
       <select id="analysis-filter-bd"><option value="">All BD in-charge</option></select>
-      <span class="analysis-filter-group-label">Deal Date:</span>
+      <span class="analysis-row-break" aria-hidden="true"></span>
+      <span class="analysis-filter-group-label analysis-dealdate-label">Deal Date:</span>
       <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">From <input type="date" id="analysis-filter-from"></label>
       <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">To <input type="date" id="analysis-filter-to"></label>
       <span class="analysis-row-break" aria-hidden="true"></span>
@@ -1247,6 +1262,46 @@ function renderDealIdSettings(){
 function canBuildAgreement(){
   return currentUserRole === 'user' || currentUserRole === 'superadmin';
 }
+
+let activeConfirmationSection = null;
+function confirmationSectionAllowed(section){
+  if(section === 'my') return canBuildAgreement();
+  if(section === 'queue') return isAdmin;
+  if(section === 'all') return true;
+  return false;
+}
+function setConfirmationSection(section){
+  if(!confirmationSectionAllowed(section)){
+    section = canBuildAgreement() ? 'my' : (isAdmin ? 'queue' : 'all');
+  }
+  activeConfirmationSection = section;
+  const myCard = document.getElementById('my-history-card');
+  const queueCard = document.getElementById('approval-queue-card');
+  const allCard = document.getElementById('admin-history-card');
+  if(myCard) myCard.style.display = section === 'my' && confirmationSectionAllowed('my') ? 'block' : 'none';
+  if(queueCard) queueCard.style.display = section === 'queue' && confirmationSectionAllowed('queue') ? 'block' : 'none';
+  if(allCard) allCard.style.display = section === 'all' ? 'block' : 'none';
+  document.querySelectorAll('[data-confirmation-section]').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-confirmation-section') === section);
+  });
+}
+function refreshConfirmationSectionSelector(){
+  const myBtn = document.getElementById('confirmation-section-my');
+  const queueBtn = document.getElementById('confirmation-section-queue');
+  const allBtn = document.getElementById('confirmation-section-all');
+  if(myBtn) myBtn.style.display = confirmationSectionAllowed('my') ? 'inline-block' : 'none';
+  if(queueBtn) queueBtn.style.display = confirmationSectionAllowed('queue') ? 'inline-block' : 'none';
+  if(allBtn) allBtn.style.display = 'inline-block';
+  const fallback = canBuildAgreement() ? 'my' : (isAdmin ? 'queue' : 'all');
+  setConfirmationSection(activeConfirmationSection && confirmationSectionAllowed(activeConfirmationSection) ? activeConfirmationSection : fallback);
+}
+
+document.addEventListener('click', e => {
+  const btn = e.target.closest('[data-confirmation-section]');
+  if(!btn) return;
+  setConfirmationSection(btn.getAttribute('data-confirmation-section'));
+});
+
 function applyRoleUi(){
   document.getElementById('user-role-label').textContent = ' · ' + ROLE_LABELS[currentUserRole];
   const isUserRole = canBuildAgreement();
@@ -1255,7 +1310,7 @@ function applyRoleUi(){
   // "View" from a queue/list), the Approval queue, and the full "All
   // confirmations" list — never the creation form.
   document.getElementById('agreement-form-section').style.display = isUserRole ? 'flex' : 'none';
-  document.getElementById('my-history-card').style.display = isUserRole ? 'block' : 'none';
+  // Confirmation cards are shown one at a time by the section selector below.
   document.getElementById('draft-status').style.display = isUserRole ? 'inline' : 'none';
   document.getElementById('new-confirmation-btn').style.display = isUserRole ? 'inline-block' : 'none';
   document.getElementById('page-subtitle').textContent = isUserRole
@@ -1266,8 +1321,7 @@ function applyRoleUi(){
   // renderHistoryTable/loadHistory (see restrictOthers), which only lets a
   // non-owner, non-admin see a read-only summary row with no way to open
   // full details. Approval queue stays Admin/Super Admin-only, same as before.
-  document.getElementById('admin-history-card').style.display = 'block';
-  document.getElementById('approval-queue-card').style.display = isAdmin ? 'block' : 'none';
+  refreshConfirmationSectionSelector();
   // The Form tab has nothing to show for review-only roles (Admin1/2/3),
   // since agreement-form-section is hidden for them above — so land those
   // roles on the Confirmations tab by default instead. Users/Superadmin
