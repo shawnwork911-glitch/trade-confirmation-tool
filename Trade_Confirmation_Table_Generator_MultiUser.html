@@ -406,12 +406,26 @@
   #history-list table, #admin-history-list table{width:100%;border-collapse:collapse;}
   #history-list th, #admin-history-list th{font-size:12px;color:var(--text-secondary);border-bottom:1px solid var(--border);}
   .confirmation-filter-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px;}
-  .confirmation-filter-bar input[type="text"]{flex:1 1 220px;min-width:160px;padding:6px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text);}
-  .confirmation-filter-bar select{padding:6px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text);}
+  .confirmation-filter-bar input[type="text"]{flex:0 1 190px;min-width:140px;padding:6px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text);}
+  .confirmation-filter-bar select{width:auto;max-width:145px;padding:6px 7px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text);}
+  .confirmation-filter-bar select[id$="-month"]{max-width:115px;}
+  .confirmation-filter-bar select[id$="-year"]{max-width:95px;}
+  @media (min-width:760px){.confirmation-filter-bar{flex-wrap:nowrap;}.confirmation-filter-count{margin-left:auto;}}
   .confirmation-filter-bar button{padding:6px 10px;font-size:12px;}
   .confirmation-filter-count{font-size:11px;color:var(--text-secondary);white-space:nowrap;}
   .confirmation-filter-bar input[type="date"]{padding:6px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text);}
   .analysis-filter-group-label{font-size:11px;color:var(--text-secondary);font-weight:600;text-transform:uppercase;letter-spacing:.02em;margin-left:4px;}
+  /* Keep the Analysis filters compact on desktop, matching Confirmations. */
+  #tab-panel-analysis .confirmation-filter-bar{gap:6px;}
+  #tab-panel-analysis .confirmation-filter-bar select{max-width:125px;padding:5px 6px;font-size:11px;}
+  #tab-panel-analysis #analysis-filter-bd{max-width:135px;}
+  #tab-panel-analysis .analysis-filter-group-label{font-size:10px;margin-left:2px;white-space:nowrap;}
+  #tab-panel-analysis .confirmation-filter-bar label{font-size:11px !important;gap:3px !important;white-space:nowrap;}
+  #tab-panel-analysis .confirmation-filter-bar input[type="date"]{width:112px;padding:5px 5px;font-size:11px;}
+  #tab-panel-analysis .confirmation-filter-bar button{padding:5px 7px;font-size:11px;white-space:nowrap;}
+  #tab-panel-analysis #analysis-filter-count{font-size:10px;margin-left:0;}
+  #tab-panel-analysis #analysis-export-btn{margin-left:0 !important;}
+  @media (min-width:900px){#tab-panel-analysis .confirmation-filter-bar{flex-wrap:nowrap;}}
   #analysis-stats{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px;}
   .analysis-stat{flex:1 1 140px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;}
   .analysis-stat .stat-label{font-size:11px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.03em;}
@@ -507,7 +521,6 @@
     <button type="button" id="tab-btn-confirmations" data-tab="confirmations">Confirmations</button>
     <button type="button" id="tab-btn-analysis" data-tab="analysis">Analysis</button>
     <button type="button" id="tab-btn-usermgmt" data-tab="usermgmt" style="display:none;">User Management</button>
-    <button type="button" id="tab-btn-dealid" data-tab="dealid" style="display:none;">Deal ID Numbering</button>
   </div>
 
   <div id="tab-panel-form" class="tab-panel">
@@ -660,21 +673,7 @@
   </div>
   </div><!-- /tab-panel-usermgmt -->
 
-  <div id="tab-panel-dealid" class="tab-panel" style="display:none;">
-  <div class="card" id="dealid-settings-card">
-    <p class="card-title">Deal ID numbering</p>
-    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Superadmin only. Sets the lowest 5-digit number the next new Deal ID can start from — e.g. to line this system up with numbering used elsewhere, or to pick a clean range for testing. It's a floor, not a reset: once any deal has been issued at or above that number, this has no further effect and nothing already issued is renumbered.</p>
-    <div id="dealid-settings-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;margin-bottom:10px;"></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
-      <div style="min-width:170px;">
-        <label>Starting number</label>
-        <input type="text" id="dealid-start-input" maxlength="5" inputmode="numeric" placeholder="e.g. 500">
-      </div>
-      <button type="button" id="dealid-start-save-btn">Save starting number</button>
-    </div>
-    <p id="dealid-start-current" style="font-size:12px;color:var(--text-secondary);margin:10px 0 0;"></p>
-  </div>
-  </div><!-- /tab-panel-dealid -->
+
 
   <footer>Built from the Trade Confirmation email SOP · draft autosaves per account, approval and history saved to the shared SharePoint workbook</footer>
 
@@ -1075,13 +1074,15 @@ function setActiveTab(tab){
   document.getElementById('tab-panel-confirmations').style.display = isConfirmations ? 'flex' : 'none';
   document.getElementById('tab-panel-analysis').style.display = isAnalysis ? 'flex' : 'none';
   document.getElementById('tab-panel-usermgmt').style.display = isUserMgmt ? 'flex' : 'none';
-  document.getElementById('tab-panel-dealid').style.display = isDealId ? 'flex' : 'none';
+  const dealIdPanel = document.getElementById('tab-panel-dealid');
+  if(dealIdPanel) dealIdPanel.style.display = isDealId ? 'flex' : 'none';
   document.getElementById('tab-btn-form').classList.toggle('active', isForm);
   document.getElementById('tab-btn-carboncredit').classList.toggle('active', isCarbonCredit);
   document.getElementById('tab-btn-confirmations').classList.toggle('active', isConfirmations);
   document.getElementById('tab-btn-analysis').classList.toggle('active', isAnalysis);
   document.getElementById('tab-btn-usermgmt').classList.toggle('active', isUserMgmt);
-  document.getElementById('tab-btn-dealid').classList.toggle('active', isDealId);
+  const dealIdTabBtn = document.getElementById('tab-btn-dealid');
+  if(dealIdTabBtn) dealIdTabBtn.classList.toggle('active', isDealId);
   if(isProductForm){
     document.getElementById('page-subtitle').textContent = isCarbonCredit
       ? 'Create a Carbon Credit confirmation. Technology is fixed to Carbon Credit for every product.'
@@ -1097,7 +1098,8 @@ document.getElementById('tab-btn-carboncredit').addEventListener('click', ()=> s
 document.getElementById('tab-btn-confirmations').addEventListener('click', ()=> setActiveTab('confirmations'));
 document.getElementById('tab-btn-analysis').addEventListener('click', ()=> setActiveTab('analysis'));
 document.getElementById('tab-btn-usermgmt').addEventListener('click', ()=> setActiveTab('usermgmt'));
-document.getElementById('tab-btn-dealid').addEventListener('click', ()=> setActiveTab('dealid'));
+const dealIdTabButton = document.getElementById('tab-btn-dealid');
+if(dealIdTabButton) dealIdTabButton.addEventListener('click', ()=> setActiveTab('dealid'));
 
 window.addEventListener('load', async ()=>{
   await msalInstance.initialize();
@@ -1253,9 +1255,11 @@ function applyRoleUi(){
   setActiveTab(isUserRole ? 'form' : 'confirmations');
   const isSuperadmin = currentUserRole === 'superadmin';
   document.getElementById('tab-btn-usermgmt').style.display = isSuperadmin ? 'inline-block' : 'none';
-  document.getElementById('tab-btn-dealid').style.display = isSuperadmin ? 'inline-block' : 'none';
+  const dealIdRoleTab = document.getElementById('tab-btn-dealid');
+  if(dealIdRoleTab) dealIdRoleTab.style.display = isSuperadmin ? 'inline-block' : 'none';
   document.getElementById('user-mgmt-card').style.display = isSuperadmin ? 'block' : 'none';
-  document.getElementById('dealid-settings-card').style.display = isSuperadmin ? 'block' : 'none';
+  const dealIdSettingsCard = document.getElementById('dealid-settings-card');
+  if(dealIdSettingsCard) dealIdSettingsCard.style.display = isSuperadmin ? 'block' : 'none';
   if(isSuperadmin){
     renderUserMgmtList();
     renderDealIdSettings();
