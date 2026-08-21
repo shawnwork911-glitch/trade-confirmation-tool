@@ -426,6 +426,28 @@
   #tab-panel-analysis #analysis-filter-count{font-size:10px;margin-left:0;}
   #tab-panel-analysis #analysis-export-btn{margin-left:0 !important;}
   @media (min-width:900px){#tab-panel-analysis .confirmation-filter-bar{flex-wrap:wrap;row-gap:7px;}}
+  @media (min-width:760px){
+    #tab-panel-confirmations .confirmation-filter-bar{display:grid;grid-template-columns:minmax(220px,1.5fr) minmax(130px,.75fr) minmax(150px,1fr) minmax(145px,.9fr) minmax(125px,.75fr);column-gap:10px;row-gap:8px;align-items:center;}
+    #tab-panel-confirmations .confirmation-filter-bar input[type="text"],
+    #tab-panel-confirmations .confirmation-filter-bar select{width:100%;max-width:none;min-width:0;}
+    #tab-panel-confirmations .confirmation-filter-count{grid-column:1 / -1;margin-left:0;}
+  }
+  @media (max-width:1050px) and (min-width:760px){
+    #tab-panel-confirmations .confirmation-filter-bar{grid-template-columns:minmax(220px,1.5fr) minmax(130px,.8fr) minmax(150px,1fr);}
+    #tab-panel-confirmations .confirmation-filter-bar select[id$="-month"],
+    #tab-panel-confirmations .confirmation-filter-bar select[id$="-year"]{grid-row:2;}
+    #tab-panel-confirmations .confirmation-filter-count{grid-row:2;grid-column:auto;justify-self:end;}
+  }
+  @media (min-width:900px){
+    #tab-panel-analysis .confirmation-filter-bar{display:grid;grid-template-columns:minmax(130px,.85fr) minmax(150px,1fr) auto minmax(130px,.95fr) minmax(130px,.95fr);column-gap:8px;row-gap:9px;align-items:center;}
+    #tab-panel-analysis .confirmation-filter-bar select,
+    #tab-panel-analysis .confirmation-filter-bar input[type="date"]{width:100%;max-width:none;min-width:0;}
+    #tab-panel-analysis .analysis-row-break{grid-column:1 / -1;height:0;}
+    #tab-panel-analysis .analysis-created-label{grid-column:1;}
+    #tab-panel-analysis #analysis-filter-clear{justify-self:start;}
+    #tab-panel-analysis #analysis-filter-count{justify-self:start;margin-left:0;}
+    #tab-panel-analysis #analysis-export-btn{justify-self:end;margin-left:0 !important;}
+  }
   #analysis-stats{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px;}
   .analysis-stat{flex:1 1 140px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;}
   .analysis-stat .stat-label{font-size:11px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.03em;}
@@ -628,7 +650,8 @@
       <span class="analysis-filter-group-label">Deal Date:</span>
       <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">From <input type="date" id="analysis-filter-from"></label>
       <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">To <input type="date" id="analysis-filter-to"></label>
-      <span class="analysis-filter-group-label">Created (Submitted):</span>
+      <span class="analysis-row-break" aria-hidden="true"></span>
+      <span class="analysis-filter-group-label analysis-created-label">Created (Submitted):</span>
       <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">From <input type="date" id="analysis-filter-created-from"></label>
       <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">To <input type="date" id="analysis-filter-created-to"></label>
       <button type="button" id="analysis-filter-clear" class="secondary">Clear filters</button>
