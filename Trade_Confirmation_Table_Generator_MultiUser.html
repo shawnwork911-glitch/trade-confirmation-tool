@@ -2143,9 +2143,10 @@ const CC_REGISTRY_DISPLAY_NAMES = {
   'Gold Standard':'Gold Standard'
 };
 const CC_CLOSING_ACCOUNT_OPTIONS = [
-  'BCX','CIX','CBL'
+  '','BCX','CIX','CBL'
 ];
 const CC_CLOSING_ACCOUNT_DISPLAY_NAMES = {
+  '':'(none)',
   'BCX':'Bursa Malaysia (BCX)',
   'CIX':'Climate Impact X (CIX)',
   'CBL':'CBL - Xpansiv'
@@ -5496,7 +5497,7 @@ function tradeBlockHtml(n){
       : lockableField('Country (Full Name)', comboHtml('t'+n+'-country','t'+n+'-country-list',countryComboOptions(),'MY'),'t'+n+'-country'))+
     (currentProductMode === 'carboncredit'
       ? lockableField('Registry', selectWithFullNamesHtml('t'+n+'-cc-registry', CC_REGISTRY_OPTIONS, CC_REGISTRY_DISPLAY_NAMES, 'Verra'),'t'+n+'-cc-registry')+
-        lockableField('Closing account', selectWithFullNamesHtml('t'+n+'-cc-closing', CC_CLOSING_ACCOUNT_OPTIONS, CC_CLOSING_ACCOUNT_DISPLAY_NAMES, 'BCX'),'t'+n+'-cc-closing')
+        lockableField('Closing account', selectWithFullNamesHtml('t'+n+'-cc-closing', CC_CLOSING_ACCOUNT_OPTIONS, CC_CLOSING_ACCOUNT_DISPLAY_NAMES, ''),'t'+n+'-cc-closing')
       : lockableField('Registry', selectWithFullNamesHtml('t'+n+'-registry', REGISTRIES, REGISTRY_DISPLAY_NAMES, 'IREC'),'t'+n+'-registry'))+
     (currentProductMode === 'carboncredit'
       ? '<input type="hidden" id="t'+n+'-tech" value="CC"/>'
@@ -6037,7 +6038,10 @@ function buildTradeGroup(startIdx, filled){
   addRow('Product', tradeNos);
   if(currentProductMode === 'carboncredit'){
     addRow('Registry', registries.map(v=>registryDisplayName(v)));
-    addRow('Closing account', closingAccounts);
+    // Closing account is optional per product — if nobody in this group of
+    // up to 3 products picked one, skip the row entirely rather than
+    // showing a row of blank cells in the preview table.
+    if(closingAccounts.some(v=>v)) addRow('Closing account', closingAccounts);
   } else {
     addRow('Registry', registries.map(registryDisplayName));
   }
@@ -6315,7 +6319,7 @@ function buildPointFormat(){
   for(let i=1;i<=filled;i++){
     addBlank();
     lines.push({type:'tradeTitle', text:'Product '+i});
-    if(currentProductMode === 'carboncredit'){ addLiveField(i, 'registry', 'Registry', registryDisplayName(val('t'+i+'-cc-registry'))); addLiveField(i, 'closingAccount', 'Closing account', val('t'+i+'-cc-closing')); }
+    if(currentProductMode === 'carboncredit'){ addLiveField(i, 'registry', 'Registry', registryDisplayName(val('t'+i+'-cc-registry'))); if(val('t'+i+'-cc-closing')) addLiveField(i, 'closingAccount', 'Closing account', val('t'+i+'-cc-closing')); }
     else addLiveField(i, 'registry', 'Registry', registryDisplayName(val('t'+i+'-registry')));
     addField(transferAccountLabel(currentRole()), transferAccountValue(val('h-order'), val('t'+i+'-transfer')));
     addField('Vintage', currentProductMode === 'carboncredit' ? val('t'+i+'-vintage-start-year')+' - '+val('t'+i+'-vintage-end-year') : val('t'+i+'-vintage-start-month')+' '+val('t'+i+'-vintage-start-year')+' - '+val('t'+i+'-vintage-end-month')+' '+val('t'+i+'-vintage-end-year'));
@@ -6539,7 +6543,7 @@ function buildRecapLinesFromRows(dealId, sortedGroup){
     const i = idx + 1;
     addBlank();
     lines.push({type:'tradeTitle', text:'Product '+i});
-    if(isCC){ addLiveField(i, 'registry', 'Registry', registryDisplayName(v[MC.registry])); addLiveField(i, 'closingAccount', 'Closing account', v[MC.cod]); }
+    if(isCC){ addLiveField(i, 'registry', 'Registry', registryDisplayName(v[MC.registry])); if(v[MC.cod]) addLiveField(i, 'closingAccount', 'Closing account', v[MC.cod]); }
     else addLiveField(i, 'registry', 'Registry', registryDisplayName(v[MC.registry]));
     addField(transferAccountLabel(role), transferAccountValue(head[MC.supplyDemand], v[MC.tigrsIrecName]));
     addField('Vintage', isCC ? (v[MC.vFromYY]||'')+' - '+(v[MC.vToYY]||'') : (v[MC.vFromMM]||'')+' '+(v[MC.vFromYY]||'')+' - '+(v[MC.vToMM]||'')+' '+(v[MC.vToYY]||''));
@@ -6608,7 +6612,7 @@ function recapEditFormHtml(dealId, sortedGroup){
     const i = idx+1;
     const idp = 're-t'+i+'-';
     html += '<div class="trade-block"><p class="trade-title">Product '+i+'</p><div class="grid">'+
-      (isCC ? recapEditFieldHtml('Registry', selectWithFullNamesHtml(idp+'cc-registry', CC_REGISTRY_OPTIONS, CC_REGISTRY_DISPLAY_NAMES, v[MC.registry]||'Verra'))+recapEditFieldHtml('Closing account', selectWithFullNamesHtml(idp+'cc-closing', CC_CLOSING_ACCOUNT_OPTIONS, CC_CLOSING_ACCOUNT_DISPLAY_NAMES, v[MC.cod]||'BCX')) : recapEditFieldHtml('Registry', selectWithFullNamesHtml(idp+'registry', REGISTRIES, REGISTRY_DISPLAY_NAMES, v[MC.registry]||'IREC')))+
+      (isCC ? recapEditFieldHtml('Registry', selectWithFullNamesHtml(idp+'cc-registry', CC_REGISTRY_OPTIONS, CC_REGISTRY_DISPLAY_NAMES, v[MC.registry]||'Verra'))+recapEditFieldHtml('Closing account', selectWithFullNamesHtml(idp+'cc-closing', CC_CLOSING_ACCOUNT_OPTIONS, CC_CLOSING_ACCOUNT_DISPLAY_NAMES, v[MC.cod]||'')) : recapEditFieldHtml('Registry', selectWithFullNamesHtml(idp+'registry', REGISTRIES, REGISTRY_DISPLAY_NAMES, v[MC.registry]||'IREC')))+
       recapEditFieldHtml(transferAccountLabel(role), '<input type="text" id="'+idp+'transfer" value="'+escapeHtml(v[MC.tigrsIrecName]||'')+'"/>')+
       (isCC ? '' : recapEditFieldHtml('Tech', comboHtml(idp+'tech', idp+'tech-list', TECHS, v[MC.tech]||'')))+
       (isCC ? recapEditFieldHtml('Country', selectHtml(idp+'country', CC_COUNTRIES, v[MC.country]||'Malaysia')) : recapEditFieldHtml('Country (Full Name)', comboHtml(idp+'country', idp+'country-list', countryComboOptions(), v[MC.country]||'')))+
@@ -6868,7 +6872,7 @@ function fullEditFormHtml(dealId, sortedGroup){
     const i = idx+1;
     const idp = 'fe-t'+i+'-';
     html += '<div class="trade-block"><p class="trade-title">Product '+i+'</p><div class="grid">'+
-      (isCC ? recapEditFieldHtml('Registry', selectWithFullNamesHtml(idp+'cc-registry', CC_REGISTRY_OPTIONS, CC_REGISTRY_DISPLAY_NAMES, v[MC.registry]||'Verra'))+recapEditFieldHtml('Closing account', selectWithFullNamesHtml(idp+'cc-closing', CC_CLOSING_ACCOUNT_OPTIONS, CC_CLOSING_ACCOUNT_DISPLAY_NAMES, v[MC.cod]||'BCX')) : recapEditFieldHtml('Registry', selectWithFullNamesHtml(idp+'registry', REGISTRIES, REGISTRY_DISPLAY_NAMES, v[MC.registry]||'IREC')))+
+      (isCC ? recapEditFieldHtml('Registry', selectWithFullNamesHtml(idp+'cc-registry', CC_REGISTRY_OPTIONS, CC_REGISTRY_DISPLAY_NAMES, v[MC.registry]||'Verra'))+recapEditFieldHtml('Closing account', selectWithFullNamesHtml(idp+'cc-closing', CC_CLOSING_ACCOUNT_OPTIONS, CC_CLOSING_ACCOUNT_DISPLAY_NAMES, v[MC.cod]||'')) : recapEditFieldHtml('Registry', selectWithFullNamesHtml(idp+'registry', REGISTRIES, REGISTRY_DISPLAY_NAMES, v[MC.registry]||'IREC')))+
       recapEditFieldHtml(transferAccountLabel(role), '<input type="text" id="'+idp+'transfer" value="'+escapeHtml(v[MC.tigrsIrecName]||'')+'"/>')+
       (isCC ? '' : recapEditFieldHtml('Tech', comboHtml(idp+'tech', idp+'tech-list', TECHS, v[MC.tech]||'')))+
       (isCC ? recapEditFieldHtml('Country', selectHtml(idp+'country', CC_COUNTRIES, v[MC.country]||'Malaysia')) : recapEditFieldHtml('Country (Full Name)', comboHtml(idp+'country', idp+'country-list', countryComboOptions(), v[MC.country]||'')))+
