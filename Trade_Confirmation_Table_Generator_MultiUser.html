@@ -597,6 +597,7 @@
     </div>
     <div id="table-preview"></div>
     <p id="copy-status">Copied — paste directly into your email.</p>
+    <div id="transfer-na-warning" class="warning-box" style="display:none;margin-top:12px;"></div>
     <div id="regtech-warning" class="warning-box" style="display:none;margin-top:12px;"></div>
   </div>
 
@@ -5523,7 +5524,7 @@ function tradeBlockHtml(n){
     lockableField('Special remarks', '<textarea id="t'+n+'-remarks" placeholder="N/A">N/A</textarea>', 't'+n+'-remarks')
       .replace('<div id=','<div style="grid-column:1 / -1;" id=')+
     // Custom label text is updated programmatically to reflect Buyer/Seller dynamically
-    lockableField('Transfer account name', textHtml('t'+n+'-transfer','Optional — required before Level 2 approval'),'t'+n+'-transfer')+
+    lockableField('Transfer account name', textHtml('t'+n+'-transfer','Required — type NA if not yet known'),'t'+n+'-transfer')+
     '</div>'+
     '<p class="sub-title">BD source matching</p>'+
     
@@ -7143,6 +7144,16 @@ function tradeFieldDefs(i){
     {ids:['t'+i+'-m-cod'], label:'COD (if applicable)'}
   ];
 
+  // Buyer Receiving Account / Seller Transfer Account is compulsory for every
+  // product — if the real account isn't known yet, the submitter must type
+  // "NA" as a placeholder (see transferAccountNAItems, which then reminds
+  // them to fill in the real value before Level 2 approval). Stock-Out (R)
+  // deals never use this field at all (see isStockOutR/updateTransferAccountLabels),
+  // so it isn't required there.
+  if(!isStockOutR(val('h-order'))){
+    baseDefs.push({ids:['t'+i+'-transfer'], label:transferAccountLabel(currentRole())});
+  }
+
   const matchingValue = val('t'+i+'-m-matching');
   if (matchingValue === 'Open Position') {
     // If Open Position is selected, we do not require the hidden dependent matching fields (1-4).
@@ -7253,6 +7264,47 @@ function hideRegTechWarning(){
   const box = document.getElementById('regtech-warning');
   if(box) box.style.display = 'none';
 }
+// Buyer Receiving Account / Seller Transfer Account is compulsory (see
+// tradeFieldDefs), but a submitter who doesn't have the real account yet is
+// expected to type "NA" as a placeholder rather than leave it blank or hold
+// up the submission. This doesn't block generating/saving — it's a
+// heads-up, shown alongside the generated table, listing every product
+// still marked NA so the submitter remembers to come back and fill in the
+// real account before Level 2 approval (approveDeal blocks Level 2 on a
+// truly blank account, and the Level 2 approve modal always offers an input
+// to fill it in — but neither of those catch an "NA" placeholder, so this
+// banner is the reminder in the meantime).
+function isNAValue(v){
+  const t = String(v||'').trim().toLowerCase();
+  return t === 'na' || t === 'n/a';
+}
+function transferAccountNAItems(filled){
+  const items = [];
+  if(isStockOutR(val('h-order'))) return items; // field isn't used for Stock-Out (R)
+  for(let i=1;i<=filled;i++){
+    if(isNAValue(val('t'+i+'-transfer'))) items.push('Product '+i);
+  }
+  items.label = transferAccountLabel(currentRole());
+  return items;
+}
+function showTransferAccountNAWarning(items){
+  const box = document.getElementById('transfer-na-warning');
+  if(!box) return;
+  box.innerHTML = '<strong>⚠ '+escapeHtml(items.label)+' marked NA:</strong> '+
+    items.map(escapeHtml).join(', ')+
+    ' — please come back and fill in the real account details before Level 2 approval. You could still save this agreement like usual for now.';
+  box.style.display = 'block';
+}
+function hideTransferAccountNAWarning(){
+  const box = document.getElementById('transfer-na-warning');
+  if(box) box.style.display = 'none';
+}
+function liveTransferNACheck(){
+  const filled = parseInt(document.getElementById('trade-count').value,10) || 0;
+  const items = transferAccountNAItems(filled);
+  if(items.length) showTransferAccountNAWarning(items);
+  else hideTransferAccountNAWarning();
+}
 // Clear a field's "missing" outline as soon as the person edits it, and
 // require the table to be (re)generated before Save agreement can be used
 // again, so a saved agreement always matches what was last generated.
@@ -7281,12 +7333,14 @@ document.addEventListener('input', (e)=>{
   if(wrap) wrap.classList.remove('field-missing');
   if(e.target.closest('#header-fields, #trades-container') || e.target.id==='trade-count') requireRegenerateBeforeSave();
   if(/-volume$/.test(e.target.id)) liveRegTechCheck();
+  if(/-transfer$/.test(e.target.id)) liveTransferNACheck();
 });
 document.addEventListener('change', (e)=>{
   const wrap = e.target.closest('[id$="-wrap"]');
   if(wrap) wrap.classList.remove('field-missing');
   if(e.target.closest('#header-fields, #trades-container') || e.target.id==='trade-count') requireRegenerateBeforeSave();
   if(/-registry$/.test(e.target.id) || e.target.classList.contains('tech-checkbox') || /-volume$/.test(e.target.id) || e.target.id==='trade-count') liveRegTechCheck();
+  if(/-transfer$/.test(e.target.id) || e.target.id==='h-order' || e.target.id==='trade-count') liveTransferNACheck();
 });
 
 // Validates and builds the preview. Returns true/false for which version was
@@ -7301,6 +7355,7 @@ function generateOutput(){
     showValidationWarning(missing, includeBD ? 'Ops version' : 'Customer version');
     document.getElementById('output-section').style.display = 'none';
     hideRegTechWarning();
+    hideTransferAccountNAWarning();
     setSaveAgreementEnabled(false);
     return null;
   }
@@ -7310,6 +7365,10 @@ function generateOutput(){
   const regTechItems = regTechWarningItems(filledCount);
   if(regTechItems.length) showRegTechWarning(regTechItems);
   else hideRegTechWarning();
+
+  const transferNAItems = transferAccountNAItems(filledCount);
+  if(transferNAItems.length) showTransferAccountNAWarning(transferNAItems);
+  else hideTransferAccountNAWarning();
 
   if(includeBD){
     const tableData = buildTable();
