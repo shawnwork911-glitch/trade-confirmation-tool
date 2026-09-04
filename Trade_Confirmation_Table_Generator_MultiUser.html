@@ -934,11 +934,16 @@ const MC = {
   // changed without having to compare two versions by eye. Shown in the
   // approval queue/history lists while the deal is anywhere in Pending
   // Level 1/2/3, and also included in that level's approval-needed email
-  // (see notifyNextApprover's changeSummary param). Cleared once the deal
-  // reaches Approved or Rejected — same "done with it" lifecycle as
-  // pendingMatchNote. Also optional/additive, same reasoning as
-  // regTechReminderSentDate above — guard on values.length before
-  // reading/writing it.
+  // (see notifyNextApprover's changeSummary param). Each "Edit & resend"
+  // round is APPENDED (with a timestamp/editor header and a "---"
+  // separator) rather than replacing what's already here, so this ends up
+  // holding the full history of every edit round the deal ever went
+  // through — and it's deliberately never cleared, including once the deal
+  // reaches Approved or Rejected, so that history is permanent. Purely a
+  // TradeDealLog-side field: addApprovedDealToList() never reads it, so
+  // keeping it here has no effect on the "Approved" SharePoint list. Also
+  // optional/additive, same reasoning as regTechReminderSentDate above —
+  // guard on values.length before reading/writing it.
   editChangeSummary:60,
   // Staging area for a Volume (RECs) correction — same "Pending Change -
   // Level 3" pattern as pendingRegistry/pendingTech above, for a product
@@ -1531,10 +1536,68 @@ async function notifySubmitter(status, dealId, submitterEmail, reason){
   }
 }
 
-// Emails the original submitter once their post-approval BD source matching
-// change request is resolved — either applied (Level 3 approved it) or
-// rejected. Separate from notifySubmitter, which only covers the original
-// 3-level approval chain.
+// Emails every Super Admin when a deal's accumulated Edit Change Summary
+// (see MC.editChangeSummary / saveFullEditAndResubmit) is getting close to,
+// or has hit, Excel's ~32,767-character per-cell limit — since that column
+// now keeps every "Edit & resend" round's history permanently instead of
+// being cleared, a deal edited many times over its life could eventually
+// approach that ceiling. Two thresholds:
+//   - EDIT_HISTORY_WARN_CHARS: still well under the hard cap, but flagged
+//     early so a superadmin has time to archive/export the history
+//     elsewhere before anything is at risk of being cut off.
+//   - EDIT_HISTORY_MAX_CHARS: the actual write is about to be trimmed (see
+//     trimEditHistoryToFit) to avoid Graph rejecting or silently truncating
+//     an oversized cell — this email includes the FULL untrimmed text
+//     (not just what ends up saved) so nothing is permanently lost even
+//     though the saved cell itself had to be shortened.
+const EDIT_HISTORY_WARN_CHARS = 28000;
+const EDIT_HISTORY_MAX_CHARS = 31000; // safety margin under Excel's 32,767 hard cap
+async function notifyEditHistoryLimit(dealId, fullSummary, wasTrimmed){
+  if(!SUPERADMIN_EMAILS.length) return;
+  const link = dealDeepLink(dealId);
+  const displayId = friendlyDealId(dealId);
+  const label = isPendingDealId(dealId) ? 'An agreement' : 'Deal ID <strong>' + escapeHtml(displayId) + '</strong>';
+  const subject = (wasTrimmed ? 'Edit history trimmed — ' : 'Edit history nearing limit — ')
+    + (isPendingDealId(dealId) ? 'agreement' : displayId);
+  const statusLine = wasTrimmed
+    ? '<p>' + label + '\'s Edit Change Summary passed Excel\'s per-cell character limit, so the ' +
+      'oldest edit round(s) were trimmed from what\'s saved in TradeDealLog. The full, untrimmed ' +
+      'history (including the trimmed rounds) is included below so nothing is lost — consider ' +
+      'archiving it somewhere permanent if it needs to be kept in full.</p>'
+    : '<p>' + label + '\'s Edit Change Summary is approaching Excel\'s per-cell character limit ' +
+      '(' + fullSummary.length.toLocaleString() + ' of ~32,767 characters). No data has been lost or ' +
+      'trimmed yet, but if this deal keeps getting edited, older rounds will eventually be trimmed ' +
+      'from what\'s saved. Consider archiving the history below somewhere permanent as a precaution.</p>';
+  const html = statusLine +
+    '<p><a href="' + link + '">Open it in the Trade Confirmation app</a></p>' +
+    '<p><strong>Full edit history (as of this notification):</strong></p>' +
+    '<pre style="white-space:pre-wrap;font-family:inherit;">' + escapeHtml(fullSummary) + '</pre>';
+  try{
+    await sendMailGraph(SUPERADMIN_EMAILS, subject, html);
+  }catch(err){
+    console.error('Edit history limit notification email failed', err);
+  }
+}
+// Trims the OLDEST edit rounds (each round is separated by the "\n\n---\n\n"
+// divider written in saveFullEditAndResubmit) off the front of the combined
+// summary until what's left fits under EDIT_HISTORY_MAX_CHARS, prefixing a
+// notice so anyone reading the saved cell knows earlier rounds were removed
+// from it (the full untrimmed text still goes out in the superadmin email —
+// see notifyEditHistoryLimit — so it isn't lost, just no longer kept in the
+// live cell). Guaranteed to return a string under the limit unless even a
+// single round on its own exceeds it, in which case that lone round is
+// returned as-is (better than losing the entire cell's content).
+function trimEditHistoryToFit(combinedSummary, maxChars){
+  if(combinedSummary.length <= maxChars) return combinedSummary;
+  const NOTICE = '[Older edit history trimmed — full history emailed to Super Admin]\n\n---\n\n';
+  const rounds = combinedSummary.split('\n\n---\n\n');
+  while(rounds.length > 1 && (NOTICE.length + rounds.join('\n\n---\n\n').length) > maxChars){
+    rounds.shift();
+  }
+  const trimmed = NOTICE + rounds.join('\n\n---\n\n');
+  return trimmed.length <= maxChars ? trimmed : trimmed.slice(0, maxChars);
+}
+
 async function notifyChangeSubmitter(dealId, submitterEmail, outcome, reason){
   const email = (submitterEmail || '').trim();
   if(!email){
@@ -2894,12 +2957,13 @@ async function approveDeal(dealId, file, transferOverrides){
       values[MC.agreementFileName] = agreementInfo.name;
       values[MC.agreementFileUrl] = agreementInfo.webUrl;
     }
-    // The edit diff has done its job once the deal is fully Approved —
-    // nothing further is going to review it against this version, so clear
-    // it rather than leave a stale summary sitting on an Approved deal.
-    if(nextStatus === STATUS_APPROVED && values.length > MC.editChangeSummary){
-      values[MC.editChangeSummary] = '';
-    }
+    // Edit Change Summary is deliberately NOT cleared here (even once the
+    // deal reaches Approved) — it's kept permanently on the row as the full,
+    // accumulated history of every "Edit & resend" round the deal ever went
+    // through, across its whole lifetime. Purely a TradeDealLog-side field:
+    // addApprovedDealToList() below never reads MC.editChangeSummary, so
+    // keeping it here has no effect on what gets copied into the "Approved"
+    // SharePoint list at Level 3 sign-off.
     await updateCanonicalTableRow(dealLogTableName(), r.index, values);
     // Final sign-off (Pending Level 3 -> Approved): also copy this row into
     // the standalone "Approved" SharePoint list. Best-effort — if the write
@@ -2984,11 +3048,9 @@ async function rejectDeal(dealId, reason){
     if(values.length > MC.regTechReminderSentDate){
       values[MC.regTechReminderSentDate] = '';
     }
-    // Same reasoning — a rejected deal is a dead end, so any leftover
-    // "what changed" diff from a prior "Edit & resend" no longer applies.
-    if(values.length > MC.editChangeSummary){
-      values[MC.editChangeSummary] = '';
-    }
+    // Edit Change Summary is deliberately left untouched here too — kept
+    // permanently as the full edit history of the row even on a rejected
+    // (dead-end) deal, same reasoning as the Approved path in approveDeal().
     await updateCanonicalTableRow(dealLogTableName(), r.index, values);
   }
   await notifySubmitter(STATUS_REJECTED, dealId, matching[0].values[0][MC.submittedBy], trimmedReason);
@@ -6770,7 +6832,11 @@ async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
    fe-justification below) — it's prepended to the auto-generated
    field-by-field diff and shown to Admin Level 1 alongside it, both in the
    approval queue and in their approval-needed email, so they know why the
-   correction was made when they review it again.
+   correction was made when they review it again. Each round's justification
+   + diff is APPENDED (with a timestamp/editor header) onto whatever's
+   already in Edit Change Summary rather than replacing it, so a deal edited
+   more than once keeps the full history of every round, permanently — see
+   the editChangeSummary comment on MC.
    Saving here writes straight to the live TradeDealLog row(s) (no separate
    pending/staging columns, no approval gate on the save itself — the
    "approval" is the fact that it now has to go through Level 1/2/3 again)
@@ -7039,9 +7105,32 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
   // editChangeSummary on MC).
   const role = roleFromOrderType(sortedGroup[0].values[0][MC.supplyDemand]);
   const fieldDiff = buildFullEditChangeSummary(sortedGroup, updatedRows, role);
-  const changeSummary = 'Justification: ' + justification + (fieldDiff ? '\n\n' + fieldDiff : '');
+  const nowForLabel = new Date();
+  const timestampLabel = String(nowForLabel.getUTCDate()).padStart(2,'0')+'/'+String(nowForLabel.getUTCMonth()+1).padStart(2,'0')+'/'+nowForLabel.getUTCFullYear()+' '+String(nowForLabel.getUTCHours()).padStart(2,'0')+':'+String(nowForLabel.getUTCMinutes()).padStart(2,'0')+' UTC';
+  const roundLabel = 'Edit on ' + timestampLabel + ' by ' + (currentAccount.username || 'unknown');
+  const changeSummary = roundLabel + '\nJustification: ' + justification + (fieldDiff ? '\n' + fieldDiff : '');
+  // Append onto whatever edit history already sits on this row rather than
+  // overwriting it, so every round of "Edit & resend" across a deal's whole
+  // lifetime stays readable in one place — see the "kept permanently" note
+  // below for why this is never cleared. Guarded on values.length exactly
+  // like the write below, since this column is optional/additive.
+  const priorSummary = (sortedGroup[0].values[0].length > MC.editChangeSummary)
+    ? (sortedGroup[0].values[0][MC.editChangeSummary] || '') : '';
+  const combinedSummary = priorSummary ? (priorSummary + '\n\n---\n\n' + changeSummary) : changeSummary;
+  // If the accumulated history is approaching or has passed Excel's
+  // per-cell character limit, warn (or trim + warn) the superadmin(s) — see
+  // notifyEditHistoryLimit/trimEditHistoryToFit above. This never blocks
+  // the save itself: a failed notification email is swallowed (logged, not
+  // thrown), same as every other best-effort notification in this app.
+  let summaryToSave = combinedSummary;
+  if(combinedSummary.length > EDIT_HISTORY_MAX_CHARS){
+    summaryToSave = trimEditHistoryToFit(combinedSummary, EDIT_HISTORY_MAX_CHARS);
+    notifyEditHistoryLimit(dealId, combinedSummary, true);
+  } else if(combinedSummary.length > EDIT_HISTORY_WARN_CHARS){
+    notifyEditHistoryLimit(dealId, combinedSummary, false);
+  }
   if(updatedRows[0].values[0].length > MC.editChangeSummary){
-    updatedRows[0].values[0][MC.editChangeSummary] = changeSummary;
+    updatedRows[0].values[0][MC.editChangeSummary] = summaryToSave;
   }
 
   btn.disabled = true; cancelBtn.disabled = true;
