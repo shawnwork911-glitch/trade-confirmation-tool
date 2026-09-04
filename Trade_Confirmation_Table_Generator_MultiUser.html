@@ -6979,10 +6979,12 @@ function openFullEditModal(dealId){
   fullEditModalGroup = group;
   document.getElementById('full-edit-modal-dealid').textContent = friendlyDealId(dealId);
   document.getElementById('full-edit-modal-fields').innerHTML = fullEditFormHtml(dealId, group);
-  document.getElementById('full-edit-cancel').addEventListener('click', closeFullEditModal);
-  document.getElementById('full-edit-save').addEventListener('click', ()=>{
+  // Assign handlers instead of addEventListener on every open. This prevents
+  // repeated clicks/opens from stacking multiple save operations.
+  document.getElementById('full-edit-cancel').onclick = closeFullEditModal;
+  document.getElementById('full-edit-save').onclick = ()=>{
     saveFullEditAndResubmit(fullEditModalDealId, fullEditModalGroup);
-  });
+  };
   document.getElementById('full-edit-modal-overlay').style.display = 'flex';
 }
 function closeFullEditModal(){
@@ -6995,158 +6997,195 @@ document.getElementById('full-edit-modal-overlay').addEventListener('click', (e)
   if(e.target.id === 'full-edit-modal-overlay') closeFullEditModal();
 });
 async function saveFullEditAndResubmit(dealId, sortedGroup){
-  await ensureFreshWorkbookSession();
   const btn = document.getElementById('full-edit-save');
   const cancelBtn = document.getElementById('full-edit-cancel');
   const errEl = document.getElementById('full-edit-error');
+  const originalText = 'Save & resend for Level 1 approval';
+
+  if(!btn || !cancelBtn || !errEl) return;
+
+  // Lock the operation immediately. Previously the workbook/session refresh and
+  // form-building work happened BEFORE try/catch, so an auth/session error could
+  // reject silently and make the button appear to do nothing.
+  btn.disabled = true;
+  cancelBtn.disabled = true;
+  btn.textContent = 'Saving…';
   errEl.style.display = 'none';
-  const rv = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+  errEl.textContent = '';
 
-  const hDate = rv('fe-h-date'), hEntity = rv('fe-h-entity'), hBd = rv('fe-h-bd'), hCompany = rv('fe-h-company');
-  if(!hDate || !hEntity || !hBd || !hCompany){
-    errEl.textContent = currentProductMode === 'carboncredit'
-      ? 'Deal Date, Entity, BD in-charge and the Project Name can\'t be blank.'
-      : 'Deal Date, Entity, BD in-charge and the Buyer/Seller full name can\'t be blank.';
-    errEl.style.display = 'block';
-    return;
-  }
-  const justification = rv('fe-justification');
-  if(!justification){
-    errEl.textContent = 'A justification for this correction is required — it\'s shown to Admin Level 1 when this comes back to them.';
-    errEl.style.display = 'block';
-    return;
-  }
-
-  const isCC = (sortedGroup[0]._sourceTable || STANDARD_LOG_TABLE_NAME) === CC_LOG_TABLE_NAME;
-  const updatedRows = [];
-  for(let idx = 0; idx < sortedGroup.length; idx++){
-    const i = idx + 1;
-    const idp = 'fe-t'+i+'-';
-    const ccRegistry = isCC ? rv(idp+'cc-registry') : '';
-    const ccClosing = isCC ? rv(idp+'cc-closing') : '';
-    const registry = isCC ? ccRegistry : rv(idp+'registry');
-    const registryCombined = isCC ? (ccRegistry || ccClosing) : registry;
-    const volume = rv(idp+'volume');
-    if(!registryCombined || !volume){
-      errEl.textContent = 'Product '+i+': '+(isCC?'Registry or Closing account, and Volume (VCUs),':'Registry and Volume (RECs)')+' can\'t be blank.';
-      errEl.style.display = 'block';
-      return;
-    }
-    const values = sortedGroup[idx].values[0].slice();
-    values[MC.agreementDate] = hDate;
-    values[MC.entity] = hEntity;
-    values[MC.salesPic] = hBd;
-    values[MC.company] = hCompany;
-    values[MC.registry] = registry;
-    values[MC.tigrsIrecName] = rv(idp+'transfer');
-    values[MC.tech] = isCC ? 'CC' : rv(idp+'tech');
-    values[MC.country] = rv(idp+'country');
-    if(isCC){
-      values[MC.projectName] = rv('fe-h-project-name');
-      values[MC.projectId] = rv('fe-h-project-id');
-      values[MC.vFromMM] = rv('fe-h-project-type');
-      values[MC.vFromYY] = rv(idp+'vintage-start-year');
-      values[MC.vToMM] = rv('fe-h-methodology');
-      values[MC.vToYY] = rv(idp+'vintage-end-year');
-      values[MC.cod] = ccClosing;
-      values[MC.prepayment] = rv(idp+'prepayment');
-    }else{
-      values[MC.vFromMM] = rv(idp+'vstart-m');
-      values[MC.vFromYY] = rv(idp+'vstart-y');
-      values[MC.vToMM] = rv(idp+'vend-m');
-      values[MC.vToYY] = rv(idp+'vend-y');
-    }
-    values[MC.volume] = volume;
-    values[MC.currency] = rv(idp+'currency');
-    values[MC.unitPrice] = rv(idp+'price');
-    values[MC.paymentTerm] = rv(idp+'payterm');
-    values[MC.deliveryStart] = rv(idp+'dstart');
-    values[MC.deliveryEnd] = rv(idp+'dend');
-    if(!isCC) values[MC.cod] = rv(idp+'cod');
-    const remarksRaw = rv(idp+'remarks');
-    values[MC.specialReq] = (!remarksRaw || remarksRaw.toUpperCase() === 'NA') ? 'N/A' : remarksRaw;
-
-    // ---- Retrigger the approval flow from the start ----
-    // Every row of the deal moves back to Pending Level 1, and every
-    // approval stamp is cleared — Level 1 must sign off again on this
-    // edited version, and any Level 2 (and Level 3, if it had gotten that
-    // far) approval that already happened no longer applies to it.
-    values[MC.status] = STATUS_PENDING_1;
-    values[MC.approvedBy1] = ''; values[MC.approvedDate1] = '';
-    values[MC.approvedBy2] = ''; values[MC.approvedDate2] = '';
-    values[MC.approvedBy3] = ''; values[MC.approvedDate3] = '';
-    // The Level 2 agreement file was signed against the pre-edit details —
-    // clear it too, so Level 2 is prompted to attach a fresh one when this
-    // comes back around to their level.
-    values[MC.agreementFileName] = '';
-    values[MC.agreementFileUrl] = '';
-    // Clear any stale rejection note (e.g. a previously-rejected BD source
-    // matching change on an Approved deal) — it no longer applies once the
-    // whole deal is back at Pending Level 1.
-    values[MC.rejectedBy] = ''; values[MC.rejectedDate] = ''; values[MC.rejectReason] = '';
-    // Same reasoning as rejectDeal's clear-on-dead-end: a deal that isn't
-    // Approved shouldn't be carrying a live Reg/Tech reminder stamp for the
-    // external Power Automate flow.
-    if(values.length > MC.regTechReminderSentDate){
-      values[MC.regTechReminderSentDate] = '';
-    }
-    updatedRows.push({ index: sortedGroup[idx].index, values: [values] });
-  }
-
-  // Regenerate the recap the same way a fresh submission does, from the
-  // values just entered (not yet written) - then stash it on the first
-  // row, the only row that ever carries the Generated HTML column.
-  const freshHtml = renderPointFormatHtml(buildRecapLinesFromRows(dealId, updatedRows));
-  updatedRows[0].values[0][MC.generatedHtml] = freshHtml;
-
-  // Diff against the pre-edit values (sortedGroup, untouched) so whichever
-  // level reviews this next can see exactly what changed. Optional column —
-  // silently skipped if this workbook hasn't added it yet (see
-  // editChangeSummary on MC).
-  const role = roleFromOrderType(sortedGroup[0].values[0][MC.supplyDemand]);
-  const fieldDiff = buildFullEditChangeSummary(sortedGroup, updatedRows, role);
-  const nowForLabel = new Date();
-  const timestampLabel = String(nowForLabel.getUTCDate()).padStart(2,'0')+'/'+String(nowForLabel.getUTCMonth()+1).padStart(2,'0')+'/'+nowForLabel.getUTCFullYear()+' '+String(nowForLabel.getUTCHours()).padStart(2,'0')+':'+String(nowForLabel.getUTCMinutes()).padStart(2,'0')+' UTC';
-  const roundLabel = 'Edit on ' + timestampLabel + ' by ' + (currentAccount.username || 'unknown');
-  const changeSummary = roundLabel + '\nJustification: ' + justification + (fieldDiff ? '\n' + fieldDiff : '');
-  // Append onto whatever edit history already sits on this row rather than
-  // overwriting it, so every round of "Edit & resend" across a deal's whole
-  // lifetime stays readable in one place — see the "kept permanently" note
-  // below for why this is never cleared. Guarded on values.length exactly
-  // like the write below, since this column is optional/additive.
-  const priorSummary = (sortedGroup[0].values[0].length > MC.editChangeSummary)
-    ? (sortedGroup[0].values[0][MC.editChangeSummary] || '') : '';
-  const combinedSummary = priorSummary ? (priorSummary + '\n\n---\n\n' + changeSummary) : changeSummary;
-  // If the accumulated history is approaching or has passed Excel's
-  // per-cell character limit, warn (or trim + warn) the superadmin(s) — see
-  // notifyEditHistoryLimit/trimEditHistoryToFit above. This never blocks
-  // the save itself: a failed notification email is swallowed (logged, not
-  // thrown), same as every other best-effort notification in this app.
-  let summaryToSave = combinedSummary;
-  if(combinedSummary.length > EDIT_HISTORY_MAX_CHARS){
-    summaryToSave = trimEditHistoryToFit(combinedSummary, EDIT_HISTORY_MAX_CHARS);
-    notifyEditHistoryLimit(dealId, combinedSummary, true);
-  } else if(combinedSummary.length > EDIT_HISTORY_WARN_CHARS){
-    notifyEditHistoryLimit(dealId, combinedSummary, false);
-  }
-  if(updatedRows[0].values[0].length > MC.editChangeSummary){
-    updatedRows[0].values[0][MC.editChangeSummary] = summaryToSave;
-  }
-
-  btn.disabled = true; cancelBtn.disabled = true;
-  btn.textContent = 'Saving\u2026';
   try{
-    for(const r of updatedRows){
-      await updateCanonicalTableRow(dealLogTableName(), r.index, r.values[0]);
+    await ensureFreshWorkbookSession();
+
+    // Re-read the live workbook rows before applying the edit. The modal is based
+    // on cached rows and another user/process may have changed the deal since it
+    // was opened. Only continue if the deal is still waiting for Level 2 approval.
+    const activeTable = dealLogTableName();
+    const liveRowsAll = await getCanonicalTableRows(activeTable);
+    const liveGroup = liveRowsAll
+      .filter(r => String(r.values[0][MC.dealId] || '').trim() === String(dealId).trim())
+      .sort((a,b)=> a.index - b.index);
+
+    if(!liveGroup.length){
+      throw new Error('The deal could not be found in the active approval table. Please refresh the page and try again.');
     }
-    await notifyNextApprover(STATUS_PENDING_1, dealId, updatedRows[0].values[0][MC.description], changeSummary);
-    await loadHistory(); // refresh logRowsCache and re-render every history/queue view
+
+    const liveStatus = dealGroupStatus(liveGroup);
+    if(liveStatus !== STATUS_PENDING_2){
+      throw new Error('This deal is no longer waiting for Level 2 approval (current status: ' + (liveStatus || 'Unknown') + '). Please refresh the page before editing it.');
+    }
+
+    const rv = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+
+    const hDate = rv('fe-h-date'), hEntity = rv('fe-h-entity'), hBd = rv('fe-h-bd'), hCompany = rv('fe-h-company');
+    if(!hDate || !hEntity || !hBd || !hCompany){
+      throw new Error(currentProductMode === 'carboncredit'
+        ? 'Deal Date, Entity, BD in-charge and the Project Name can\'t be blank.'
+        : 'Deal Date, Entity, BD in-charge and the Buyer/Seller full name can\'t be blank.');
+    }
+
+    const justification = rv('fe-justification');
+    if(!justification){
+      throw new Error('A justification for this correction is required — it\'s shown to Admin Level 1 when this comes back to them.');
+    }
+
+    const isCC = (liveGroup[0]._sourceTable || STANDARD_LOG_TABLE_NAME) === CC_LOG_TABLE_NAME;
+    const updatedRows = [];
+
+    for(let idx = 0; idx < liveGroup.length; idx++){
+      const i = idx + 1;
+      const idp = 'fe-t'+i+'-';
+      const ccRegistry = isCC ? rv(idp+'cc-registry') : '';
+      const ccClosing = isCC ? rv(idp+'cc-closing') : '';
+      const registry = isCC ? ccRegistry : rv(idp+'registry');
+      const registryCombined = isCC ? (ccRegistry || ccClosing) : registry;
+      const volume = rv(idp+'volume');
+
+      if(!registryCombined || !volume){
+        throw new Error('Product '+i+': '+(isCC?'Registry or Closing account, and Volume (VCUs),':'Registry and Volume (RECs)')+' can\'t be blank.');
+      }
+
+      const values = liveGroup[idx].values[0].slice();
+      values[MC.agreementDate] = hDate;
+      values[MC.entity] = hEntity;
+      values[MC.salesPic] = hBd;
+      values[MC.company] = hCompany;
+      values[MC.registry] = registry;
+      values[MC.tigrsIrecName] = rv(idp+'transfer');
+      values[MC.tech] = isCC ? 'CC' : rv(idp+'tech');
+      values[MC.country] = rv(idp+'country');
+
+      if(isCC){
+        values[MC.projectName] = rv('fe-h-project-name');
+        values[MC.projectId] = rv('fe-h-project-id');
+        values[MC.vFromMM] = rv('fe-h-project-type');
+        values[MC.vFromYY] = rv(idp+'vintage-start-year');
+        values[MC.vToMM] = rv('fe-h-methodology');
+        values[MC.vToYY] = rv(idp+'vintage-end-year');
+        values[MC.cod] = ccClosing;
+        values[MC.prepayment] = rv(idp+'prepayment');
+      }else{
+        values[MC.vFromMM] = rv(idp+'vstart-m');
+        values[MC.vFromYY] = rv(idp+'vstart-y');
+        values[MC.vToMM] = rv(idp+'vend-m');
+        values[MC.vToYY] = rv(idp+'vend-y');
+      }
+
+      values[MC.volume] = volume;
+      values[MC.currency] = rv(idp+'currency');
+      values[MC.unitPrice] = rv(idp+'price');
+      values[MC.paymentTerm] = rv(idp+'payterm');
+      values[MC.deliveryStart] = rv(idp+'dstart');
+      values[MC.deliveryEnd] = rv(idp+'dend');
+      if(!isCC) values[MC.cod] = rv(idp+'cod');
+
+      const remarksRaw = rv(idp+'remarks');
+      values[MC.specialReq] = (!remarksRaw || remarksRaw.toUpperCase() === 'NA') ? 'N/A' : remarksRaw;
+
+      // Retrigger approval from Level 1. All previous approval/rejection/file
+      // stamps are cleared because they relate to the pre-edit version.
+      values[MC.status] = STATUS_PENDING_1;
+      values[MC.approvedBy1] = ''; values[MC.approvedDate1] = '';
+      values[MC.approvedBy2] = ''; values[MC.approvedDate2] = '';
+      values[MC.approvedBy3] = ''; values[MC.approvedDate3] = '';
+      values[MC.agreementFileName] = '';
+      values[MC.agreementFileUrl] = '';
+      values[MC.rejectedBy] = ''; values[MC.rejectedDate] = ''; values[MC.rejectReason] = '';
+      if(values.length > MC.regTechReminderSentDate){
+        values[MC.regTechReminderSentDate] = '';
+      }
+
+      updatedRows.push({ index: liveGroup[idx].index, values: [values] });
+    }
+
+    // Regenerate the recap from the edited values before writing.
+    const freshHtml = renderPointFormatHtml(buildRecapLinesFromRows(dealId, updatedRows));
+    updatedRows[0].values[0][MC.generatedHtml] = freshHtml;
+
+    // Compare against the live pre-edit rows so the next approver sees an
+    // accurate change summary.
+    const role = roleFromOrderType(liveGroup[0].values[0][MC.supplyDemand]);
+    const fieldDiff = buildFullEditChangeSummary(liveGroup, updatedRows, role);
+    const nowForLabel = new Date();
+    const timestampLabel = String(nowForLabel.getUTCDate()).padStart(2,'0')+'/'+String(nowForLabel.getUTCMonth()+1).padStart(2,'0')+'/'+nowForLabel.getUTCFullYear()+' '+String(nowForLabel.getUTCHours()).padStart(2,'0')+':'+String(nowForLabel.getUTCMinutes()).padStart(2,'0')+' UTC';
+    const roundLabel = 'Edit on ' + timestampLabel + ' by ' + (currentAccount.username || 'unknown');
+    const changeSummary = roundLabel + '\nJustification: ' + justification + (fieldDiff ? '\n' + fieldDiff : '');
+
+    const priorSummary = (liveGroup[0].values[0].length > MC.editChangeSummary)
+      ? (liveGroup[0].values[0][MC.editChangeSummary] || '') : '';
+    const combinedSummary = priorSummary ? (priorSummary + '\n\n---\n\n' + changeSummary) : changeSummary;
+
+    let summaryToSave = combinedSummary;
+    if(combinedSummary.length > EDIT_HISTORY_MAX_CHARS){
+      summaryToSave = trimEditHistoryToFit(combinedSummary, EDIT_HISTORY_MAX_CHARS);
+      try{ notifyEditHistoryLimit(dealId, combinedSummary, true); }catch(e){ console.warn('Edit history limit notification failed:', e); }
+    }else if(combinedSummary.length > EDIT_HISTORY_WARN_CHARS){
+      try{ notifyEditHistoryLimit(dealId, combinedSummary, false); }catch(e){ console.warn('Edit history warning notification failed:', e); }
+    }
+    if(updatedRows[0].values[0].length > MC.editChangeSummary){
+      updatedRows[0].values[0][MC.editChangeSummary] = summaryToSave;
+    }
+
+    // Write every row using the live row indexes.
+    for(const r of updatedRows){
+      await updateCanonicalTableRow(activeTable, r.index, r.values[0]);
+    }
+
+    // Verify the actual saved workbook state. This makes sure the approval queue
+    // can only be considered successfully reset after Excel contains Pending L1.
+    const verifyRowsAll = await getCanonicalTableRows(activeTable);
+    const verifyGroup = verifyRowsAll
+      .filter(r => String(r.values[0][MC.dealId] || '').trim() === String(dealId).trim())
+      .sort((a,b)=> a.index - b.index);
+    const verifiedStatus = dealGroupStatus(verifyGroup);
+    if(verifiedStatus !== STATUS_PENDING_1){
+      throw new Error('The deal was written, but its Level 1 pending status could not be verified. Please refresh the page and check the approval queue before trying again.');
+    }
+
+    // Email/notification is best-effort. A notification failure must NOT undo or
+    // hide the successful workbook status change.
+    try{
+      await notifyNextApprover(STATUS_PENDING_1, dealId, updatedRows[0].values[0][MC.description], changeSummary);
+    }catch(notificationErr){
+      console.warn('Level 1 notification failed after successful save:', notificationErr);
+    }
+
+    // Refresh the queue. If refresh fails, the workbook is still saved correctly.
+    try{
+      await loadHistory();
+    }catch(refreshErr){
+      console.warn('Approval queue refresh failed after successful save:', refreshErr);
+    }
+
     closeFullEditModal();
+
   }catch(err){
-    errEl.textContent = 'Save failed: ' + err.message;
+    console.error('saveFullEditAndResubmit failed:', err);
+    errEl.textContent = 'Save failed: ' + (err && err.message ? err.message : String(err));
     errEl.style.display = 'block';
-    btn.disabled = false; cancelBtn.disabled = false;
-    btn.textContent = 'Save & resend for Level 1 approval';
+  }finally{
+    btn.disabled = false;
+    cancelBtn.disabled = false;
+    btn.textContent = originalText;
   }
 }
 document.addEventListener('keydown', (e)=>{
