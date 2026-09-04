@@ -2904,7 +2904,12 @@ async function approveDeal(dealId, file, transferOverrides){
   // this is the one point where the row's dealId column changes from the
   // submit-time placeholder to a permanent real ID.
   let assignedDealId = null;
-  if(currentStatus === STATUS_PENDING_1){
+  // A formal Deal ID is assigned only for a brand-new agreement that is still
+  // using its submit-time placeholder (PND_...). If an existing deal is edited
+  // and sent back to Level 1, its existing formal Deal ID MUST be preserved.
+  // Editing Agreement Date, Buyer/Seller, quantity, price, delivery dates, or
+  // any other field must never create/replace the Deal ID.
+  if(currentStatus === STATUS_PENDING_1 && isPendingDealId(dealId)){
     assignedDealId = await assignFormalDealId(dealId, matching.length);
   }
   // Only Level 2 approval carries a file; upload it once, then stamp the
