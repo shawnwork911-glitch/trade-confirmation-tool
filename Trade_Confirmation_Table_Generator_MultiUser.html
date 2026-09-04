@@ -4842,7 +4842,7 @@ const YEARS = ["2025","2026","2027","2028","2029","2030"];
    everything written to TradeDealLog / the "Approved" SharePoint list)
    uses the full "Own RECs <option>" name for Own RECs selections — e.g.
    "Own RECs TIGR/I-REC MY SLR" — never a short code. */
-const OWN_RECS_OPTIONS = ["TIGR/I-REC MY SLR","TIGR/I-REC SG SLR","TIGR MY SLR","TIGR SG SLR","I-REC MY SLR","I-REC SG SLR","I-REC MY LHY","I-REC MY BGS"];
+const OWN_RECS_OPTIONS = ["TIGR/I-REC MY SLR","TIGR/I-REC SG SLR","TIGR MY SLR","TIGR SG SLR","I-REC MY SLR","I-REC SG SLR","I-REC MY LHY","I-REC MY BGS","I-REC VN WND"];
 const PROCEED_SHARE_OPTIONS = ["Tadau","IS Energy","Aenergy","PLTM"];
 const PROCEED_SHARE_CODE_MAP = {
   "Tadau":"Tadau",
@@ -6808,6 +6808,7 @@ function canFullyEditAfterLevel1(status){
 // first row (see saveFullEditAndResubmit) and shown to every approval
 // level while the deal works back through Pending Level 1/2/3.
 function buildFullEditChangeSummary(oldGroup, updatedRows, role){
+  const isCC = (oldGroup[0]._sourceTable || STANDARD_LOG_TABLE_NAME) === CC_LOG_TABLE_NAME;
   const lines = [];
   const diff = (label, oldV, newV) => {
     const a = String(oldV||'').trim(), b = String(newV||'').trim();
