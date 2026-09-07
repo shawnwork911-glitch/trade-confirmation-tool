@@ -6539,7 +6539,7 @@ function buildTradeGroup(startIdx, filled){
   if(currentProductMode === 'carboncredit') addRow('Prepayment', prepayments);
   addRow('Delivery Start Date', dstarts);
   addRow('Delivery End Date', dends);
-  if(currentProductMode !== 'carboncredit') addRow('License Commencement Date', mCods);
+  if(currentProductMode !== 'carboncredit') addRow('Commercial Operation Date', mCods);
   addRow('Special Remarks Request', remarks);
   addRow('BD Source Matching: 1. Buyer/Seller', mNames);
   addRow('2. No of RECs', mRecs);
@@ -6814,7 +6814,7 @@ function buildPointFormat(){
     // VCU terms rather than the usual REC-oriented labels — see CC_FIELD_LABELS.
     addField(isCC_i ? 'Volume (VCUs)' : 'Volume (RECs)', val('t'+i+'-volume'));
     addField(isCC_i ? 'Price / VCU' : 'Price / REC', val('t'+i+'-currency')+' '+val('t'+i+'-price'));
-    if(!isCC_i) addField('License Commencement Date', val('t'+i+'-m-cod'));
+    if(!isCC_i) addField('Commercial Operation Date', val('t'+i+'-m-cod'));
     addField('Payment Term', val('t'+i+'-payterm'));
     if(isCC_i) addField('Prepayment', val('t'+i+'-prepayment'));
     addField('Delivery', fmtDateOrdinal(val('t'+i+'-dstart'))+' - '+fmtDateOrdinal(val('t'+i+'-dend')));
@@ -7083,7 +7083,7 @@ function buildRecapLinesFromRows(dealId, sortedGroup){
     addField('Vintage', isCC ? (v[MC.vFromYY]||'')+' - '+(v[MC.vToYY]||'') : (v[MC.vFromMM]||'')+' '+(v[MC.vFromYY]||'')+' - '+(v[MC.vToMM]||'')+' '+(v[MC.vToYY]||''));
     addField(isCC ? 'Volume (VCUs)' : 'Volume (RECs)', v[MC.volume]);
     addField(isCC ? 'Price / VCU' : 'Price / REC', (v[MC.currency]||'')+' '+(v[MC.unitPrice]||''));
-    if(!isCC) addField('License Commencement Date', v[MC.cod]);
+    if(!isCC) addField('Commercial Operation Date', v[MC.cod]);
     addField('Payment Term', v[MC.paymentTerm]);
     addField('Delivery', fmtDateOrdinalStored(v[MC.deliveryStart])+' - '+fmtDateOrdinalStored(v[MC.deliveryEnd]));
     addField(isCC ? 'Special Remarks' : 'Special Remarks Request', v[MC.specialReq] || 'N/A');
