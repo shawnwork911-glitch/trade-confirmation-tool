@@ -5808,11 +5808,11 @@ function tradeBlockHtml(n){
     lockableField('Price currency', comboHtml('t'+n+'-currency','t'+n+'-currency-list',CURRENCIES,'USD'),'t'+n+'-currency')+
     lockableField('Price / REC', '<input type="text" inputmode="decimal" class="numeric-decimal-only" id="t'+n+'-price" placeholder="e.g. 0.27" value=""/>','t'+n+'-price')+
     lockableField('Payment term', textHtml('t'+n+'-payterm','30 days after invoice','30 days after invoice'),'t'+n+'-payterm')+
+    // Custom label text is updated programmatically to reflect Buyer/Seller dynamically
+    lockableField('Transfer account name', textHtml('t'+n+'-transfer','Required — type NA if not yet known'),'t'+n+'-transfer')+
     (currentProductMode === 'carboncredit' ? lockableField('Prepayment', '<textarea id="t'+n+'-prepayment" placeholder="Enter prepayment details"></textarea>', 't'+n+'-prepayment').replace('<div id=','<div style="grid-column:1 / -1;" id=') : '')+
     lockableField('Special remarks', '<textarea id="t'+n+'-remarks" placeholder="N/A">N/A</textarea>', 't'+n+'-remarks')
       .replace('<div id=','<div style="grid-column:1 / -1;" id=')+
-    // Custom label text is updated programmatically to reflect Buyer/Seller dynamically
-    lockableField('Transfer account name', textHtml('t'+n+'-transfer','Required — type NA if not yet known'),'t'+n+'-transfer')+
     '</div>'+
     '<p class="sub-title">BD source matching</p>'+
     
@@ -5953,10 +5953,11 @@ function bdSourceBlockHtml(n, s){
       lockableField('Vintage end month &amp; year',
         '<div style="display:flex;gap:6px;">'+selectHtml('t'+key+'-m-vend-month', MONTHS, 'Dec')+comboHtml('t'+key+'-m-vend-year','t'+key+'-m-vend-year-list', YEARS, '2025')+'</div>',
         ['t'+key+'-m-vend-month','t'+key+'-m-vend-year'])+
-      lockableField('Matching note', textHtml('t'+key+'-m-note','Optional note'),'t'+key+'-m-note')
+      lockableField('Matching note', '<textarea id="t'+key+'-m-note" placeholder="Optional note" rows="3"></textarea>','t'+key+'-m-note')
+        .replace('<div id=','<div style="grid-column:1 / -1;" id=')
     : '<div><label style="margin:0 0 6px;display:block;">Vintage start month &amp; year</label><div style="display:flex;gap:6px;">'+selectHtml('t'+key+'-m-vstart-month', MONTHS, 'Jan')+comboHtml('t'+key+'-m-vstart-year','t'+key+'-m-vstart-year-list', YEARS, '2025')+'</div></div>'+
       '<div><label style="margin:0 0 6px;display:block;">Vintage end month &amp; year</label><div style="display:flex;gap:6px;">'+selectHtml('t'+key+'-m-vend-month', MONTHS, 'Dec')+comboHtml('t'+key+'-m-vend-year','t'+key+'-m-vend-year-list', YEARS, '2025')+'</div></div>'+
-      '<div><label style="margin:0 0 6px;display:block;">Matching note</label>'+textHtml('t'+key+'-m-note','Optional note')+'</div>';
+      '<div style="grid-column:1 / -1;"><label style="margin:0 0 6px;display:block;">Matching note</label><textarea id="t'+key+'-m-note" placeholder="Optional note" rows="3"></textarea></div>';
   const fieldsHtml = (s === 1)
     ? lockableField('Buyer/Seller name', textHtml('t'+key+'-m-name','Name'),'t'+key+'-m-name')+
       lockableField('No of RECs', textHtml('t'+key+'-m-recs',''),'t'+key+'-m-recs')+
