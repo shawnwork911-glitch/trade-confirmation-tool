@@ -6540,7 +6540,7 @@ function buildTradeGroup(startIdx, filled){
   addRow('Delivery Start Date', dstarts);
   addRow('Delivery End Date', dends);
   if(currentProductMode !== 'carboncredit') addRow('Commercial Operation Date', mCods);
-  addRow('Special Remarks Request', remarks);
+  addRow('Special Remark', remarks);
   addRow('BD Source Matching: 1. Buyer/Seller', mNames);
   addRow('2. No of RECs', mRecs);
   addRow('3. From which deal', mDeals);
@@ -6818,7 +6818,7 @@ function buildPointFormat(){
     addField('Payment Term', val('t'+i+'-payterm'));
     if(isCC_i) addField('Prepayment', val('t'+i+'-prepayment'));
     addField('Delivery', fmtDateOrdinal(val('t'+i+'-dstart'))+' - '+fmtDateOrdinal(val('t'+i+'-dend')));
-    addField(isCC_i ? 'Special Remarks' : 'Special Remarks Request', remarksVal(i));
+    addField(isCC_i ? 'Special Remarks' : 'Special Remark', remarksVal(i));
     addField(transferAccountLabel(currentRole()), transferAccountValue(val('h-order'), val('t'+i+'-transfer')));
     // Internal-only from here down — see the addField comment above. Product
     // number is this trade's position (i), 1-based, matching the order
@@ -7086,7 +7086,7 @@ function buildRecapLinesFromRows(dealId, sortedGroup){
     if(!isCC) addField('Commercial Operation Date', v[MC.cod]);
     addField('Payment Term', v[MC.paymentTerm]);
     addField('Delivery', fmtDateOrdinalStored(v[MC.deliveryStart])+' - '+fmtDateOrdinalStored(v[MC.deliveryEnd]));
-    addField(isCC ? 'Special Remarks' : 'Special Remarks Request', v[MC.specialReq] || 'N/A');
+    addField(isCC ? 'Special Remarks' : 'Special Remark', v[MC.specialReq] || 'N/A');
     addField(transferAccountLabel(role), transferAccountValue(head[MC.supplyDemand], v[MC.tigrsIrecName]));
     addBdField(i, 'status', 'BD Matching \u2014 Status', matchingDisplayLabel(v[MC.matching]));
     addBdField(i, 'buyerseller', 'BD Matching \u2014 Buyer/Seller', v[MC.buyerSeller] || '-');
