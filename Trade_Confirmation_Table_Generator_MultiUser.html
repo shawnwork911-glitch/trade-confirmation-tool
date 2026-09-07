@@ -983,7 +983,24 @@ const MC = {
   // editChangeSummary above — guard on values.length before reading/
   // writing it.
   pendingVolume:61,
-  projectId:62, projectName:63, prepayment:64
+  projectId:62, projectName:63, prepayment:64,
+  // ---- Per-BD-source Vintage & Matching note (RECs only) ----
+  // Optional 63rd-65th columns, only ever populated on the standard (REC)
+  // TradeDealLog table — Carbon Credit deals don't carry a per-source
+  // vintage or matching note, so these are always left blank for CC rows.
+  // Same "; "-joined-per-source convention as Buyer/Seller (col 24)/No of
+  // RECs (col 25)/Which deal (col 26)/Delivery date (col 27): one entry per
+  // BD source, same order, so the same position across all these columns
+  // always describes one source (see bdSourceBlockHtml/collectBdSources/
+  // joinBdSourceField). Each source's Vintage Start/End entry is a single
+  // plain "MMM YYYY" string (e.g. "Jan 2025") rather than separate month/
+  // year values. Optional/additive, same reasoning as regTechReminderSentDate/
+  // editChangeSummary/pendingVolume above — guarded by liveColumnCount in
+  // saveConfirmationToHistory, so a workbook that hasn't added these three
+  // columns yet can still save, just without this data. To start capturing
+  // it, add "Source Vintage Start", "Source Vintage End" and "Source
+  // Matching Note" at the END of the live TradeDealLog Excel Table.
+  sourceVintageStart:65, sourceVintageEnd:66, sourceMatchNote:67
 };
 const COL_COUNT = 59;
 const STANDARD_DRAFT_TABLE_NAME = "TradeDealDrafts";   // Excel Table on the TradeDealDrafts sheet
@@ -2113,6 +2130,13 @@ async function addApprovedDealToList(values, changeNote){
         'No of RECs': values[MC.noOfRecs],
         'Which deal': values[MC.whichDeal],
         'Delivery Date': values[MC.deliveryDateM],
+        // RECs-only, optional (see the sourceVintageStart/sourceVintageEnd/
+        // sourceMatchNote comment on MC) — undefined on rows saved before
+        // TradeDealLog had these columns, which coerceForColumnType safely
+        // turns into a blank (null) rather than erroring.
+        'Source Vintage Start': values[MC.sourceVintageStart],
+        'Source Vintage End': values[MC.sourceVintageEnd],
+        'Source Matching Note': values[MC.sourceMatchNote],
         'Status': values[MC.status],
         'Submitted By': values[MC.submittedBy],
         'Submitted Date': values[MC.submittedDate],
@@ -2837,6 +2861,21 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
     row[MC.noOfRecs] = matchingActive ? joinBdSourceField(n,'recs') : '';
     row[MC.whichDeal] = joinBdSourceField(n,'deal');
     row[MC.deliveryDateM] = joinBdSourceField(n,'ddate');
+    // Optional 63rd-65th columns (see the sourceVintageStart/sourceVintageEnd/
+    // sourceMatchNote comment on MC) — RECs only, and only stamped if the
+    // live table actually has them yet.
+    if(currentProductMode !== 'carboncredit' && liveColumnCount > MC.sourceMatchNote){
+      // row's length may currently sit anywhere from COL_COUNT up to just
+      // past regTechReminderSentDate (the only optional column touched
+      // earlier in this REC-mode path) — never as far as this block. Pad
+      // any gap up to here with '' first, so extending the array to include
+      // these 3 new columns doesn't leave sparse "holes" behind (holes
+      // serialize as null, not '', once written to Excel).
+      for(let idx = row.length; idx < MC.sourceVintageStart; idx++) row[idx] = '';
+      row[MC.sourceVintageStart] = matchingActive ? joinBdSourceField(n,'vstart') : '';
+      row[MC.sourceVintageEnd] = matchingActive ? joinBdSourceField(n,'vend') : '';
+      row[MC.sourceMatchNote] = matchingActive ? joinBdSourceField(n,'note') : '';
+    }
     row[MC.submittedBy] = currentAccount.username;
     row[MC.submittedDate] = nowIso;
     row[MC.generatedHtml] = (n === 1) ? lastHtml : '';
@@ -5831,14 +5870,29 @@ function bdSourceKeysFor(n){
 function collectBdSources(n){
   const keys = bdSourceKeysFor(n);
   return keys.map((key, idx)=>{
+    // Vintage start/end are collected as a single "MMM YYYY" string per
+    // source (combining the month select + year combo), rather than as 4
+    // separate stored values, so they join across multiple sources into the
+    // same "; "-per-source convention as name/recs/deal/ddate below (see
+    // MC.sourceVintageStart/sourceVintageEnd). RECs-only fields — on a
+    // Carbon Credit product these inputs don't exist in the DOM, and val()
+    // just returns '' for a missing id, so vstart/vend/note come back blank
+    // there without any extra guarding needed.
+    const vsm = val('t'+key+'-m-vstart-month').trim();
+    const vsy = val('t'+key+'-m-vstart-year').trim();
+    const vem = val('t'+key+'-m-vend-month').trim();
+    const vey = val('t'+key+'-m-vend-year').trim();
     const entry = {
       key: key,
       name: val('t'+key+'-m-name'),
       recs: val('t'+key+'-m-recs'),
       deal: dealCodeFor(key),
-      ddate: val('t'+key+'-m-ddate')
+      ddate: val('t'+key+'-m-ddate'),
+      vstart: (vsm || vsy) ? (vsm+' '+vsy).trim() : '',
+      vend: (vem || vey) ? (vem+' '+vey).trim() : '',
+      note: val('t'+key+'-m-note')
     };
-    entry._blank = !(entry.name.trim() || entry.recs.trim() || entry.deal.trim() || entry.ddate.trim());
+    entry._blank = !(entry.name.trim() || entry.recs.trim() || entry.deal.trim() || entry.ddate.trim() || entry.vstart.trim() || entry.note.trim());
     return entry;
   }).filter((e, idx)=> idx === 0 || !e._blank);
 }
@@ -5886,15 +5940,34 @@ function bdSourceBlockHtml(n, s){
         '</label>'+
       '</div>'+
     '</div>';
+  // Vintage start/end (month & year) and a freeform Matching note are
+  // captured per BD source, same as the other 4 per-source fields above —
+  // but RECs-only (isCC), since Carbon Credit deals don't carry a per-source
+  // vintage or matching note. See collectBdSources/joinBdSourceField for how
+  // these get combined across sources into MC.sourceVintageStart/
+  // sourceVintageEnd/sourceMatchNote at save time.
+  const vintageNoteHtml = isCC ? '' : (s === 1)
+    ? lockableField('Vintage start month &amp; year',
+        '<div style="display:flex;gap:6px;">'+selectHtml('t'+key+'-m-vstart-month', MONTHS, 'Jan')+comboHtml('t'+key+'-m-vstart-year','t'+key+'-m-vstart-year-list', YEARS, '2025')+'</div>',
+        ['t'+key+'-m-vstart-month','t'+key+'-m-vstart-year'])+
+      lockableField('Vintage end month &amp; year',
+        '<div style="display:flex;gap:6px;">'+selectHtml('t'+key+'-m-vend-month', MONTHS, 'Dec')+comboHtml('t'+key+'-m-vend-year','t'+key+'-m-vend-year-list', YEARS, '2025')+'</div>',
+        ['t'+key+'-m-vend-month','t'+key+'-m-vend-year'])+
+      lockableField('Matching note', textHtml('t'+key+'-m-note','Optional note'),'t'+key+'-m-note')
+    : '<div><label style="margin:0 0 6px;display:block;">Vintage start month &amp; year</label><div style="display:flex;gap:6px;">'+selectHtml('t'+key+'-m-vstart-month', MONTHS, 'Jan')+comboHtml('t'+key+'-m-vstart-year','t'+key+'-m-vstart-year-list', YEARS, '2025')+'</div></div>'+
+      '<div><label style="margin:0 0 6px;display:block;">Vintage end month &amp; year</label><div style="display:flex;gap:6px;">'+selectHtml('t'+key+'-m-vend-month', MONTHS, 'Dec')+comboHtml('t'+key+'-m-vend-year','t'+key+'-m-vend-year-list', YEARS, '2025')+'</div></div>'+
+      '<div><label style="margin:0 0 6px;display:block;">Matching note</label>'+textHtml('t'+key+'-m-note','Optional note')+'</div>';
   const fieldsHtml = (s === 1)
     ? lockableField('Buyer/Seller name', textHtml('t'+key+'-m-name','Name'),'t'+key+'-m-name')+
       lockableField('No of RECs', textHtml('t'+key+'-m-recs',''),'t'+key+'-m-recs')+
       lockableField('From which deal', '<div id="t'+key+'-m-deal-field">'+textHtml('t'+key+'-m-deal','Deal Recap ID')+'</div>','t'+key+'-m-deal')+
-      lockableField('Delivery date', dateHtml('t'+key+'-m-ddate'),'t'+key+'-m-ddate')
+      lockableField('Delivery date', dateHtml('t'+key+'-m-ddate'),'t'+key+'-m-ddate')+
+      vintageNoteHtml
     : '<div><label style="margin:0 0 6px;display:block;">Buyer/Seller name</label>'+textHtml('t'+key+'-m-name','Name')+'</div>'+
       '<div><label style="margin:0 0 6px;display:block;">No of RECs</label>'+textHtml('t'+key+'-m-recs','')+'</div>'+
       '<div><label style="margin:0 0 6px;display:block;">From which deal</label><div id="t'+key+'-m-deal-field">'+textHtml('t'+key+'-m-deal','Deal Recap ID')+'</div></div>'+
-      '<div id="t'+key+'-m-ddate-wrap"><label style="margin:0 0 6px;display:block;">Delivery date</label>'+dateHtml('t'+key+'-m-ddate')+'</div>';
+      '<div id="t'+key+'-m-ddate-wrap"><label style="margin:0 0 6px;display:block;">Delivery date</label>'+dateHtml('t'+key+'-m-ddate')+'</div>'+
+      vintageNoteHtml;
   return '<div class="bd-source-block" data-product="'+n+'" data-source="'+s+'"'+
     (s > 1 ? ' style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:12px;"' : '') + '>'+
     (s > 1 ? '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'+
@@ -6729,6 +6802,14 @@ function buildPointFormat(){
     addBdField(i, 'norecs', isCC_i ? 'BD Matching \u2014 No of VCUs' : 'BD Matching \u2014 No of RECs', bdSrcsForPreview.map(e=>e.recs||'-').join('; ') || '-');
     addBdField(i, 'whichdeal', 'BD Matching \u2014 Which deal', bdSrcsForPreview.map(e=>dealLabelFor(e.key)||'-').join('; ') || '-');
     addBdField(i, 'deliverydate', 'BD Matching \u2014 Delivery Date', bdSrcsForPreview.map(e=>formatStoredDate(e.ddate)||'-').join('; ') || '-');
+    // Per-source Vintage start/end and Matching note — RECs only (see
+    // bdSourceBlockHtml/collectBdSources); a Carbon Credit product's sources
+    // simply come back with these blank, so skip the rows entirely there.
+    if(!isCC_i){
+      addBdField(i, 'vintagestart', 'BD Matching \u2014 Vintage Start', bdSrcsForPreview.map(e=>e.vstart||'-').join('; ') || '-');
+      addBdField(i, 'vintageend', 'BD Matching \u2014 Vintage End', bdSrcsForPreview.map(e=>e.vend||'-').join('; ') || '-');
+      addBdField(i, 'matchnote', 'BD Matching \u2014 Matching Note', bdSrcsForPreview.map(e=>e.note||'-').join('; ') || '-');
+    }
   }
   return lines;
 }
@@ -6946,6 +7027,14 @@ function buildRecapLinesFromRows(dealId, sortedGroup){
     addBdField(i, 'norecs', isCC ? 'BD Matching \u2014 No of VCUs' : 'BD Matching \u2014 No of RECs', v[MC.noOfRecs] || '-');
     addBdField(i, 'whichdeal', 'BD Matching \u2014 Which deal', dealLabelForStoredValueMulti(v[MC.whichDeal]) || '-');
     addBdField(i, 'deliverydate', 'BD Matching \u2014 Delivery Date', formatStoredDateMulti(v[MC.deliveryDateM]) || '-');
+    // Per-source Vintage start/end and Matching note — RECs only, and only
+    // present on rows saved after these optional columns existed (see the
+    // sourceVintageStart/sourceVintageEnd/sourceMatchNote comment on MC).
+    if(!isCC){
+      addBdField(i, 'vintagestart', 'BD Matching \u2014 Vintage Start', (v[MC.sourceVintageStart] || '') || '-');
+      addBdField(i, 'vintageend', 'BD Matching \u2014 Vintage End', (v[MC.sourceVintageEnd] || '') || '-');
+      addBdField(i, 'matchnote', 'BD Matching \u2014 Matching Note', (v[MC.sourceMatchNote] || '') || '-');
+    }
   });
   return lines;
 }
