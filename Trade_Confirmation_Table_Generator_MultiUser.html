@@ -3774,6 +3774,9 @@ function renderAnalysisTab(){
       const n = Number(r.values[0][MC.noOfRecs]);
       return sum + (isFinite(n) ? n : 0);
     }, 0);
+    // Guard against binary floating-point artifacts (e.g. 68155.66500000001)
+    // when summing decimal matched-volume values across product rows.
+    const totalRecsDisplay = Math.round(totalRecs * 1e6) / 1e6;
     html += '<tr>' +
       '<td>'+escapeHtml(v[MC.salesPic]||'')+'</td>' +
       '<td>'+(isPendingDealId(v[MC.dealId]) ? '-' : escapeHtml(friendlyDealId(v[MC.dealId])))+'</td>' +
@@ -3784,7 +3787,7 @@ function renderAnalysisTab(){
         (volumeUnconfirmed ? ' <span class="volume-warning-wrap"><span class="volume-warning-icon">⚠</span>'+
           '<span class="volume-warning-tooltip">Actual: '+escapeHtml(volumeRangeParts.join('; '))+'</span></span>' : '')+
       '</td>' +
-      '<td>'+totalRecs+'</td>' +
+      '<td>'+totalRecsDisplay.toLocaleString()+'</td>' +
       '<td>'+statusBadge(status)+'</td>' +
     '</tr>';
   });
@@ -3818,6 +3821,9 @@ function exportAnalysisToExcel(){
       const n = Number(r.values[0][MC.noOfRecs]);
       return sum + (isFinite(n) ? n : 0);
     }, 0);
+    // Guard against binary floating-point artifacts (e.g. 68155.66500000001)
+    // when summing decimal matched-volume values across product rows.
+    const totalRecsDisplay = Math.round(totalRecs * 1e6) / 1e6;
     return [
       confirmationGroupTypeLabel(g),
       v[MC.salesPic] || '',
@@ -3828,7 +3834,7 @@ function exportAnalysisToExcel(){
       totalVolume,
       volumeUnconfirmed ? 'No — estimated (range)' : 'Yes',
       volumeRangeParts.join('; '),
-      totalRecs,
+      totalRecsDisplay,
       status
     ];
   });
