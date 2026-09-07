@@ -2833,10 +2833,10 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
     row[MC.tigrsIrecName] = transferAccountValue(val('h-order'), val('t'+n+'-transfer'));
     row[MC.paymentTerm] = val('t'+n+'-payterm');
     if(currentProductMode === 'carboncredit') row[MC.prepayment] = val('t'+n+'-prepayment');
-    row[MC.buyerSeller] = matchingActive ? val('t'+n+'-m-name') : '';
-    row[MC.noOfRecs] = matchingActive ? val('t'+n+'-m-recs') : '';
-    row[MC.whichDeal] = dealCodeFor(n);
-    row[MC.deliveryDateM] = val('t'+n+'-m-ddate');
+    row[MC.buyerSeller] = matchingActive ? joinBdSourceField(n,'name') : '';
+    row[MC.noOfRecs] = matchingActive ? joinBdSourceField(n,'recs') : '';
+    row[MC.whichDeal] = joinBdSourceField(n,'deal');
+    row[MC.deliveryDateM] = joinBdSourceField(n,'ddate');
     row[MC.submittedBy] = currentAccount.username;
     row[MC.submittedDate] = nowIso;
     row[MC.generatedHtml] = (n === 1) ? lastHtml : '';
@@ -4411,36 +4411,145 @@ document.getElementById('reject-modal-submit').addEventListener('click', async (
   }
 });
 let editRequestModalDealId = null;
-// Builds the "Which deal" field for one product row in the Request-edit
-// modal — a free-text Deal Recap ID box by default, or (mirroring the main
-// form's t{n}-m-own/t{n}-m-proceed tickboxes) a dropdown of Own RECs or
-// Proceed Share options when the matching tickbox for that source is
-// checked. Pre-selects the right tickbox by checking whether the deal's
-// CURRENT live "Which deal" value already matches one of those option
-// lists — same inference editMatchingDealFieldHtml used in the older
-// direct-overwrite version of this flow.
-function editRequestDealFieldHtml(idx, storedValue, rowUid){
+// ---- Multiple BD sources per product (Request-edit modal) ----
+// Same idea as the main form's "+ Source" (see bdSourceKeyStr/bdSourceKeysFor/
+// collectBdSources): a product row here can carry more than one source in its
+// Buyer/Seller / No of RECs / Which deal / Delivery date columns, each stored
+// value being a "; "-joined list with one entry per source, in the same
+// order across all four columns. erSourceKeyStr/erSourceKeysFor mirror the
+// main form's helpers exactly, scoped to this modal's er-{key}-* ids
+// (key = product idx, or idx+'-'+sourceNumber for source 2+).
+function erSourceKeyStr(idx, s){ return (s === 1) ? String(idx) : (idx+'-'+s); }
+function erSourceKeysFor(idx){
+  const c = document.getElementById('er-'+idx+'-sources-container');
+  if(!c) return [String(idx)];
+  const nums = Array.from(c.querySelectorAll('.er-source-block'))
+    .map(b => parseInt(b.getAttribute('data-source'),10))
+    .filter(s => !isNaN(s))
+    .sort((a,b)=> a-b);
+  return (nums.length ? nums : [1]).map(s => erSourceKeyStr(idx,s));
+}
+// Splits a product row's CURRENT (possibly multi-source) stored value for
+// each of the 4 fields apart, and zips them back into one {buyerSeller,
+// noOfRecs, whichDeal, deliveryDateM} object per source - so re-opening this
+// modal on a deal that was submitted with 2 sources shows 2 source blocks,
+// each pre-filled with its own values, rather than cramming everything into
+// a single block.
+function erInitialSourcesFor(v){
+  const bs = splitBdSourceValue(v[MC.buyerSeller]);
+  const nr = splitBdSourceValue(v[MC.noOfRecs]);
+  const wd = splitBdSourceValue(v[MC.whichDeal]);
+  const dd = splitBdSourceValue(v[MC.deliveryDateM]);
+  const count = Math.max(bs.length, nr.length, wd.length, dd.length, 1);
+  const out = [];
+  for(let i=0;i<count;i++){
+    out.push({ buyerSeller: bs[i]||'', noOfRecs: nr[i]||'', whichDeal: wd[i]||'', deliveryDateM: dd[i]||'' });
+  }
+  return out;
+}
+// Builds the "Which deal" field for one source - a free-text Deal Recap ID
+// box by default, or (mirroring the main form's t{n}-m-own/t{n}-m-proceed
+// tickboxes) a dropdown of Own RECs or Proceed Share options when that
+// source's tickbox is checked. Pre-selects the right tickbox by checking
+// whether the source's CURRENT value already matches one of those option
+// lists. key identifies the source (see erSourceKeyStr); the product index
+// it belongs to is always key's leading number.
+function editRequestDealFieldHtml(key, storedValue, rowUid){
+  const idx = key.split('-')[0];
   const uidAttr = ' data-uid="'+escapeHtml(rowUid||'')+'"';
   const parsed = parseWhichDealSource(storedValue);
   if(parsed.source === 'own'){
-    return {own:true, proceed:false, fieldHtml: '<select class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+'>'+
+    return {own:true, proceed:false, fieldHtml: '<select id="er-'+key+'-whichdeal" class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+'>'+
       OWN_RECS_OPTIONS.map(o=>'<option value="'+escapeHtml(o)+'"'+(o===parsed.option?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>'};
   }
   if(parsed.source === 'proceed'){
-    return {own:false, proceed:true, fieldHtml: '<select class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+'>'+
+    return {own:false, proceed:true, fieldHtml: '<select id="er-'+key+'-whichdeal" class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+'>'+
       PROCEED_SHARE_OPTIONS.map(o=>'<option value="'+escapeHtml(o)+'"'+(o===parsed.option?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>'};
   }
-  return {own:false, proceed:false, fieldHtml: '<input type="text" class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+' placeholder="Deal Recap ID" value="'+escapeHtml(storedValue||'')+'"/>'};
+  return {own:false, proceed:false, fieldHtml: '<input type="text" id="er-'+key+'-whichdeal" class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+' placeholder="Deal Recap ID" value="'+escapeHtml(storedValue||'')+'"/>'};
 }
-// Keeps the edit-request modal's Buyer/Seller field in lockstep with its
-// Source tickbox — same rule and reason as the main form's
-// syncBuyerSellerName: ticking Own RECs/Proceed Share overwrites it and
-// locks it, since that literal text is what gets written to the Buyer/
-// Seller column; unticking both restores free editing.
-function syncEditRequestBuyerSeller(idx){
-  const own = document.getElementById('er-'+idx+'-own');
-  const proceed = document.getElementById('er-'+idx+'-proceed');
-  const nameEl = document.getElementById('er-'+idx+'-buyerseller');
+// Reads a source's own/proceed tickbox state and prefixes/maps its "Which
+// deal" value accordingly - the request-edit modal's equivalent of the main
+// form's dealCodeFor, scoped to one source's er-{key}-* ids.
+function erDealCodeFor(key){
+  const raw = val('er-'+key+'-whichdeal');
+  if(!raw) return '';
+  const own = document.getElementById('er-'+key+'-own');
+  const proceed = document.getElementById('er-'+key+'-proceed');
+  if(own && own.checked) return OWN_RECS_PREFIX + raw;
+  if(proceed && proceed.checked) return PROCEED_SHARE_CODE_MAP[raw] !== undefined ? PROCEED_SHARE_CODE_MAP[raw] : raw;
+  return raw;
+}
+// Builds one source's block of fields for product idx, source number s
+// (1 = the always-present primary source). Mirrors the main form's
+// bdSourceBlockHtml, just against this modal's markup/ids.
+function erSourceBlockHtml(idx, s, opts){
+  opts = opts || {};
+  const key = erSourceKeyStr(idx, s);
+  const isCC = !!opts.isCC;
+  const noOfRecsLabel = opts.noOfRecsLabel || 'No of RECs';
+  const dealField = editRequestDealFieldHtml(key, opts.whichDeal||'', opts.rowUid||'');
+  return '<div class="er-source-block" data-source="'+s+'" style="display:flex;flex-direction:column;gap:8px;'+(s>1?'border:1px solid var(--border);border-radius:6px;padding:10px;margin-top:8px;':'')+'">'+
+    (s>1 ? '<div style="display:flex;justify-content:space-between;align-items:center;">'+
+        '<span style="font-size:12px;font-weight:600;color:var(--text-secondary);">Source '+s+'</span>'+
+        '<button type="button" class="secondary er-remove-source-btn" data-idx="'+idx+'" data-source="'+s+'" style="padding:2px 8px;font-size:11px;color:#8a2d1f;border-color:#c1493a;">Remove source</button>'+
+      '</div>' : '')+
+    '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Buyer/Seller</label>'+
+      '<input type="text" id="er-'+key+'-buyerseller" class="edit-request-buyerseller" data-idx="'+idx+'" value="'+escapeHtml(opts.buyerSeller||'')+'"/></div>'+
+    '<div><label style="margin:0 0 4px;display:block;font-size:12px;">'+escapeHtml(noOfRecsLabel)+'</label>'+
+      '<input type="text" id="er-'+key+'-norecs" class="edit-request-norecs" data-idx="'+idx+'" value="'+escapeHtml(opts.noOfRecs||'')+'"/></div>'+
+    '<div>'+
+      (isCC ? '' :
+      '<label style="margin:0 0 6px;display:block;font-size:12px;">Source</label>'+
+      '<div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:8px;">'+
+        '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
+          '<input type="checkbox" id="er-'+key+'-own" style="width:auto;margin:0;"'+(dealField.own?' checked':'')+'> Own RECs'+
+        '</label>'+
+        '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
+          '<input type="checkbox" id="er-'+key+'-proceed" style="width:auto;margin:0;"'+(dealField.proceed?' checked':'')+'> Proceed Share'+
+        '</label>'+
+      '</div>')+
+      '<label style="margin:0 0 4px;display:block;font-size:12px;">Which deal</label>'+
+      '<div id="er-'+key+'-deal-field">'+dealField.fieldHtml+'</div>'+
+    '</div>'+
+    '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Delivery date</label>'+
+      '<div class="date-field-wrap">'+
+        '<input type="date" id="er-'+key+'-deliverydate" class="edit-request-deliverydate date-native" data-idx="'+idx+'" value="'+escapeHtml(toDateInputValue(opts.deliveryDateM||''))+'"/>'+
+        '<span class="date-display is-placeholder" data-for="er-'+key+'-deliverydate">dd/mm/yyyy</span>'+
+      '</div></div>'+
+  '</div>';
+}
+// "+ Source" for the request-edit modal - appends a new, blank source block
+// for product idx.
+document.addEventListener('click', (e)=>{
+  const btn = e.target.closest('.er-add-source-btn');
+  if(!btn) return;
+  const idx = btn.getAttribute('data-idx');
+  const container = document.getElementById('er-'+idx+'-sources-container');
+  if(!container) return;
+  const existing = Array.from(container.querySelectorAll('.er-source-block')).map(b=>parseInt(b.getAttribute('data-source'),10));
+  const nextS = (existing.length ? Math.max.apply(null, existing) : 1) + 1;
+  if(nextS > 8){ return; }
+  const isCC = dealLogTableName() === CC_LOG_TABLE_NAME;
+  container.insertAdjacentHTML('beforeend', erSourceBlockHtml(idx, nextS, {isCC:isCC, noOfRecsLabel: isCC ? 'No of VCUs' : 'No of RECs'}));
+  refreshAllDateDisplays(container);
+});
+// "Remove source" - takes just that one source block out again.
+document.addEventListener('click', (e)=>{
+  const btn = e.target.closest('.er-remove-source-btn');
+  if(!btn) return;
+  const block = btn.closest('.er-source-block');
+  if(block) block.remove();
+});
+// Keeps a source's Buyer/Seller field in lockstep with its Source tickbox —
+// same rule and reason as the main form's syncBuyerSellerName: ticking Own
+// RECs/Proceed Share overwrites it and locks it, since that literal text is
+// what gets written to the Buyer/Seller column; unticking both restores free
+// editing.
+function syncEditRequestBuyerSeller(key){
+  const own = document.getElementById('er-'+key+'-own');
+  const proceed = document.getElementById('er-'+key+'-proceed');
+  const nameEl = document.getElementById('er-'+key+'-buyerseller');
   if(!own || !proceed || !nameEl) return;
   if(own.checked){
     nameEl.value = 'Own RECs';
@@ -4453,46 +4562,49 @@ function syncEditRequestBuyerSeller(idx){
     nameEl.readOnly = false;
   }
 }
-// Rebuilds the "Which deal" field for product idx as a text box (default),
+// Rebuilds the "Which deal" field for source key as a text box (default),
 // or a dropdown of Own RECs / Proceed Share options — same pattern as the
 // main form's updateDealField, scoped to this modal's row ids.
-function updateEditRequestDealField(idx){
-  const own = document.getElementById('er-'+idx+'-own');
-  const proceed = document.getElementById('er-'+idx+'-proceed');
-  const target = document.getElementById('er-'+idx+'-deal-field');
+function updateEditRequestDealField(key){
+  const own = document.getElementById('er-'+key+'-own');
+  const proceed = document.getElementById('er-'+key+'-proceed');
+  const target = document.getElementById('er-'+key+'-deal-field');
   if(!own || !proceed || !target) return;
+  const idx = key.split('-')[0];
   const matchingSel = document.querySelector('.edit-request-matching[data-idx="'+idx+'"]');
   const uidAttr = ' data-uid="'+escapeHtml((matchingSel && matchingSel.getAttribute('data-uid')) || '')+'"';
   if(own.checked){
-    target.innerHTML = '<select class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+'>'+
+    target.innerHTML = '<select id="er-'+key+'-whichdeal" class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+'>'+
       OWN_RECS_OPTIONS.map((o,i)=>'<option value="'+escapeHtml(o)+'"'+(i===0?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>';
   } else if(proceed.checked){
-    target.innerHTML = '<select class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+'>'+
+    target.innerHTML = '<select id="er-'+key+'-whichdeal" class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+'>'+
       PROCEED_SHARE_OPTIONS.map((o,i)=>'<option value="'+escapeHtml(o)+'"'+(i===0?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>';
   } else {
-    target.innerHTML = '<input type="text" class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+' placeholder="Deal Recap ID"/>';
+    target.innerHTML = '<input type="text" id="er-'+key+'-whichdeal" class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+' placeholder="Deal Recap ID"/>';
   }
-  syncEditRequestBuyerSeller(idx);
+  syncEditRequestBuyerSeller(key);
 }
-// Own RECs / Proceed Share are mutually exclusive within a product row.
+// Own RECs / Proceed Share are mutually exclusive within a source.
 document.addEventListener('change', (e)=>{
-  const m = e.target && e.target.id && e.target.id.match(/^er-(\d+)-(own|proceed)$/);
+  const m = e.target && e.target.id && e.target.id.match(/^er-(\d+(?:-\d+)?)-(own|proceed)$/);
   if(!m) return;
-  const idx = m[1], which = m[2];
+  const key = m[1], which = m[2];
   if(which === 'own' && e.target.checked){
-    const p = document.getElementById('er-'+idx+'-proceed');
+    const p = document.getElementById('er-'+key+'-proceed');
     if(p) p.checked = false;
   } else if(which === 'proceed' && e.target.checked){
-    const o = document.getElementById('er-'+idx+'-own');
+    const o = document.getElementById('er-'+key+'-own');
     if(o) o.checked = false;
   }
-  updateEditRequestDealField(idx);
+  updateEditRequestDealField(key);
 });
 // Open Position means there's nothing to match yet, so Buyer/Seller,
-// No of RECs, Source, Which deal, and Delivery date don't apply — hide AND
-// clear them, the same way the main form's handleMatchingChange does, so a
-// stale value from before switching to Open Position can't accidentally
-// get submitted.
+// No of RECs, Source, Which deal, and Delivery date don't apply for any
+// source on this product — hide AND clear them, the same way the main
+// form's handleMatchingChange does, so a stale value from before switching
+// to Open Position can't accidentally get submitted. Also collapses any
+// extra "+ Source" blocks back down to just the primary source, since Open
+// Position means there's no matching (and so no sources) at all.
 document.addEventListener('change', (e)=>{
   if(!e.target.classList || !e.target.classList.contains('edit-request-matching')) return;
   const idx = e.target.getAttribute('data-idx');
@@ -4503,7 +4615,13 @@ document.addEventListener('change', (e)=>{
     dependent.querySelectorAll('input[type="text"]').forEach(el=>{ el.value = ''; });
     dependent.querySelectorAll('input[type="checkbox"]').forEach(cb=>{ cb.checked = false; });
     dependent.querySelectorAll('input[type="date"]').forEach(el=>{ el.value = ''; updateDateDisplay(el); });
-    updateEditRequestDealField(idx);
+    erSourceKeysFor(idx).forEach(key => updateEditRequestDealField(key));
+    const sourcesContainer = document.getElementById('er-'+idx+'-sources-container');
+    if(sourcesContainer){
+      sourcesContainer.querySelectorAll('.er-source-block[data-source]').forEach(b=>{
+        if(parseInt(b.getAttribute('data-source'),10) > 1) b.remove();
+      });
+    }
   } else {
     dependent.style.display = 'flex';
   }
@@ -4605,7 +4723,6 @@ function openEditRequestModal(dealId){
       '<option value="'+escapeHtml(m)+'"'+(m===matchingVal?' selected':'')+'>'+escapeHtml(MATCHING_DISPLAY_NAMES[m]||m)+'</option>'
     ).join('');
     const label = group.length > 1 ? 'Product ' + (idx+1) : 'Product';
-    const dealField = editRequestDealFieldHtml(idx, v[MC.whichDeal]||'', v[MC.rowUid]||'');
     const regTechHtml = editRequestRegistryTechHtml(idx, v[MC.registry]||'', v[MC.tech]||'', v[MC.rowUid]||'');
     const volumeHtml = editRequestVolumeHtml(idx, v[MC.volume]||'', v[MC.rowUid]||'', isCC);
     // data-uid carries this row's permanent Row Uid — requestBdMatchChange
@@ -4614,34 +4731,21 @@ function openEditRequestModal(dealId){
     // just trusting position-in-list, which could point at the wrong
     // product if the deal's rows changed shape while the modal was open).
     const uidAttr = ' data-uid="'+escapeHtml(v[MC.rowUid]||'')+'"';
+    // Splits this product's CURRENT (possibly multi-source, "; "-joined)
+    // stored values apart so a deal submitted with 2+ sources reopens here
+    // showing that many source blocks, each pre-filled correctly, instead
+    // of one block carrying the whole joined string.
+    const sourcesHtml = erInitialSourcesFor(v).map((src, i)=> erSourceBlockHtml(idx, i+1, {
+      buyerSeller: src.buyerSeller, noOfRecs: src.noOfRecs, whichDeal: src.whichDeal, deliveryDateM: src.deliveryDateM,
+      isCC: isCC, noOfRecsLabel: noOfRecsLabel, rowUid: v[MC.rowUid]||''
+    })).join('');
     return '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;">' +
       '<p style="margin:0;font-size:13px;font-weight:600;">'+escapeHtml(label)+'</p>' +
       '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Matching</label>' +
         '<select class="edit-request-matching" data-idx="'+idx+'"'+uidAttr+'>'+matchOptions+'</select></div>' +
       '<div id="er-'+idx+'-dependent" style="display:flex;flex-direction:column;gap:8px;'+(active?'':'display:none;')+'">' +
-        '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Buyer/Seller</label>' +
-          '<input type="text" id="er-'+idx+'-buyerseller" class="edit-request-buyerseller" data-idx="'+idx+'"'+uidAttr+' value="'+escapeHtml(v[MC.buyerSeller]||'')+'"/></div>' +
-        '<div><label style="margin:0 0 4px;display:block;font-size:12px;">'+escapeHtml(noOfRecsLabel)+'</label>' +
-          '<input type="text" class="edit-request-norecs" data-idx="'+idx+'"'+uidAttr+' value="'+escapeHtml(v[MC.noOfRecs]||'')+'"/></div>' +
-        '<div>' +
-          (isCC ? '' :
-          '<label style="margin:0 0 6px;display:block;font-size:12px;">Source</label>' +
-          '<div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:8px;">' +
-            '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">' +
-              '<input type="checkbox" id="er-'+idx+'-own" style="width:auto;margin:0;"'+(dealField.own?' checked':'')+'> Own RECs' +
-            '</label>' +
-            '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">' +
-              '<input type="checkbox" id="er-'+idx+'-proceed" style="width:auto;margin:0;"'+(dealField.proceed?' checked':'')+'> Proceed Share' +
-            '</label>' +
-          '</div>') +
-          '<label style="margin:0 0 4px;display:block;font-size:12px;">Which deal</label>' +
-          '<div id="er-'+idx+'-deal-field">'+dealField.fieldHtml+'</div>' +
-        '</div>' +
-        '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Delivery date</label>' +
-          '<div class="date-field-wrap">' +
-            '<input type="date" class="edit-request-deliverydate date-native" data-idx="'+idx+'"'+uidAttr+' value="'+escapeHtml(toDateInputValue(v[MC.deliveryDateM]))+'"/>' +
-            '<span class="date-display is-placeholder" data-for="er-'+idx+'-deliverydate">dd/mm/yyyy</span>' +
-          '</div></div>' +
+        '<div id="er-'+idx+'-sources-container">'+ sourcesHtml +'</div>' +
+        (isCC ? '' : '<button type="button" class="secondary er-add-source-btn" data-idx="'+idx+'" style="align-self:flex-start;padding:4px 10px;font-size:12px;">+ Source</button>') +
       '</div>' +
       regTechHtml +
       volumeHtml +
@@ -4658,7 +4762,7 @@ function openEditRequestModal(dealId){
     '</div>';
   document.getElementById('edit-request-modal-overlay').style.display = 'flex';
   refreshAllDateDisplays(fieldsEl);
-  group.forEach((r, idx)=> syncEditRequestBuyerSeller(idx));
+  group.forEach((r, idx)=> erSourceKeysFor(idx).forEach(key => syncEditRequestBuyerSeller(key)));
 }
 function closeEditRequestModal(){
   document.getElementById('edit-request-modal-overlay').style.display = 'none';
@@ -4675,40 +4779,21 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
   const btn = document.getElementById('edit-request-modal-submit');
   errEl.style.display = 'none';
   const edits = [];
+  // Matching + rowUid are per-product (one <select> per product row); the
+  // 4 BD-matching fields below are per-SOURCE — a product can have more than
+  // one "+ Source" block, so each is joined into a single "; "-separated
+  // value per field, one entry per source, in the same order across all 4
+  // fields (mirrors joinBdSourceField on the main form).
   document.querySelectorAll('#edit-request-modal-fields .edit-request-matching').forEach(sel=>{
     const idx = parseInt(sel.getAttribute('data-idx'), 10);
     edits[idx] = edits[idx] || {};
     edits[idx].matching = sel.value;
     edits[idx].rowUid = sel.getAttribute('data-uid') || '';
-  });
-  document.querySelectorAll('#edit-request-modal-fields .edit-request-buyerseller').forEach(inp=>{
-    const idx = parseInt(inp.getAttribute('data-idx'), 10);
-    edits[idx] = edits[idx] || {};
-    edits[idx].buyerSeller = inp.value;
-    edits[idx].rowUid = edits[idx].rowUid || inp.getAttribute('data-uid') || '';
-  });
-  document.querySelectorAll('#edit-request-modal-fields .edit-request-whichdeal').forEach(inp=>{
-    const idx = parseInt(inp.getAttribute('data-idx'), 10);
-    edits[idx] = edits[idx] || {};
-    const ownCb = document.getElementById('er-'+idx+'-own');
-    const proceedCb = document.getElementById('er-'+idx+'-proceed');
-    let wd = inp.value;
-    if(ownCb && ownCb.checked) wd = OWN_RECS_PREFIX + wd;
-    else if(proceedCb && proceedCb.checked) wd = PROCEED_SHARE_CODE_MAP[wd] !== undefined ? PROCEED_SHARE_CODE_MAP[wd] : wd;
-    edits[idx].whichDeal = wd;
-    edits[idx].rowUid = edits[idx].rowUid || inp.getAttribute('data-uid') || '';
-  });
-  document.querySelectorAll('#edit-request-modal-fields .edit-request-norecs').forEach(inp=>{
-    const idx = parseInt(inp.getAttribute('data-idx'), 10);
-    edits[idx] = edits[idx] || {};
-    edits[idx].noOfRecs = inp.value;
-    edits[idx].rowUid = edits[idx].rowUid || inp.getAttribute('data-uid') || '';
-  });
-  document.querySelectorAll('#edit-request-modal-fields .edit-request-deliverydate').forEach(inp=>{
-    const idx = parseInt(inp.getAttribute('data-idx'), 10);
-    edits[idx] = edits[idx] || {};
-    edits[idx].deliveryDateM = inp.value;
-    edits[idx].rowUid = edits[idx].rowUid || inp.getAttribute('data-uid') || '';
+    const keys = erSourceKeysFor(idx);
+    edits[idx].buyerSeller = keys.map(key => val('er-'+key+'-buyerseller')).join('; ');
+    edits[idx].noOfRecs = keys.map(key => val('er-'+key+'-norecs')).join('; ');
+    edits[idx].whichDeal = keys.map(key => erDealCodeFor(key)).join('; ');
+    edits[idx].deliveryDateM = keys.map(key => val('er-'+key+'-deliverydate')).join('; ');
   });
   document.querySelectorAll('#edit-request-modal-fields .edit-request-registry').forEach(el=>{
     const idx = parseInt(el.getAttribute('data-idx'), 10);
@@ -5699,27 +5784,152 @@ function tradeBlockHtml(n){
 
     '<!-- Wrapper for matching dependent fields -->'+
     '<div id="t'+n+'-matching-dependent-fields" style="display:none;">'+
-      '<div class="grid">'+
-        (currentProductMode === 'carboncredit' ? '' :
-          '<div id="t'+n+'-m-source-wrap">'+
-            '<label style="margin-bottom:6px;">Source</label>'+ 
-            '<div style="display:flex;gap:20px;flex-wrap:wrap;">'+
-              '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
-                '<input type="checkbox" id="t'+n+'-m-own" style="width:auto;margin:0;"> Own RECs'+
-              '</label>'+
-              '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
-                '<input type="checkbox" id="t'+n+'-m-proceed" style="width:auto;margin:0;"> Proceed Share'+
-              '</label>'+
-            '</div>'+
-          '</div>')+
-        lockableField('Buyer/Seller name', textHtml('t'+n+'-m-name','Name'),'t'+n+'-m-name')+
-        lockableField('No of RECs', textHtml('t'+n+'-m-recs',''),'t'+n+'-m-recs')+
-        lockableField('From which deal', '<div id="t'+n+'-m-deal-field">'+textHtml('t'+n+'-m-deal','Deal Recap ID')+'</div>','t'+n+'-m-deal')+
-        lockableField('Delivery date', dateHtml('t'+n+'-m-ddate'),'t'+n+'-m-ddate')+
-      '</div>'+
+      '<div id="t'+n+'-sources-container">'+ bdSourceBlockHtml(n,1) +'</div>'+
+      (currentProductMode === 'carboncredit' ? '' :
+        '<button type="button" class="secondary add-source-btn" data-product="'+n+'" style="margin:2px 0 12px;padding:4px 10px;font-size:12px;">+ Source</button>')+
     '</div>'+
   '</div>';
 }
+
+// ---- Multiple BD sources per product ----
+// Each product's BD source matching normally has a single "source" (one
+// Buyer/Seller, one No of RECs, one From-which-deal, one Delivery date, all
+// keyed off the plain t{n}-m-* ids). "+ Source" lets a submitter add extra
+// sources on top of that first one when a single product is actually being
+// matched against more than one counterparty/deal - each extra source gets
+// its own set of the same 5 fields, keyed t{n}-{s}-m-* (s = 2, 3, ...), and
+// every existing per-source function (syncBuyerSellerName, updateDealField,
+// updateDeliveryDateVisibility, dealCodeFor, dealLabelFor, handleMatchingChange's
+// clear-on-Open-Position) already works unchanged against a source purely by
+// string-concatenating whatever "key" it's given ("1" or "1-2") into
+// t{key}-m-*, so no rewrite was needed there. What's new here is: (a) how a
+// source's key is computed, (b) building/removing extra source blocks, and
+// (c) reading however many sources currently exist so the values can be
+// combined into the single storage columns (Buyer/Seller, No of RECs, Which
+// deal, Delivery date), each column holding one "; "-separated entry per
+// source, in the same order, so the same position across all four columns
+// always describes one source.
+function bdSourceKeyStr(n, s){ return (s === 1) ? String(n) : (n+'-'+s); }
+// Reads however many source blocks are currently in the DOM for product n
+// (in the order they appear) and returns their keys - used any time values
+// need to be collected across every source, rather than assuming there's
+// only ever one.
+function bdSourceKeysFor(n){
+  const c = document.getElementById('t'+n+'-sources-container');
+  if(!c) return [String(n)];
+  const nums = Array.from(c.querySelectorAll('.bd-source-block'))
+    .map(b => parseInt(b.getAttribute('data-source'),10))
+    .filter(s => !isNaN(s))
+    .sort((a,b)=> a-b);
+  return (nums.length ? nums : [1]).map(s => bdSourceKeyStr(n,s));
+}
+// Reads every source's 4 values for product n. The first source is always
+// included (it's the one that's actually required/validated); an extra
+// source is only included if at least one of its fields was filled in, so
+// an empty "+ Source" block a submitter added and then abandoned doesn't
+// leave a stray "; " in the saved columns.
+function collectBdSources(n){
+  const keys = bdSourceKeysFor(n);
+  return keys.map((key, idx)=>{
+    const entry = {
+      key: key,
+      name: val('t'+key+'-m-name'),
+      recs: val('t'+key+'-m-recs'),
+      deal: dealCodeFor(key),
+      ddate: val('t'+key+'-m-ddate')
+    };
+    entry._blank = !(entry.name.trim() || entry.recs.trim() || entry.deal.trim() || entry.ddate.trim());
+    return entry;
+  }).filter((e, idx)=> idx === 0 || !e._blank);
+}
+function joinBdSourceField(n, field){
+  return collectBdSources(n).map(e=> e[field] || '').join('; ');
+}
+// Splits one of the semicolon-joined storage columns back into its
+// per-source pieces - the inverse of joinBdSourceField.
+function splitBdSourceValue(v){
+  return String(v||'').split(';').map(s=>s.trim());
+}
+// Same idea as formatStoredDate/dealLabelForStoredValue, but multi-source
+// aware: splits the stored "; "-joined value apart, formats each piece on
+// its own, then rejoins - so a 2-source deal's Delivery date column (say)
+// still displays as two readable dates rather than the raw joined string.
+// Falls back to the single-value formatter unchanged when there's only one
+// piece, so single-source deals (the overwhelming majority) look exactly as
+// they always have.
+function formatStoredDateMulti(v){
+  const parts = splitBdSourceValue(v).filter(s=>s!=='');
+  if(parts.length <= 1) return formatStoredDate(v);
+  return parts.map(formatStoredDate).join('; ');
+}
+function dealLabelForStoredValueMulti(v){
+  const parts = splitBdSourceValue(v).filter(s=>s!=='');
+  if(parts.length <= 1) return dealLabelForStoredValue(v);
+  return parts.map(dealLabelForStoredValue).join('; ');
+}
+// Builds one source's block of 5 fields for product n. Source 1 keeps the
+// exact markup (and lock buttons) this section always had; source 2+ is the
+// same 5 fields, unlocked (locking a repeatable block isn't meaningful the
+// same way), with a "Remove source" button of its own.
+function bdSourceBlockHtml(n, s){
+  const key = bdSourceKeyStr(n, s);
+  const isCC = currentProductMode === 'carboncredit';
+  const sourceTickboxesHtml = isCC ? '' :
+    '<div id="t'+key+'-m-source-wrap">'+
+      '<label style="margin-bottom:6px;">Source</label>'+
+      '<div style="display:flex;gap:20px;flex-wrap:wrap;">'+
+        '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
+          '<input type="checkbox" id="t'+key+'-m-own" style="width:auto;margin:0;"> Own RECs'+
+        '</label>'+
+        '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
+          '<input type="checkbox" id="t'+key+'-m-proceed" style="width:auto;margin:0;"> Proceed Share'+
+        '</label>'+
+      '</div>'+
+    '</div>';
+  const fieldsHtml = (s === 1)
+    ? lockableField('Buyer/Seller name', textHtml('t'+key+'-m-name','Name'),'t'+key+'-m-name')+
+      lockableField('No of RECs', textHtml('t'+key+'-m-recs',''),'t'+key+'-m-recs')+
+      lockableField('From which deal', '<div id="t'+key+'-m-deal-field">'+textHtml('t'+key+'-m-deal','Deal Recap ID')+'</div>','t'+key+'-m-deal')+
+      lockableField('Delivery date', dateHtml('t'+key+'-m-ddate'),'t'+key+'-m-ddate')
+    : '<div><label style="margin:0 0 6px;display:block;">Buyer/Seller name</label>'+textHtml('t'+key+'-m-name','Name')+'</div>'+
+      '<div><label style="margin:0 0 6px;display:block;">No of RECs</label>'+textHtml('t'+key+'-m-recs','')+'</div>'+
+      '<div><label style="margin:0 0 6px;display:block;">From which deal</label><div id="t'+key+'-m-deal-field">'+textHtml('t'+key+'-m-deal','Deal Recap ID')+'</div></div>'+
+      '<div id="t'+key+'-m-ddate-wrap"><label style="margin:0 0 6px;display:block;">Delivery date</label>'+dateHtml('t'+key+'-m-ddate')+'</div>';
+  return '<div class="bd-source-block" data-product="'+n+'" data-source="'+s+'"'+
+    (s > 1 ? ' style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:12px;"' : '') + '>'+
+    (s > 1 ? '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'+
+        '<span style="font-size:12px;font-weight:600;color:var(--text-secondary);">Source '+s+'</span>'+
+        '<button type="button" class="secondary remove-source-btn" data-product="'+n+'" data-source="'+s+'" style="padding:2px 8px;font-size:11px;color:#8a2d1f;border-color:#c1493a;">Remove source</button>'+
+      '</div>' : '')+
+    '<div class="grid">'+ sourceTickboxesHtml + fieldsHtml +'</div>'+
+  '</div>';
+}
+// "+ Source" - appends a new, blank source block for product n after
+// whichever source currently has the highest index (never reusing an
+// index, even if an earlier extra source was removed, so ids stay unique).
+document.addEventListener('click', (e)=>{
+  const btn = e.target.closest('.add-source-btn');
+  if(!btn) return;
+  const n = btn.getAttribute('data-product');
+  const container = document.getElementById('t'+n+'-sources-container');
+  if(!container) return;
+  const existing = Array.from(container.querySelectorAll('.bd-source-block')).map(b=>parseInt(b.getAttribute('data-source'),10));
+  const nextS = (existing.length ? Math.max.apply(null, existing) : 1) + 1;
+  if(nextS > 8){ return; } // sane cap
+  container.insertAdjacentHTML('beforeend', bdSourceBlockHtml(n, nextS));
+  const key = bdSourceKeyStr(n, nextS);
+  refreshAllDateDisplays(container);
+  updateDeliveryDateVisibility(key);
+});
+// "Remove source" - takes just that one source block out again. Renaming/
+// renumbering the remaining ones isn't needed since bdSourceKeysFor() always
+// re-reads whatever's actually in the DOM at collection time.
+document.addEventListener('click', (e)=>{
+  const btn = e.target.closest('.remove-source-btn');
+  if(!btn) return;
+  const block = btn.closest('.bd-source-block');
+  if(block) block.remove();
+});
 
 // Keeps "1. Buyer/Seller name" in lockstep with the Source tickbox: ticking
 // Own RECs or Proceed Share overwrites it with that literal label and locks
@@ -5811,8 +6021,18 @@ function handleMatchingChange(n) {
     dependentContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => {
       cb.checked = false;
     });
-    // Reset specific subfield layouts
-    updateDealField(n);
+    // Reset specific subfield layouts for every source currently present
+    // (the primary source plus any "+ Source" blocks), then drop back to
+    // just the primary source block - Open Position means there's no
+    // matching at all, so any extra sources a submitter had added no
+    // longer apply.
+    bdSourceKeysFor(n).forEach(key => updateDealField(key));
+    const sourcesContainer = document.getElementById('t'+n+'-sources-container');
+    if(sourcesContainer){
+      sourcesContainer.querySelectorAll('.bd-source-block[data-source]').forEach(b=>{
+        if(parseInt(b.getAttribute('data-source'),10) > 1) b.remove();
+      });
+    }
   } else {
     // Reveal fields 1-4 when option is not 'Open Position'
     dependentContainer.style.display = 'block';
@@ -5834,7 +6054,7 @@ document.addEventListener('change', (e) => {
 // Own RECs and Proceed Share are mutually exclusive — ticking one clears
 // the other — and either swaps (or, if unticked, un-swaps) the dropdown.
 document.addEventListener('change', (e)=>{
-  const m = e.target && e.target.id && e.target.id.match(/^t(\d+)-m-(own|proceed)$/);
+  const m = e.target && e.target.id && e.target.id.match(/^t(\d+(?:-\d+)?)-m-(own|proceed)$/);
   if(!m) return;
   const n = m[1], which = m[2];
   if(which === 'own' && e.target.checked){
@@ -6503,11 +6723,12 @@ function buildPointFormat(){
     // Internal-only from here down — see the addField comment above. Product
     // number is this trade's position (i), 1-based, matching the order
     // products are written as rows in TradeDealLog (see saveConfirmationToHistory).
+    const bdSrcsForPreview = collectBdSources(i);
     addBdField(i, 'status', 'BD Matching \u2014 Status', matchingDisplayLabel(val('t'+i+'-m-matching')));
-    addBdField(i, 'buyerseller', 'BD Matching \u2014 Buyer/Seller', val('t'+i+'-m-name') || '-');
-    addBdField(i, 'norecs', isCC_i ? 'BD Matching \u2014 No of VCUs' : 'BD Matching \u2014 No of RECs', val('t'+i+'-m-recs') || '-');
-    addBdField(i, 'whichdeal', 'BD Matching \u2014 Which deal', dealLabelFor(i) || '-');
-    addBdField(i, 'deliverydate', 'BD Matching \u2014 Delivery Date', formatStoredDate(val('t'+i+'-m-ddate')) || '-');
+    addBdField(i, 'buyerseller', 'BD Matching \u2014 Buyer/Seller', bdSrcsForPreview.map(e=>e.name||'-').join('; ') || '-');
+    addBdField(i, 'norecs', isCC_i ? 'BD Matching \u2014 No of VCUs' : 'BD Matching \u2014 No of RECs', bdSrcsForPreview.map(e=>e.recs||'-').join('; ') || '-');
+    addBdField(i, 'whichdeal', 'BD Matching \u2014 Which deal', bdSrcsForPreview.map(e=>dealLabelFor(e.key)||'-').join('; ') || '-');
+    addBdField(i, 'deliverydate', 'BD Matching \u2014 Delivery Date', bdSrcsForPreview.map(e=>formatStoredDate(e.ddate)||'-').join('; ') || '-');
   }
   return lines;
 }
@@ -6614,8 +6835,8 @@ function refreshBdMatchingInHtml(html, group){
       status: matchingDisplayLabel(v[MC.matching]),
       buyerseller: v[MC.buyerSeller] || '-',
       norecs: v[MC.noOfRecs] || '-',
-      whichdeal: dealLabelForStoredValue(v[MC.whichDeal]) || '-',
-      deliverydate: formatStoredDate(v[MC.deliveryDateM]) || '-',
+      whichdeal: dealLabelForStoredValueMulti(v[MC.whichDeal]) || '-',
+      deliverydate: formatStoredDateMulti(v[MC.deliveryDateM]) || '-',
       // Registry/Tech are rendered by addLiveField/renderPointFormatHtml
       // with a data-live="1" marker instead of data-bd="1" (see those
       // comments) — the regex below matches on data-product/data-field
@@ -6723,8 +6944,8 @@ function buildRecapLinesFromRows(dealId, sortedGroup){
     addBdField(i, 'status', 'BD Matching \u2014 Status', matchingDisplayLabel(v[MC.matching]));
     addBdField(i, 'buyerseller', 'BD Matching \u2014 Buyer/Seller', v[MC.buyerSeller] || '-');
     addBdField(i, 'norecs', isCC ? 'BD Matching \u2014 No of VCUs' : 'BD Matching \u2014 No of RECs', v[MC.noOfRecs] || '-');
-    addBdField(i, 'whichdeal', 'BD Matching \u2014 Which deal', dealLabelForStoredValue(v[MC.whichDeal]) || '-');
-    addBdField(i, 'deliverydate', 'BD Matching \u2014 Delivery Date', formatStoredDate(v[MC.deliveryDateM]) || '-');
+    addBdField(i, 'whichdeal', 'BD Matching \u2014 Which deal', dealLabelForStoredValueMulti(v[MC.whichDeal]) || '-');
+    addBdField(i, 'deliverydate', 'BD Matching \u2014 Delivery Date', formatStoredDateMulti(v[MC.deliveryDateM]) || '-');
   });
   return lines;
 }
@@ -7391,16 +7612,20 @@ function tradeFieldDefs(i){
     return baseDefs;
   }
 
-  // If anything other than 'Open Position' is selected, matching fields 1-4 are mandatory -
-  // except "4. Delivery date", which is hidden and intentionally left blank for Own RECs
-  // (see updateDeliveryDateVisibility): there's no counterparty delivery to date there.
-  const isOwnRecs = !!(document.getElementById('t'+i+'-m-own') && document.getElementById('t'+i+'-m-own').checked);
-  const matchDefs = [
-    {ids:['t'+i+'-m-name'], label:'1. Buyer/Seller name'},
-    {ids:['t'+i+'-m-recs'], label:'2. No of RECs'},
-    {ids:['t'+i+'-m-deal'], label:'3. From which deal'}
-  ];
-  if(!isOwnRecs) matchDefs.push({ids:['t'+i+'-m-ddate'], label:'4. Delivery date'});
+  // If anything other than 'Open Position' is selected, matching fields 1-4 are mandatory
+  // for every source currently on this product (the primary source plus any "+ Source"
+  // blocks added) - except "4. Delivery date", which is hidden and intentionally left
+  // blank for a source with Own RECs ticked (see updateDeliveryDateVisibility): there's
+  // no counterparty delivery to date there.
+  const matchDefs = [];
+  bdSourceKeysFor(i).forEach((key, srcIdx)=>{
+    const sourceLabel = srcIdx === 0 ? '' : ' (Source '+(srcIdx+1)+')';
+    const isOwnRecs = !!(document.getElementById('t'+key+'-m-own') && document.getElementById('t'+key+'-m-own').checked);
+    matchDefs.push({ids:['t'+key+'-m-name'], label:'1. Buyer/Seller name'+sourceLabel});
+    matchDefs.push({ids:['t'+key+'-m-recs'], label:'2. No of RECs'+sourceLabel});
+    matchDefs.push({ids:['t'+key+'-m-deal'], label:'3. From which deal'+sourceLabel});
+    if(!isOwnRecs) matchDefs.push({ids:['t'+key+'-m-ddate'], label:'4. Delivery date'+sourceLabel});
+  });
   return baseDefs.concat(matchDefs);
 }
 function clearMissingHighlights(){
