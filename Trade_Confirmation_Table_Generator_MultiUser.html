@@ -467,6 +467,12 @@
   .analysis-legend-row{display:flex;align-items:center;gap:8px;font-size:13px;}
   .analysis-legend-swatch{width:11px;height:11px;border-radius:3px;flex:none;}
   .analysis-legend-pct{margin-left:auto;color:var(--text-secondary);font-size:12px;}
+  .analysis-chart-divider{width:1px;align-self:stretch;background:var(--border, rgba(255,255,255,.12));flex:none;}
+  #analysis-donut-volume{width:190px;height:190px;border-radius:50%;flex:none;position:relative;}
+  #analysis-donut-volume-center{position:absolute;inset:26px;border-radius:50%;background:var(--surface);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;}
+  #analysis-donut-volume-center .n{font-size:22px;font-weight:700;}
+  #analysis-donut-volume-center .l{font-size:10px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.03em;}
+  #analysis-legend-volume{display:flex;flex-direction:column;gap:8px;min-width:200px;}
   #analysis-table-wrap table{width:100%;border-collapse:collapse;}
   #analysis-table-wrap th{font-size:12px;color:var(--text-secondary);border-bottom:1px solid var(--border);text-align:left;padding:6px;}
   #analysis-table-wrap td{padding:6px;font-size:13px;border-top:1px solid var(--border);}
@@ -680,6 +686,9 @@
     <div id="analysis-chart-row">
       <div id="analysis-donut"><div id="analysis-donut-center"><div class="n" id="analysis-donut-total">0</div><div class="l">deals</div></div></div>
       <div id="analysis-legend"></div>
+      <div class="analysis-chart-divider"></div>
+      <div id="analysis-donut-volume"><div id="analysis-donut-volume-center"><div class="n" id="analysis-donut-volume-pct">0%</div><div class="l">matched</div></div></div>
+      <div id="analysis-legend-volume"></div>
     </div>
 
     <div id="analysis-table-wrap"><p style="font-size:13px;color:var(--text-secondary);">Loading…</p></div>
@@ -3601,6 +3610,10 @@ const ANALYSIS_STATUS_COLORS = {
   [STATUS_APPROVED]: '#1f7a4d',
   [STATUS_REJECTED]: '#8a2d1f'
 };
+const ANALYSIS_VOLUME_COLORS = {
+  matched: '#1f6f9c',
+  unmatched: '#5a5a5a'
+};
 function refreshAnalysisBdOptions(){
   const sel = document.getElementById('analysis-filter-bd');
   if(!sel) return;
@@ -3703,12 +3716,23 @@ function renderAnalysisTab(){
     return sum + g.rows.reduce((s, r)=> s + parseVolumeForTotals(r.values[0][MC.volume]), 0);
   }, 0);
   const anyVolumeUnconfirmed = groups.some(g => dealGroupStatus(g.rows) !== STATUS_REJECTED && g.rows.some(r => needsVolumeFix(r.values[0][MC.volume])));
+  // Total matched volume (across non-rejected deals), so we can show how
+  // much of the total volume is still unmatched. Rounded to guard against
+  // binary floating-point artifacts when summing decimal values.
+  const totalMatchedVolumeAll = groups.reduce((sum, g) => {
+    if(dealGroupStatus(g.rows) === STATUS_REJECTED) return sum;
+    return sum + g.rows.reduce((s, r)=>{
+      const n = Number(r.values[0][MC.noOfRecs]);
+      return s + (isFinite(n) ? n : 0);
+    }, 0);
+  }, 0);
+  const totalUnmatchedVolumeAll = Math.round((totalVolumeAll - totalMatchedVolumeAll) * 1e6) / 1e6;
   document.getElementById('analysis-stats').innerHTML = [
     ['Total confirmations', total, ''],
     ['Total volume', totalVolumeAll.toLocaleString(), anyVolumeUnconfirmed ? '⚠ includes estimated (unconfirmed range) volume' : ''],
     ['Approved', approvedCount, pct(approvedCount)+'% of total'],
     ['Pending (any level)', pendingCount, pct(pendingCount)+'% of total'],
-    ['Rejected', rejectedCount, pct(rejectedCount)+'% of total']
+    ['Total unmatched volume', totalUnmatchedVolumeAll.toLocaleString(), '']
   ].map(([label, value, sub]) =>
     '<div class="analysis-stat"><div class="stat-label">'+escapeHtml(label)+'</div>'+
     '<div class="stat-value">'+value+'</div>'+
@@ -3746,6 +3770,37 @@ function renderAnalysisTab(){
     });
     donut.style.background = 'conic-gradient(' + stops.join(', ') + ')';
     legendEl.innerHTML = legendRows.join('');
+  }
+
+  // ---- volume donut chart (matched vs unmatched) + legend ----
+  const volumeDonut = document.getElementById('analysis-donut-volume');
+  const volumeDonutPct = document.getElementById('analysis-donut-volume-pct');
+  const volumeLegendEl = document.getElementById('analysis-legend-volume');
+  const matchedVolume = Math.round(totalMatchedVolumeAll * 1e6) / 1e6;
+  const unmatchedVolume = totalUnmatchedVolumeAll < 0 ? 0 : totalUnmatchedVolumeAll;
+  const volumePct = n => totalVolumeAll ? Math.round((n/totalVolumeAll)*1000)/10 : 0;
+  if(!totalVolumeAll){
+    volumeDonut.style.background = 'var(--surface-2)';
+    volumeDonutPct.textContent = '—';
+    volumeLegendEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);margin:0;">No volume to show.</p>';
+  } else {
+    const matchedPct = volumePct(matchedVolume);
+    const stops2 = [
+      ANALYSIS_VOLUME_COLORS.matched+' 0deg '+(matchedPct/100*360).toFixed(2)+'deg',
+      ANALYSIS_VOLUME_COLORS.unmatched+' '+(matchedPct/100*360).toFixed(2)+'deg 360deg'
+    ];
+    volumeDonut.style.background = 'conic-gradient(' + stops2.join(', ') + ')';
+    volumeDonutPct.textContent = matchedPct + '%';
+    volumeLegendEl.innerHTML = [
+      ['Matched', ANALYSIS_VOLUME_COLORS.matched, matchedVolume, matchedPct],
+      ['Unmatched', ANALYSIS_VOLUME_COLORS.unmatched, unmatchedVolume, volumePct(unmatchedVolume)]
+    ].map(([label, color, vol, p]) =>
+      '<div class="analysis-legend-row">'+
+        '<span class="analysis-legend-swatch" style="background:'+color+';"></span>'+
+        '<span>'+escapeHtml(label)+'</span>'+
+        '<span class="analysis-legend-pct">'+vol.toLocaleString()+' · '+p+'%</span>'+
+      '</div>'
+    ).join('');
   }
 
   // ---- data table ----
