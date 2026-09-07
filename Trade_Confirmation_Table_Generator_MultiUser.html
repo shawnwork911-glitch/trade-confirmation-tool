@@ -3154,8 +3154,8 @@ async function requestBdMatchChange(dealId, edits, matchNote){
     if((rv[MC.noOfRecs]||'') !== (edit.noOfRecs||'')){
       lines.push('No of RECs: ' + (rv[MC.noOfRecs]||'(blank)') + ' \u2192 ' + (edit.noOfRecs||'(blank)'));
     }
-    if((rv[MC.deliveryDateM]||'') !== (edit.deliveryDateM||'')){
-      lines.push('Delivery date: ' + (rv[MC.deliveryDateM]||'(blank)') + ' \u2192 ' + (edit.deliveryDateM||'(blank)'));
+    if(toDateInputValue(rv[MC.deliveryDateM]) !== toDateInputValue(edit.deliveryDateM)){
+      lines.push('Delivery date: ' + (formatStoredDate(rv[MC.deliveryDateM])||'(blank)') + ' \u2192 ' + (formatStoredDate(edit.deliveryDateM)||'(blank)'));
     }
     if((rv[MC.registry]||'') !== (edit.registry||'')){
       lines.push('Registry: ' + registryDisplayName(rv[MC.registry]) + ' \u2192 ' + registryDisplayName(edit.registry));
@@ -3269,8 +3269,8 @@ async function approveBdMatchChange(dealId){
     if((values[MC.noOfRecs]||'') !== (values[MC.pendingNoOfRecs]||'')){
       noteLines.push('No of RECs: ' + (values[MC.noOfRecs]||'(blank)') + ' \u2192 ' + (values[MC.pendingNoOfRecs]||'(blank)'));
     }
-    if((values[MC.deliveryDateM]||'') !== (values[MC.pendingDeliveryDateM]||'')){
-      noteLines.push('Delivery date: ' + (values[MC.deliveryDateM]||'(blank)') + ' \u2192 ' + (values[MC.pendingDeliveryDateM]||'(blank)'));
+    if(toDateInputValue(values[MC.deliveryDateM]) !== toDateInputValue(values[MC.pendingDeliveryDateM])){
+      noteLines.push('Delivery date: ' + (formatStoredDate(values[MC.deliveryDateM])||'(blank)') + ' \u2192 ' + (formatStoredDate(values[MC.pendingDeliveryDateM])||'(blank)'));
     }
     if((values[MC.registry]||'') !== (values[MC.pendingRegistry]||'')){
       noteLines.push('Registry: ' + registryDisplayName(values[MC.registry]) + ' \u2192 ' + registryDisplayName(values[MC.pendingRegistry]));
@@ -3728,10 +3728,10 @@ function renderAnalysisTab(){
   }, 0);
   const totalUnmatchedVolumeAll = Math.round((totalVolumeAll - totalMatchedVolumeAll) * 1e6) / 1e6;
   document.getElementById('analysis-stats').innerHTML = [
-    ['Total confirmations', total, ''],
-    ['Total volume', totalVolumeAll.toLocaleString(), anyVolumeUnconfirmed ? '⚠ includes estimated (unconfirmed range) volume' : ''],
+    ['Total deals', total, ''],
     ['Approved', approvedCount, pct(approvedCount)+'% of total'],
     ['Pending (any level)', pendingCount, pct(pendingCount)+'% of total'],
+    ['Total volume', totalVolumeAll.toLocaleString(), anyVolumeUnconfirmed ? '⚠ includes estimated (unconfirmed range) volume' : ''],
     ['Total unmatched volume', totalUnmatchedVolumeAll.toLocaleString(), '']
   ].map(([label, value, sub]) =>
     '<div class="analysis-stat"><div class="stat-label">'+escapeHtml(label)+'</div>'+
@@ -4088,8 +4088,8 @@ function renderHistoryTable(el, groups, opts){
         if((rv[MC.noOfRecs]||'') !== (rv[MC.pendingNoOfRecs]||'')){
           lines.push('No of RECs: <s>'+escapeHtml(rv[MC.noOfRecs]||'(blank)')+'</s> → <strong>'+escapeHtml(rv[MC.pendingNoOfRecs]||'(blank)')+'</strong>');
         }
-        if((rv[MC.deliveryDateM]||'') !== (rv[MC.pendingDeliveryDateM]||'')){
-          lines.push('Delivery date: <s>'+escapeHtml(rv[MC.deliveryDateM]||'(blank)')+'</s> → <strong>'+escapeHtml(rv[MC.pendingDeliveryDateM]||'(blank)')+'</strong>');
+        if(toDateInputValue(rv[MC.deliveryDateM]) !== toDateInputValue(rv[MC.pendingDeliveryDateM])){
+          lines.push('Delivery date: <s>'+escapeHtml(formatStoredDate(rv[MC.deliveryDateM])||'(blank)')+'</s> → <strong>'+escapeHtml(formatStoredDate(rv[MC.pendingDeliveryDateM])||'(blank)')+'</strong>');
         }
         if((rv[MC.registry]||'') !== (rv[MC.pendingRegistry]||'')){
           lines.push('Registry: <s>'+escapeHtml(registryDisplayName(rv[MC.registry])||'(blank)')+'</s> → <strong>'+escapeHtml(registryDisplayName(rv[MC.pendingRegistry])||'(blank)')+'</strong>');
@@ -4603,7 +4603,7 @@ function openEditRequestModal(dealId){
         '</div>' +
         '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Delivery date</label>' +
           '<div class="date-field-wrap">' +
-            '<input type="date" class="edit-request-deliverydate date-native" data-idx="'+idx+'"'+uidAttr+' value="'+escapeHtml(v[MC.deliveryDateM]||'')+'"/>' +
+            '<input type="date" class="edit-request-deliverydate date-native" data-idx="'+idx+'"'+uidAttr+' value="'+escapeHtml(toDateInputValue(v[MC.deliveryDateM]))+'"/>' +
             '<span class="date-display is-placeholder" data-for="er-'+idx+'-deliverydate">dd/mm/yyyy</span>' +
           '</div></div>' +
       '</div>' +
