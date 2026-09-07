@@ -6752,14 +6752,15 @@ function buildPointFormat(){
   addField('Deal Date', fmtDate(val('h-date')));
   addField('Commercial Executive', val('h-bd'));
   addField(currentRole(), val('h-buyer'));
+  // Counterparty line: our own side is always "Saxon" internally, shown here
+  // with its full legal entity name (SG vs MY), with whichever role is the
+  // opposite of the agreement's Buyer/Seller above. Kept directly beside the
+  // counterparty line above so Buyer/Seller always read together.
+  addField(currentRole() === 'Seller' ? 'Buyer' : 'Seller', saxonEntityName(val('h-entity')));
   if(currentProductMode === 'carboncredit') addField('Project Name', val('h-project-name'));
   if(currentProductMode === 'carboncredit') addField('Project ID', val('h-project-id'));
   if(currentProductMode === 'carboncredit') addField('Project type', val('h-project-type'));
   if(currentProductMode === 'carboncredit') addField('Methodology', val('h-methodology'));
-  // Counterparty line: our own side is always "Saxon" internally, shown here
-  // with its full legal entity name (SG vs MY), with whichever role is the
-  // opposite of the agreement's Buyer/Seller above.
-  addField(currentRole() === 'Seller' ? 'Buyer' : 'Seller', saxonEntityName(val('h-entity')));
 
   // Broker details — internal-only (see the addField comment above): shown
   // to Level 1/2/3 approvers via "View", but stripped before Copy table /
@@ -6778,22 +6779,22 @@ function buildPointFormat(){
   for(let i=1;i<=filled;i++){
     addBlank();
     lines.push({type:'tradeTitle', text:'Product '+i});
+    const isCC_i = currentProductMode === 'carboncredit' || (val('t'+i+'-tech')||'').trim().toUpperCase() === 'CC';
+    addField('Country', countryFullName(val('t'+i+'-country')));
+    if(currentProductMode !== 'carboncredit') addLiveField(i, 'tech', 'Technology', techFullName(val('t'+i+'-tech')));
     if(currentProductMode === 'carboncredit'){ addLiveField(i, 'registry', 'Registry', registryDisplayName(val('t'+i+'-cc-registry'))); if(val('t'+i+'-cc-closing')) addLiveField(i, 'closingAccount', 'Closing account', val('t'+i+'-cc-closing')); }
     else addLiveField(i, 'registry', 'Registry', registryDisplayName(val('t'+i+'-registry')));
-    addField(transferAccountLabel(currentRole()), transferAccountValue(val('h-order'), val('t'+i+'-transfer')));
     addField('Vintage', currentProductMode === 'carboncredit' ? val('t'+i+'-vintage-start-year')+' - '+val('t'+i+'-vintage-end-year') : val('t'+i+'-vintage-start-month')+' '+val('t'+i+'-vintage-start-year')+' - '+val('t'+i+'-vintage-end-month')+' '+val('t'+i+'-vintage-end-year'));
-    if(currentProductMode !== 'carboncredit') addLiveField(i, 'tech', 'Technology', techFullName(val('t'+i+'-tech')));
-    addField('Country', countryFullName(val('t'+i+'-country')));
     // Carbon Credit products are described/priced/counted in project-name and
     // VCU terms rather than the usual REC-oriented labels — see CC_FIELD_LABELS.
-    const isCC_i = currentProductMode === 'carboncredit' || (val('t'+i+'-tech')||'').trim().toUpperCase() === 'CC';
     addField(isCC_i ? 'Volume (VCUs)' : 'Volume (RECs)', val('t'+i+'-volume'));
     addField(isCC_i ? 'Price / VCU' : 'Price / REC', val('t'+i+'-currency')+' '+val('t'+i+'-price'));
+    if(!isCC_i) addField('License Commencement Date (if applicable)', val('t'+i+'-m-cod'));
     addField('Payment Term', val('t'+i+'-payterm'));
     if(isCC_i) addField('Prepayment', val('t'+i+'-prepayment'));
     addField('Delivery', fmtDateOrdinal(val('t'+i+'-dstart'))+' - '+fmtDateOrdinal(val('t'+i+'-dend')));
-    if(!isCC_i) addField('License Commencement Date (if applicable)', val('t'+i+'-m-cod'));
     addField(isCC_i ? 'Special Remarks' : 'Special Remarks Request', remarksVal(i));
+    addField(transferAccountLabel(currentRole()), transferAccountValue(val('h-order'), val('t'+i+'-transfer')));
     // Internal-only from here down — see the addField comment above. Product
     // number is this trade's position (i), 1-based, matching the order
     // products are written as rows in TradeDealLog (see saveConfirmationToHistory).
@@ -6815,25 +6816,39 @@ function buildPointFormat(){
   return lines;
 }
 
+// Renders as an HTML <table> (label / colon / value columns) rather than
+// stacked <div>s so the ":" lines up in a single vertical column regardless
+// of each label's length — matching the aligned look used in the shared
+// confirmation recap image. Plain HTML table columns auto-size to their
+// widest cell, so the label column (and therefore the colon column right
+// after it) naturally lines up without hardcoding any pixel widths — safer
+// for email clients (Outlook in particular) than CSS flex/grid, which this
+// app already avoids elsewhere for the same reason (see splitCellHtml).
+// '\n' between rows is just a literal text node the browser ignores
+// visually, but keeps a fallback textContent-based plain-text extraction
+// (see htmlToPlainFallback) from squishing every row onto one line.
 function renderPointFormatHtml(lines){
-  let html = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.6;">';
+  let html = '<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.6;">';
   lines.forEach(l=>{
     if(l.type === 'blank'){
-      html += '<div>&nbsp;</div>';
-    } else if(l.type === 'title'){
-      html += '<div style="font-weight:bold;">'+escapeHtml(l.text)+'</div>';
-    } else if(l.type === 'tradeTitle'){
-      html += '<div style="font-weight:bold;">'+escapeHtml(l.text)+'</div>';
+      html += '<tr><td colspan="3">&nbsp;</td></tr>\n';
+    } else if(l.type === 'title' || l.type === 'tradeTitle'){
+      html += '<tr><td colspan="3" style="font-weight:bold;padding-top:4px;">'+escapeHtml(l.text)+'</td></tr>\n';
     } else if(l.bd){
-      // Flat, non-nested <div> (no child <div>s inside) so
-      // stripBdMatchingHtml()'s regex can safely remove exactly these blocks
-      // without needing to track nesting depth. data-product/data-field
-      // identify this exact value for refreshBdMatchingInHtml() — only
-      // present for per-product BD matching fields; deal-level bd fields
-      // (e.g. Broker) omit them since there's nothing to live-refresh.
+      // Flat, single <tr> (no nested <tr>s) so stripBdMatchingHtml()'s regex
+      // can safely remove exactly these rows without needing to track
+      // nesting depth. data-product/data-field identify this exact value
+      // for refreshBdMatchingInHtml() — only present for per-product BD
+      // matching fields; deal-level bd fields (e.g. Broker) omit them since
+      // there's nothing to live-refresh. data-value="1" on the value <td>
+      // is what refreshBdMatchingInHtml() actually overwrites in place.
       const dataAttrs = (l.product !== undefined && l.field !== undefined)
         ? ' data-product="'+l.product+'" data-field="'+l.field+'"' : '';
-      html += '<div data-bd="1"'+dataAttrs+' style="background:#f2ecf7;color:#4a2d63;padding:2px 6px;border-radius:4px;margin:1px 0;">'+'<strong>'+escapeHtml(l.label)+':</strong> '+escapeHtml(l.value)+'</div>';
+      html += '<tr data-bd="1"'+dataAttrs+' style="background:#f2ecf7;color:#4a2d63;">'+
+        '<td style="font-weight:bold;white-space:nowrap;padding:2px 8px 2px 6px;vertical-align:top;">'+escapeHtml(l.label)+'</td>'+
+        '<td style="padding:2px 4px;vertical-align:top;">:</td>'+
+        '<td data-value="1" style="padding:2px 6px 2px 0;vertical-align:top;">'+escapeHtml(l.value)+'</td>'+
+      '</tr>\n';
     } else {
       // Non-bd fields that still carry product/field (currently just
       // Registry/Tech — see addLiveField) get a data-live marker instead of
@@ -6842,20 +6857,29 @@ function renderPointFormatHtml(lines){
       // data-bd="1") leaves them untouched in the customer-facing copy.
       const liveAttrs = (l.product !== undefined && l.field !== undefined)
         ? ' data-live="1" data-product="'+l.product+'" data-field="'+l.field+'"' : '';
-      html += '<div'+liveAttrs+'>'+'<strong>'+escapeHtml(l.label)+':</strong> '+escapeHtml(l.value)+'</div>';
+      html += '<tr'+liveAttrs+'>'+
+        '<td style="font-weight:bold;white-space:nowrap;padding:2px 8px 2px 6px;vertical-align:top;">'+escapeHtml(l.label)+'</td>'+
+        '<td style="padding:2px 4px;vertical-align:top;">:</td>'+
+        '<td data-value="1" style="padding:2px 6px 2px 0;vertical-align:top;">'+escapeHtml(l.value)+'</td>'+
+      '</tr>\n';
     }
   });
-  html += '</div>';
+  html += '</table>';
   return html;
 }
 
 // Removes every internal-only BD source matching block (see addBdField's
 // `bd` flag above) from a rendered point-format HTML string, leaving the
-// customer-facing recap intact. Safe because each flagged block is always a
-// single flat <div data-bd="1">...</div> with no nested <div> inside it —
-// see renderPointFormatHtml.
+// customer-facing recap intact. Matches both the current <tr data-bd="1">
+// row format (see renderPointFormatHtml) and the older flat <div data-bd="1">
+// block format used by Generated HTML snapshots baked before the aligned
+// table layout — those older snapshots are never rewritten in place, so
+// stripping still needs to work on whichever shape a given deal's stored
+// HTML happens to be in.
 function stripBdMatchingHtml(html){
-  return String(html || '').replace(/<div data-bd="1"[^>]*>[\s\S]*?<\/div>/g, '');
+  return String(html || '')
+    .replace(/<tr data-bd="1"[^>]*>[\s\S]*?<\/tr>/g, '')
+    .replace(/<div data-bd="1"[^>]*>[\s\S]*?<\/div>/g, '');
 }
 // The BD Matching values (plus Registry/Tech — see below) baked into a
 // deal's saved "Generated HTML" are a snapshot from whenever it was last
@@ -6928,10 +6952,24 @@ function refreshBdMatchingInHtml(html, group){
       tech: techFullName(v[MC.tech]) || '-'
     };
     Object.keys(fieldValues).forEach(fieldKey=>{
-      const re = new RegExp(
+      // Current shape (see renderPointFormatHtml): a <tr data-product=
+      // data-field=...> whose value lives in a <td data-value="1">. Tried
+      // first since it's what every freshly (re)generated recap now uses.
+      const tableRe = new RegExp(
+        '(<tr[^>]*data-product="'+product+'"[^>]*data-field="'+fieldKey+'"[^>]*>[\\s\\S]*?<td[^>]*data-value="1"[^>]*>)([^<]*)(<\\/td>)'
+      );
+      if(tableRe.test(out)){
+        out = out.replace(tableRe, (m, pre, oldVal, post) => pre + escapeHtml(fieldValues[fieldKey]) + post);
+        return;
+      }
+      // Legacy shape: a flat <div data-product= data-field=...><strong>
+      // Label:</strong> Value</div> — still what's baked into any Generated
+      // HTML snapshot saved before the aligned table layout, and never
+      // rewritten in place, so this needs to keep matching it too.
+      const legacyRe = new RegExp(
         '(<div[^>]*data-product="'+product+'"[^>]*data-field="'+fieldKey+'"[^>]*><strong>[^<]*<\\/strong>\\s*)([^<]*)(<\\/div>)'
       );
-      out = out.replace(re, (m, pre, oldVal, post) => pre + escapeHtml(fieldValues[fieldKey]) + post);
+      out = out.replace(legacyRe, (m, pre, oldVal, post) => pre + escapeHtml(fieldValues[fieldKey]) + post);
     });
   });
   return out;
@@ -6994,8 +7032,10 @@ function buildRecapLinesFromRows(dealId, sortedGroup){
   addField('Deal Date', formatStoredDate(head[MC.agreementDate]));
   addField('Commercial Executive', head[MC.salesPic]);
   addField(role, head[MC.company]);
-  if(isCC){ addField('Project Name', head[MC.projectName]); addField('Project ID', head[MC.projectId]); addField('Project type', head[MC.vFromMM]); addField('Methodology', head[MC.vToMM]); }
+  // Kept directly beside the counterparty line above so Buyer/Seller always
+  // read together — see the matching comment in buildPointFormat().
   addField(role === 'Seller' ? 'Buyer' : 'Seller', saxonEntityName(head[MC.entity]));
+  if(isCC){ addField('Project Name', head[MC.projectName]); addField('Project ID', head[MC.projectId]); addField('Project type', head[MC.vFromMM]); addField('Methodology', head[MC.vToMM]); }
 
   if(head[MC.broker]){
     addField('Broker', head[MC.broker] || 'NA', true);
@@ -7011,18 +7051,18 @@ function buildRecapLinesFromRows(dealId, sortedGroup){
     const i = idx + 1;
     addBlank();
     lines.push({type:'tradeTitle', text:'Product '+i});
+    addField('Country', countryFullName(v[MC.country]) || v[MC.country] || '');
+    if(!isCC) addLiveField(i, 'tech', 'Technology', techFullName(v[MC.tech]) || v[MC.tech] || '');
     if(isCC){ addLiveField(i, 'registry', 'Registry', registryDisplayName(v[MC.registry])); if(v[MC.cod]) addLiveField(i, 'closingAccount', 'Closing account', v[MC.cod]); }
     else addLiveField(i, 'registry', 'Registry', registryDisplayName(v[MC.registry]));
-    addField(transferAccountLabel(role), transferAccountValue(head[MC.supplyDemand], v[MC.tigrsIrecName]));
     addField('Vintage', isCC ? (v[MC.vFromYY]||'')+' - '+(v[MC.vToYY]||'') : (v[MC.vFromMM]||'')+' '+(v[MC.vFromYY]||'')+' - '+(v[MC.vToMM]||'')+' '+(v[MC.vToYY]||''));
-    if(!isCC) addLiveField(i, 'tech', 'Technology', techFullName(v[MC.tech]) || v[MC.tech] || '');
-    addField('Country', countryFullName(v[MC.country]) || v[MC.country] || '');
     addField(isCC ? 'Volume (VCUs)' : 'Volume (RECs)', v[MC.volume]);
     addField(isCC ? 'Price / VCU' : 'Price / REC', (v[MC.currency]||'')+' '+(v[MC.unitPrice]||''));
+    if(!isCC) addField('License Commencement Date (if applicable)', v[MC.cod]);
     addField('Payment Term', v[MC.paymentTerm]);
     addField('Delivery', fmtDateOrdinalStored(v[MC.deliveryStart])+' - '+fmtDateOrdinalStored(v[MC.deliveryEnd]));
-    if(!isCC) addField('License Commencement Date (if applicable)', v[MC.cod]);
     addField(isCC ? 'Special Remarks' : 'Special Remarks Request', v[MC.specialReq] || 'N/A');
+    addField(transferAccountLabel(role), transferAccountValue(head[MC.supplyDemand], v[MC.tigrsIrecName]));
     addBdField(i, 'status', 'BD Matching \u2014 Status', matchingDisplayLabel(v[MC.matching]));
     addBdField(i, 'buyerseller', 'BD Matching \u2014 Buyer/Seller', v[MC.buyerSeller] || '-');
     addBdField(i, 'norecs', isCC ? 'BD Matching \u2014 No of VCUs' : 'BD Matching \u2014 No of RECs', v[MC.noOfRecs] || '-');
