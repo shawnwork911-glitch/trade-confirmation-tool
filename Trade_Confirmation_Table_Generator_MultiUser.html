@@ -408,9 +408,10 @@
   .confirmation-filter-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px;}
   .confirmation-filter-bar input[type="text"]{flex:0 1 190px;min-width:140px;padding:6px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text);}
   .confirmation-filter-bar select{width:auto;max-width:145px;padding:6px 7px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text);}
-  .confirmation-filter-bar select[id$="-month"]{max-width:115px;}
-  .confirmation-filter-bar select[id$="-year"]{max-width:95px;}
   @media (min-width:760px){.confirmation-filter-bar{flex-wrap:wrap;row-gap:7px;}.confirmation-filter-count{margin-left:auto;}}
+  /* "Delivery End: From … To …" date-range filter (replaces the old
+     Delivery End Month/Year dropdowns on the Confirmations tab). */
+  .confirmation-filter-daterange{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
   .confirmation-filter-bar button{padding:6px 10px;font-size:12px;}
   .confirmation-filter-count{font-size:11px;color:var(--text-secondary);white-space:nowrap;}
   .confirmation-filter-bar input[type="date"]{padding:6px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text);}
@@ -427,16 +428,11 @@
   #tab-panel-analysis #analysis-export-btn{margin-left:0 !important;}
   @media (min-width:900px){#tab-panel-analysis .confirmation-filter-bar{flex-wrap:wrap;row-gap:7px;}}
   @media (min-width:760px){
-    #tab-panel-confirmations .confirmation-filter-bar{display:grid;grid-template-columns:minmax(220px,1.5fr) minmax(130px,.75fr) minmax(150px,1fr) minmax(145px,.9fr) minmax(125px,.75fr);column-gap:10px;row-gap:8px;align-items:center;}
+    #tab-panel-confirmations .confirmation-filter-bar{display:grid;grid-template-columns:minmax(220px,1.5fr) minmax(130px,.75fr) minmax(150px,1fr);column-gap:10px;row-gap:8px;align-items:center;}
     #tab-panel-confirmations .confirmation-filter-bar input[type="text"],
     #tab-panel-confirmations .confirmation-filter-bar select{width:100%;max-width:none;min-width:0;}
+    #tab-panel-confirmations .confirmation-filter-daterange{grid-column:1 / -1;}
     #tab-panel-confirmations .confirmation-filter-count{grid-column:1 / -1;margin-left:0;}
-  }
-  @media (max-width:1050px) and (min-width:760px){
-    #tab-panel-confirmations .confirmation-filter-bar{grid-template-columns:minmax(220px,1.5fr) minmax(130px,.8fr) minmax(150px,1fr);}
-    #tab-panel-confirmations .confirmation-filter-bar select[id$="-month"],
-    #tab-panel-confirmations .confirmation-filter-bar select[id$="-year"]{grid-row:2;}
-    #tab-panel-confirmations .confirmation-filter-count{grid-row:2;grid-column:auto;justify-self:end;}
   }
   @media (min-width:900px){
     #tab-panel-analysis .confirmation-filter-bar{display:grid;grid-template-columns:minmax(130px,.85fr) minmax(150px,1fr) auto minmax(130px,.95fr) minmax(130px,.95fr);column-gap:8px;row-gap:9px;align-items:center;}
@@ -449,13 +445,18 @@
     #tab-panel-analysis #analysis-filter-count{justify-self:start;margin-left:0;}
     #tab-panel-analysis #analysis-export-btn{justify-self:end;margin-left:0 !important;}
   }
-  #analysis-stats{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px;}
+  /* Two groups of 3 stat cards, each group positioned above (and sized to
+     match) its corresponding donut chart below — see #analysis-chart-row.
+     Group 1 (deals breakdown) sits above the status donut; group 2 (volume
+     breakdown) sits above the matched/unmatched volume donut. */
+  #analysis-stats-groups{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:14px;}
+  .analysis-stats-group{flex:1 1 320px;display:flex;gap:12px;flex-wrap:wrap;}
   .analysis-stat{flex:1 1 140px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;}
   .analysis-stat .stat-label{font-size:11px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.03em;}
   .analysis-stat .stat-value{font-size:22px;font-weight:700;margin-top:4px;}
   .analysis-stat .stat-sub{font-size:11px;color:var(--text-secondary);margin-top:2px;}
   #analysis-chart-row{display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:20px;}
-  .analysis-chart-pair{display:flex;gap:14px;align-items:center;flex:none;}
+  .analysis-chart-pair{display:flex;gap:14px;align-items:center;flex:1 1 320px;}
   #analysis-donut{width:110px;height:110px;border-radius:50%;flex:none;position:relative;}
   #analysis-donut::after{
     content:'';position:absolute;inset:15px;border-radius:50%;background:var(--surface);
@@ -625,8 +626,11 @@
       <input type="text" id="history-filter-search" placeholder="Search Deal ID or Counterparty…">
       <select id="history-filter-type"><option value="">All types</option><option value="recs">RECs</option><option value="carboncredit">Carbon Credit</option></select>
       <select id="history-filter-status"></select>
-      <select id="history-filter-delivery-month"><option value="">All delivery months</option><option value="1">Jan</option><option value="2">Feb</option><option value="3">Mar</option><option value="4">Apr</option><option value="5">May</option><option value="6">Jun</option><option value="7">Jul</option><option value="8">Aug</option><option value="9">Sep</option><option value="10">Oct</option><option value="11">Nov</option><option value="12">Dec</option></select>
-      <select id="history-filter-delivery-year"><option value="">All delivery years</option></select>
+      <span class="confirmation-filter-daterange">
+        <span class="analysis-filter-group-label" style="margin-left:0;">Delivery End:</span>
+        <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">From <input type="date" id="history-filter-delivery-from"></label>
+        <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">To <input type="date" id="history-filter-delivery-to"></label>
+      </span>
       <span class="confirmation-filter-count" id="history-filter-count"></span>
     </div>
     <div id="history-list"><p style="font-size:13px;color:var(--text-secondary);">Loading...</p></div>
@@ -639,8 +643,11 @@
       <input type="text" id="queue-filter-search" placeholder="Search Deal ID or Counterparty…">
       <select id="queue-filter-type"><option value="">All types</option><option value="recs">RECs</option><option value="carboncredit">Carbon Credit</option></select>
       <select id="queue-filter-status"></select>
-      <select id="queue-filter-delivery-month"><option value="">All delivery months</option><option value="1">Jan</option><option value="2">Feb</option><option value="3">Mar</option><option value="4">Apr</option><option value="5">May</option><option value="6">Jun</option><option value="7">Jul</option><option value="8">Aug</option><option value="9">Sep</option><option value="10">Oct</option><option value="11">Nov</option><option value="12">Dec</option></select>
-      <select id="queue-filter-delivery-year"><option value="">All delivery years</option></select>
+      <span class="confirmation-filter-daterange">
+        <span class="analysis-filter-group-label" style="margin-left:0;">Delivery End:</span>
+        <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">From <input type="date" id="queue-filter-delivery-from"></label>
+        <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">To <input type="date" id="queue-filter-delivery-to"></label>
+      </span>
       <span class="confirmation-filter-count" id="queue-filter-count"></span>
     </div>
     <div id="approval-queue-list"><p style="font-size:13px;color:var(--text-secondary);">Loading...</p></div>
@@ -653,8 +660,11 @@
       <input type="text" id="admin-filter-search" placeholder="Search Deal ID or Counterparty…">
       <select id="admin-filter-type"><option value="">All types</option><option value="recs">RECs</option><option value="carboncredit">Carbon Credit</option></select>
       <select id="admin-filter-status"></select>
-      <select id="admin-filter-delivery-month"><option value="">All delivery months</option><option value="1">Jan</option><option value="2">Feb</option><option value="3">Mar</option><option value="4">Apr</option><option value="5">May</option><option value="6">Jun</option><option value="7">Jul</option><option value="8">Aug</option><option value="9">Sep</option><option value="10">Oct</option><option value="11">Nov</option><option value="12">Dec</option></select>
-      <select id="admin-filter-delivery-year"><option value="">All delivery years</option></select>
+      <span class="confirmation-filter-daterange">
+        <span class="analysis-filter-group-label" style="margin-left:0;">Delivery End:</span>
+        <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">From <input type="date" id="admin-filter-delivery-from"></label>
+        <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">To <input type="date" id="admin-filter-delivery-to"></label>
+      </span>
       <span class="confirmation-filter-count" id="admin-filter-count"></span>
     </div>
     <div id="admin-history-list"><p style="font-size:13px;color:var(--text-secondary);">Loading...</p></div>
@@ -683,7 +693,11 @@
       <button type="button" id="analysis-export-btn" class="secondary" style="margin-left:auto;">⬇ Export to Excel</button>
     </div>
 
-    <div id="analysis-stats"></div>
+    <div id="analysis-stats-groups">
+      <div class="analysis-stats-group" id="analysis-stats-group-deals"></div>
+      <div class="analysis-chart-divider"></div>
+      <div class="analysis-stats-group" id="analysis-stats-group-volume"></div>
+    </div>
 
     <div id="analysis-chart-row">
       <div class="analysis-chart-pair">
@@ -3459,43 +3473,41 @@ function populateConfirmationFilterSelects(){
       optsFor[id].map(s=>'<option value="'+escapeHtml(s)+'">'+escapeHtml(s)+'</option>').join('');
   });
 }
-function confirmationGroupDeliveryParts(g){
-  const months = new Set(), years = new Set();
+// Every distinct Delivery End Date across the deal's product rows,
+// formatted (dd/mm/yyyy) and sorted chronologically. When fromDate/toDate
+// are supplied (the active Delivery End filter), only the dates that
+// actually fall in that range are included — so a deal with several
+// products on different Delivery End Dates only shows the date(s) the
+// filter matched, not every date in the deal. Falls back to showing every
+// date if, for some reason, none happen to match (shouldn't occur in
+// practice since the group only reaches here after at least one product
+// matched — see confirmationGroupMatchesFilter).
+function confirmationGroupDeliveryDates(g, fromDate, toDate){
+  const seen = new Map(); // date (ms) -> formatted display text
   (g && g.rows || []).forEach(r=>{
-    const d = parseStoredDateToDate(r.values[0][MC.deliveryEnd]);
+    const raw = r.values[0][MC.deliveryEnd];
+    const d = parseStoredDateToDate(raw);
     if(!d) return;
-    months.add(d.getUTCMonth()+1);
-    years.add(d.getUTCFullYear());
+    if(fromDate && d < fromDate) return;
+    if(toDate && d > toDate) return;
+    seen.set(d.getTime(), formatStoredDate(raw));
   });
-  return { months:[...months].sort((a,b)=>a-b), years:[...years].sort((a,b)=>a-b) };
+  if(!seen.size && (fromDate || toDate)) return confirmationGroupDeliveryDates(g, null, null);
+  return [...seen.entries()].sort((a,b)=>a[0]-b[0]).map(pair=>pair[1]);
 }
-function populateDeliveryYearSelects(){
-  const years = new Set();
-  Object.values(historyGroupsCache).forEach(groups=>groups.forEach(g=>confirmationGroupDeliveryParts(g).years.forEach(y=>years.add(y))));
-  const sorted = [...years].sort((a,b)=>b-a);
-  ['history-filter-delivery-year','admin-filter-delivery-year','queue-filter-delivery-year'].forEach(id=>{
-    const sel = document.getElementById(id);
-    if(!sel) return;
-    const previous = sel.value;
-    sel.innerHTML = '<option value="">All delivery years</option>' + sorted.map(y=>'<option value="'+y+'">'+y+'</option>').join('');
-    if(sorted.map(String).includes(previous)) sel.value = previous;
-  });
-}
-function confirmationGroupMatchesFilter(g, searchLower, statusFilter, typeFilter, deliveryMonthFilter, deliveryYearFilter){
+function confirmationGroupMatchesFilter(g, searchLower, statusFilter, typeFilter, deliveryFromFilter, deliveryToFilter){
   if(typeFilter && confirmationGroupType(g) !== typeFilter) return false;
   if(statusFilter && dealGroupStatus(g.rows) !== statusFilter) return false;
-  if(deliveryMonthFilter || deliveryYearFilter){
-    // Month + year must belong to the SAME product. For example, a deal with
-    // Product 1 ending Jun-2026 and Product 2 ending Jul-2027 must NOT match
-    // a Jun + 2027 filter just because the month and year exist somewhere in
-    // the same agreement independently.
-    const wantedMonth = deliveryMonthFilter ? Number(deliveryMonthFilter) : null;
-    const wantedYear = deliveryYearFilter ? Number(deliveryYearFilter) : null;
+  if(deliveryFromFilter || deliveryToFilter){
+    // The Delivery End Date must belong to the SAME product falling inside
+    // the From/To range — a deal with Product 1 ending well before the
+    // range and Product 2 ending well after it must NOT match just because
+    // the range happens to sit between them.
     const hasMatchingProduct = (g && g.rows || []).some(r=>{
       const d = parseStoredDateToDate(r.values[0][MC.deliveryEnd]);
       if(!d) return false;
-      if(wantedMonth && (d.getUTCMonth()+1) !== wantedMonth) return false;
-      if(wantedYear && d.getUTCFullYear() !== wantedYear) return false;
+      if(deliveryFromFilter && d < deliveryFromFilter) return false;
+      if(deliveryToFilter && d > deliveryToFilter) return false;
       return true;
     });
     if(!hasMatchingProduct) return false;
@@ -3511,44 +3523,51 @@ function confirmationGroupMatchesFilter(g, searchLower, statusFilter, typeFilter
   }
   return true;
 }
-function applyConfirmationFilter(key, listElId, searchElId, statusElId, typeElId, deliveryMonthElId, deliveryYearElId, countElId){
+function applyConfirmationFilter(key, listElId, searchElId, statusElId, typeElId, deliveryFromElId, deliveryToElId, countElId){
   const listEl = document.getElementById(listElId);
   if(!listEl) return;
   const searchEl = document.getElementById(searchElId);
   const statusEl = document.getElementById(statusElId);
   const typeEl = document.getElementById(typeElId);
-  const monthEl = document.getElementById(deliveryMonthElId);
-  const yearEl = document.getElementById(deliveryYearElId);
+  const fromEl = document.getElementById(deliveryFromElId);
+  const toEl = document.getElementById(deliveryToElId);
   const search = ((searchEl && searchEl.value) || '').trim().toLowerCase();
   const status = (statusEl && statusEl.value) || '';
   const type = (typeEl && typeEl.value) || '';
-  const deliveryMonth = (monthEl && monthEl.value) || '';
-  const deliveryYear = (yearEl && yearEl.value) || '';
+  const deliveryFromStr = (fromEl && fromEl.value) || '';
+  const deliveryToStr = (toEl && toEl.value) || '';
+  const deliveryFromDate = deliveryFromStr ? parseStoredDateToDate(deliveryFromStr) : null;
+  const deliveryToDate = deliveryToStr ? parseStoredDateToDate(deliveryToStr) : null;
   const full = historyGroupsCache[key] || [];
-  const hasFilter = search || status || type || deliveryMonth || deliveryYear;
-  const filtered = hasFilter ? full.filter(g=>confirmationGroupMatchesFilter(g, search, status, type, deliveryMonth, deliveryYear)) : full;
+  const hasFilter = search || status || type || deliveryFromStr || deliveryToStr;
+  const filtered = hasFilter ? full.filter(g=>confirmationGroupMatchesFilter(g, search, status, type, deliveryFromDate, deliveryToDate)) : full;
   const opts = Object.assign({}, CONFIRMATION_FILTER_OPTS[key]);
   if(hasFilter) opts.emptyText = 'No confirmations match your filter.';
+  // Passed through so the Delivery End Date cell only lists the date(s)
+  // that actually satisfy the active filter, for deals with multiple
+  // products on different Delivery End Dates — see confirmationGroupDeliveryDates.
+  opts.deliveryFrom = deliveryFromDate;
+  opts.deliveryTo = deliveryToDate;
   renderHistoryTable(listEl, filtered, opts);
   const countEl = document.getElementById(countElId);
   if(countEl) countEl.textContent = hasFilter ? ('Showing ' + filtered.length + ' of ' + full.length) : '';
 }
-function wireConfirmationFilterBar(key, listElId, searchElId, statusElId, typeElId, deliveryMonthElId, deliveryYearElId, countElId){
-  const run = ()=> applyConfirmationFilter(key, listElId, searchElId, statusElId, typeElId, deliveryMonthElId, deliveryYearElId, countElId);
+function wireConfirmationFilterBar(key, listElId, searchElId, statusElId, typeElId, deliveryFromElId, deliveryToElId, countElId){
+  const run = ()=> applyConfirmationFilter(key, listElId, searchElId, statusElId, typeElId, deliveryFromElId, deliveryToElId, countElId);
   const searchEl = document.getElementById(searchElId);
   const statusEl = document.getElementById(statusElId);
   const typeEl = document.getElementById(typeElId);
-  const monthEl = document.getElementById(deliveryMonthElId);
-  const yearEl = document.getElementById(deliveryYearElId);
+  const fromEl = document.getElementById(deliveryFromElId);
+  const toEl = document.getElementById(deliveryToElId);
   if(searchEl && !searchEl.dataset.wired){ searchEl.addEventListener('input', run); searchEl.dataset.wired = '1'; }
-  [statusEl,typeEl,monthEl,yearEl].forEach(el=>{ if(el && !el.dataset.wired){ el.addEventListener('change', run); el.dataset.wired = '1'; } });
+  [statusEl,typeEl].forEach(el=>{ if(el && !el.dataset.wired){ el.addEventListener('change', run); el.dataset.wired = '1'; } });
+  [fromEl,toEl].forEach(el=>{ if(el && !el.dataset.wired){ el.addEventListener('change', run); el.addEventListener('input', run); el.dataset.wired = '1'; } });
 }
 function wireConfirmationFilterBars(){
   populateConfirmationFilterSelects();
-  populateDeliveryYearSelects();
-  wireConfirmationFilterBar('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-type', 'history-filter-delivery-month', 'history-filter-delivery-year', 'history-filter-count');
-  wireConfirmationFilterBar('admin', 'admin-history-list', 'admin-filter-search', 'admin-filter-status', 'admin-filter-type', 'admin-filter-delivery-month', 'admin-filter-delivery-year', 'admin-filter-count');
-  wireConfirmationFilterBar('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-type', 'queue-filter-delivery-month', 'queue-filter-delivery-year', 'queue-filter-count');
+  wireConfirmationFilterBar('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-type', 'history-filter-delivery-from', 'history-filter-delivery-to', 'history-filter-count');
+  wireConfirmationFilterBar('admin', 'admin-history-list', 'admin-filter-search', 'admin-filter-status', 'admin-filter-type', 'admin-filter-delivery-from', 'admin-filter-delivery-to', 'admin-filter-count');
+  wireConfirmationFilterBar('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-type', 'queue-filter-delivery-from', 'queue-filter-delivery-to', 'queue-filter-count');
 }
 
 async function loadHistory(){
@@ -3586,10 +3605,10 @@ async function loadHistory(){
     }
 
     wireConfirmationFilterBars();
-    applyConfirmationFilter('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-type', 'history-filter-delivery-month', 'history-filter-delivery-year', 'history-filter-count');
-    applyConfirmationFilter('admin', 'admin-history-list', 'admin-filter-search', 'admin-filter-status', 'admin-filter-type', 'admin-filter-delivery-month', 'admin-filter-delivery-year', 'admin-filter-count');
+    applyConfirmationFilter('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-type', 'history-filter-delivery-from', 'history-filter-delivery-to', 'history-filter-count');
+    applyConfirmationFilter('admin', 'admin-history-list', 'admin-filter-search', 'admin-filter-status', 'admin-filter-type', 'admin-filter-delivery-from', 'admin-filter-delivery-to', 'admin-filter-count');
     if(isAdmin){
-      applyConfirmationFilter('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-type', 'queue-filter-delivery-month', 'queue-filter-delivery-year', 'queue-filter-count');
+      applyConfirmationFilter('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-type', 'queue-filter-delivery-from', 'queue-filter-delivery-to', 'queue-filter-count');
     }
     refreshAnalysisBdOptions();
     wireAnalysisFilterBar();
@@ -3733,18 +3752,28 @@ function renderAnalysisTab(){
     }, 0);
   }, 0);
   const totalUnmatchedVolumeAll = Math.round((totalVolumeAll - totalMatchedVolumeAll) * 1e6) / 1e6;
-  document.getElementById('analysis-stats').innerHTML = [
-    ['Total deals', total, ''],
-    ['Approved', approvedCount, pct(approvedCount)+'% of total'],
-    ['Pending (any level)', pendingCount, pct(pendingCount)+'% of total'],
-    ['Total volume', totalVolumeAll.toLocaleString(), anyVolumeUnconfirmed ? '⚠ includes estimated (unconfirmed range) volume' : ''],
-    ['Total unmatched volume', totalUnmatchedVolumeAll.toLocaleString(), '']
-  ].map(([label, value, sub]) =>
+  const totalMatchedVolumeDisplay = Math.round(totalMatchedVolumeAll * 1e6) / 1e6;
+  const statCardsHtml = rows => rows.map(([label, value, sub]) =>
     '<div class="analysis-stat"><div class="stat-label">'+escapeHtml(label)+'</div>'+
     '<div class="stat-value">'+value+'</div>'+
     (sub ? '<div class="stat-sub">'+escapeHtml(sub)+'</div>' : '')+
     '</div>'
   ).join('');
+  // Group 1 — deals breakdown, aligned above the status donut chart.
+  document.getElementById('analysis-stats-group-deals').innerHTML = statCardsHtml([
+    ['Total deals', total, ''],
+    ['Approved', approvedCount, pct(approvedCount)+'% of total'],
+    ['Pending (any level)', pendingCount, pct(pendingCount)+'% of total']
+  ]);
+  // Group 2 — volume breakdown, aligned above the matched/unmatched volume
+  // donut chart. Total matched volume sits between Total volume and Total
+  // unmatched volume so all three cards read left-to-right the same way the
+  // donut below breaks the total down.
+  document.getElementById('analysis-stats-group-volume').innerHTML = statCardsHtml([
+    ['Total volume', totalVolumeAll.toLocaleString(), anyVolumeUnconfirmed ? '⚠ includes estimated (unconfirmed range) volume' : ''],
+    ['Total matched volume', totalMatchedVolumeDisplay.toLocaleString(), ''],
+    ['Total unmatched volume', totalUnmatchedVolumeAll.toLocaleString(), '']
+  ]);
 
   // ---- donut chart (CSS conic-gradient) + legend ----
   const donut = document.getElementById('analysis-donut');
@@ -3939,7 +3968,13 @@ function renderHistoryTable(el, groups, opts){
   const showActions = !!opts.showActions;
   const showRequestEdit = !!opts.showRequestEdit;
   const showFullEdit = !!opts.showFullEdit;
-  const colCount = showOwner ? 9 : 8;
+  const colCount = showOwner ? 8 : 7;
+  // Delivery End Date filter (From/To), if active — passed through by
+  // applyConfirmationFilter — so the Delivery End Date cell below only
+  // lists the date(s) that satisfy it for a multi-product deal, instead of
+  // every date in the deal. See confirmationGroupDeliveryDates.
+  const deliveryFrom = opts.deliveryFrom || null;
+  const deliveryTo = opts.deliveryTo || null;
   if(!groups.length){
     el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">'+escapeHtml(opts.emptyText || 'No saved confirmations yet.')+'</p>';
     return;
@@ -3949,8 +3984,7 @@ function renderHistoryTable(el, groups, opts){
     '<th style="text-align:left;padding:6px;">Agreement Date</th>' +
     '<th style="text-align:left;padding:6px;">Counterparty</th>' +
     '<th style="text-align:left;padding:6px;">Products</th>' +
-    '<th style="text-align:left;padding:6px;">Delivery End Month</th>' +
-    '<th style="text-align:left;padding:6px;">Delivery End Year</th>' +
+    '<th style="text-align:left;padding:6px;">Delivery End Date</th>' +
     '<th style="text-align:left;padding:6px;">Status</th>' +
     '<th style="padding:6px;"></th></tr>';
   const restrictOthers = !!opts.restrictOthers;
@@ -3966,9 +4000,7 @@ function renderHistoryTable(el, groups, opts){
     // Same underlying data either way; this only changes what's rendered.
     const ownerEmail = (v[MC.submittedBy] || '').toLowerCase();
     const isOwnerOrAdmin = isAdmin || (ownerEmail && ownerEmail === myEmailLower);
-    const deliveryParts = confirmationGroupDeliveryParts(g);
-    const deliveryMonthsText = deliveryParts.months.map(m=>MONTH_ABBR[m-1]).join(', ');
-    const deliveryYearsText = deliveryParts.years.join(', ');
+    const deliveryDatesText = confirmationGroupDeliveryDates(g, deliveryFrom, deliveryTo).join(', ');
     if(restrictOthers && !isOwnerOrAdmin){
       html += '<tr class="confirmation-row-restricted" style="border-top:1px solid var(--border);">' +
         (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[MC.salesPic]||'')+'</td>' : '') +
@@ -3976,8 +4008,7 @@ function renderHistoryTable(el, groups, opts){
         '<td style="padding:6px;">'+escapeHtml(formatStoredDate(v[MC.agreementDate]))+'</td>' +
         '<td style="padding:6px;">'+escapeHtml(v[MC.company]||'')+'</td>' +
         '<td style="padding:6px;">—</td>' +
-        '<td style="padding:6px;">'+escapeHtml(deliveryMonthsText||'—')+'</td>' +
-        '<td style="padding:6px;">'+escapeHtml(deliveryYearsText||'—')+'</td>' +
+        '<td style="padding:6px;">'+escapeHtml(deliveryDatesText||'—')+'</td>' +
         '<td style="padding:6px;">'+statusBadge(status)+'</td>' +
         '<td style="padding:6px;white-space:nowrap;"><span class="row-lock-note">Owner only</span></td>' +
       '</tr>';
@@ -4047,8 +4078,7 @@ function renderHistoryTable(el, groups, opts){
       '<td style="padding:6px;">'+escapeHtml(formatStoredDate(v[MC.agreementDate]))+'</td>' +
       '<td style="padding:6px;">'+escapeHtml(v[MC.company]||'')+'</td>' +
       '<td style="padding:6px;">'+g.rows.length+'</td>' +
-      '<td style="padding:6px;">'+escapeHtml(deliveryMonthsText||'—')+'</td>' +
-      '<td style="padding:6px;">'+escapeHtml(deliveryYearsText||'—')+'</td>' +
+      '<td style="padding:6px;">'+escapeHtml(deliveryDatesText||'—')+'</td>' +
       '<td style="padding:6px;">'+statusBadge(status)+
         (trail ? '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">'+trail+'</div>' : '')+
         agreementLink+
@@ -4168,7 +4198,7 @@ let viewModalHtml = '';
 let viewModalDealId = '';
 let viewModalGroup = [];
 
-// Reads the Delivery End Month/Year dropdowns belonging to whichever
+// Reads the Delivery End From/To date filter belonging to whichever
 // confirmation list the View button was clicked from. This keeps the filter
 // context local to that list (Mine / Approval queue / All confirmations).
 function deliveryFilterForViewButton(btn){
@@ -4176,25 +4206,25 @@ function deliveryFilterForViewButton(btn){
   const list = btn.closest('#history-list, #approval-queue-list, #admin-history-list');
   if(!list) return null;
   const prefix = list.id === 'history-list' ? 'history' : (list.id === 'approval-queue-list' ? 'queue' : 'admin');
-  const monthEl = document.getElementById(prefix+'-filter-delivery-month');
-  const yearEl = document.getElementById(prefix+'-filter-delivery-year');
-  const month = monthEl && monthEl.value ? Number(monthEl.value) : null;
-  const year = yearEl && yearEl.value ? Number(yearEl.value) : null;
-  return (month || year) ? {month, year} : null;
+  const fromEl = document.getElementById(prefix+'-filter-delivery-from');
+  const toEl = document.getElementById(prefix+'-filter-delivery-to');
+  const from = fromEl && fromEl.value ? parseStoredDateToDate(fromEl.value) : null;
+  const to = toEl && toEl.value ? parseStoredDateToDate(toEl.value) : null;
+  return (from || to) ? {from, to} : null;
 }
 function rowMatchesDeliveryFilter(row, filter){
   if(!row || !filter) return false;
   const d = parseStoredDateToDate(row.values[0][MC.deliveryEnd]);
   if(!d) return false;
-  if(filter.month && (d.getUTCMonth()+1) !== filter.month) return false;
-  if(filter.year && d.getUTCFullYear() !== filter.year) return false;
+  if(filter.from && d < filter.from) return false;
+  if(filter.to && d > filter.to) return false;
   return true;
 }
 // The saved confirmation remains complete. When View is opened from a
-// month/year-filtered list, only the matching products are visually called
-// out: Product heading + Delivery line in red, with a small Matches filter
-// badge. The saved HTML/copy output is untouched because this only decorates
-// the modal DOM after rendering.
+// Delivery End Date-filtered list, only the matching products are visually
+// called out: Product heading + Delivery line in red, with a small Matches
+// filter badge. The saved HTML/copy output is untouched because this only
+// decorates the modal DOM after rendering.
 function applyDeliveryFilterHighlight(container, group, filter){
   if(!container || !filter || !(group||[]).length) return;
   const sorted = (group||[]).slice().sort((a,b)=>a.index-b.index);
