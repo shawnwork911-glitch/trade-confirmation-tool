@@ -239,6 +239,22 @@
     word-wrap:break-word;
     overflow-wrap:break-word;
   }
+  /* Point-format recap (see renderPointFormatHtml) — a plain, borderless
+     "Label : Value" list, not the bordered Ops pipe-table above. Overrides
+     the generic #table-preview table/td rules (higher specificity via the
+     extra class + descendant selectors wins without needing !important):
+     no cell borders, no forced 100%/fixed layout (which would stop the
+     label column from auto-sizing to its widest cell — see
+     renderPointFormatHtml), and as little padding around the ":" column as
+     still keeps it legible. */
+  #table-preview table.point-format-table{
+    width:auto;
+    table-layout:auto;
+  }
+  #table-preview table.point-format-table td{
+    border:none;
+    padding:1px 2px;
+  }
   #copy-status{
     font-size:13px;
     color:var(--success);
@@ -4264,6 +4280,12 @@ function rowMatchesDeliveryFilter(row, filter){
 // called out: Product heading + Delivery line in red, with a small Matches
 // filter badge. The saved HTML/copy output is untouched because this only
 // decorates the modal DOM after rendering.
+// Highlights whichever "Product N" section(s) and "Delivery" row match the
+// Delivery End From/To filter that was active on whichever confirmation list
+// the View button was clicked from (see deliveryFilterForViewButton). The
+// recap is rendered as a <table> (see renderPointFormatHtml): one <tr> per
+// line, a single colspan="3" <td> for "Product N" title/blank rows, or three
+// <td>s (label / colon / value) for a field line.
 function applyDeliveryFilterHighlight(container, group, filter){
   if(!container || !filter || !(group||[]).length) return;
   const sorted = (group||[]).slice().sort((a,b)=>a.index-b.index);
@@ -4273,29 +4295,32 @@ function applyDeliveryFilterHighlight(container, group, filter){
 
   const root = container.firstElementChild;
   if(!root) return;
-  const blocks = Array.from(root.children).filter(el=>el.tagName === 'DIV');
+  const rows = Array.from(root.children).filter(el=>el.tagName === 'TR');
   let currentProduct = null;
-  blocks.forEach(block=>{
-    const text = (block.textContent || '').trim();
+  rows.forEach(row=>{
+    const text = (row.textContent || '').trim();
     const m = /^Product\s+(\d+)$/i.exec(text);
     if(m){
       currentProduct = Number(m[1]);
       if(matchingProducts.has(currentProduct)){
-        block.style.color = '#b3261e';
-        block.style.fontWeight = '700';
-        const badge = document.createElement('span');
-        badge.textContent = 'Matches filter';
-        badge.style.cssText = 'display:inline-block;margin-left:8px;padding:1px 6px;border:1px solid #b3261e;border-radius:999px;font-size:10px;font-weight:600;color:#b3261e;vertical-align:1px;';
-        block.appendChild(badge);
+        row.style.color = '#b3261e';
+        row.style.fontWeight = '700';
+        const titleTd = row.querySelector('td');
+        if(titleTd){
+          const badge = document.createElement('span');
+          badge.textContent = 'Matches filter';
+          badge.style.cssText = 'display:inline-block;margin-left:8px;padding:1px 6px;border:1px solid #b3261e;border-radius:999px;font-size:10px;font-weight:600;color:#b3261e;vertical-align:1px;';
+          titleTd.appendChild(badge);
+        }
       }
       return;
     }
     if(currentProduct && matchingProducts.has(currentProduct)){
-      const strong = block.querySelector(':scope > strong');
-      const label = strong ? (strong.textContent || '').trim().replace(/:$/, '') : '';
+      const labelTd = row.children[0];
+      const label = labelTd ? (labelTd.textContent || '').trim() : '';
       if(label === 'Delivery'){
-        block.style.color = '#b3261e';
-        block.style.fontWeight = '600';
+        row.style.color = '#b3261e';
+        row.style.fontWeight = '600';
       }
     }
   });
@@ -6828,12 +6853,12 @@ function buildPointFormat(){
 // visually, but keeps a fallback textContent-based plain-text extraction
 // (see htmlToPlainFallback) from squishing every row onto one line.
 function renderPointFormatHtml(lines){
-  let html = '<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.6;">';
+  let html = '<table class="point-format-table" cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:auto;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.4;">';
   lines.forEach(l=>{
     if(l.type === 'blank'){
-      html += '<tr><td colspan="3">&nbsp;</td></tr>\n';
+      html += '<tr><td colspan="3" style="border:none;">&nbsp;</td></tr>\n';
     } else if(l.type === 'title' || l.type === 'tradeTitle'){
-      html += '<tr><td colspan="3" style="font-weight:bold;padding-top:4px;">'+escapeHtml(l.text)+'</td></tr>\n';
+      html += '<tr><td colspan="3" style="border:none;font-weight:bold;padding-top:4px;">'+escapeHtml(l.text)+'</td></tr>\n';
     } else if(l.bd){
       // Flat, single <tr> (no nested <tr>s) so stripBdMatchingHtml()'s regex
       // can safely remove exactly these rows without needing to track
@@ -6845,9 +6870,9 @@ function renderPointFormatHtml(lines){
       const dataAttrs = (l.product !== undefined && l.field !== undefined)
         ? ' data-product="'+l.product+'" data-field="'+l.field+'"' : '';
       html += '<tr data-bd="1"'+dataAttrs+' style="background:#f2ecf7;color:#4a2d63;">'+
-        '<td style="font-weight:bold;white-space:nowrap;padding:2px 8px 2px 6px;vertical-align:top;">'+escapeHtml(l.label)+'</td>'+
-        '<td style="padding:2px 4px;vertical-align:top;">:</td>'+
-        '<td data-value="1" style="padding:2px 6px 2px 0;vertical-align:top;">'+escapeHtml(l.value)+'</td>'+
+        '<td style="border:none;font-weight:bold;white-space:nowrap;padding:1px 4px 1px 2px;vertical-align:top;">'+escapeHtml(l.label)+'</td>'+
+        '<td style="border:none;padding:1px 2px;vertical-align:top;">:</td>'+
+        '<td data-value="1" style="border:none;padding:1px 2px 1px 0;vertical-align:top;">'+escapeHtml(l.value)+'</td>'+
       '</tr>\n';
     } else {
       // Non-bd fields that still carry product/field (currently just
@@ -6858,9 +6883,9 @@ function renderPointFormatHtml(lines){
       const liveAttrs = (l.product !== undefined && l.field !== undefined)
         ? ' data-live="1" data-product="'+l.product+'" data-field="'+l.field+'"' : '';
       html += '<tr'+liveAttrs+'>'+
-        '<td style="font-weight:bold;white-space:nowrap;padding:2px 8px 2px 6px;vertical-align:top;">'+escapeHtml(l.label)+'</td>'+
-        '<td style="padding:2px 4px;vertical-align:top;">:</td>'+
-        '<td data-value="1" style="padding:2px 6px 2px 0;vertical-align:top;">'+escapeHtml(l.value)+'</td>'+
+        '<td style="border:none;font-weight:bold;white-space:nowrap;padding:1px 4px 1px 2px;vertical-align:top;">'+escapeHtml(l.label)+'</td>'+
+        '<td style="border:none;padding:1px 2px;vertical-align:top;">:</td>'+
+        '<td data-value="1" style="border:none;padding:1px 2px 1px 0;vertical-align:top;">'+escapeHtml(l.value)+'</td>'+
       '</tr>\n';
     }
   });
