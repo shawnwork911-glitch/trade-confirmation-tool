@@ -2066,20 +2066,23 @@ async function getApprovedListContext(){
   return {isCC, listName, listId, columnMap};
 }
 
-// Combines one REC row's per-source BD matching fields — Buyer/Seller, No
-// of RECs, Which deal, Vintage Start, Vintage End, Matching note (each
-// already "; "-joined across sources — one entry per BD source, see
-// joinBdSourceField/collectBdSources) — into a single human-readable value
-// for the "Approved" SharePoint list: one "_"-joined block per source
-// ("name_recs_deal_vstart_vend_note"), multiple sources joined by "; ".
-// Delivery Date is deliberately NOT included — it no longer exists anywhere
-// in RECs BD source matching (see the isCC/deliveryDateM comments
-// elsewhere in this file). TradeDealLog itself keeps these as separate
-// columns (values[MC.buyerSeller] etc still get written/read individually
-// everywhere else in the app, including the Request-edit flow) — only the
-// "Approved" list gets this compiled column, built fresh from those live
-// TradeDealLog values at the moment a row is copied over (initial Level 3
-// sign-off, or a later approved BD-matching change).
+// Combines one row's per-source BD matching fields — Buyer/Seller, No of
+// RECs (or VCUs for Carbon Credit), Which deal, Vintage Start, Vintage End,
+// Matching note (each already "; "-joined across sources — one entry per BD
+// source, see joinBdSourceField/collectBdSources) — into a single
+// human-readable value for the "Approved" SharePoint list: one "_"-joined
+// block per source ("name_recs_deal_vstart_vend_note"), multiple sources
+// joined by "; ". Used for both REC and Carbon Credit rows — both product
+// modes capture the same set of per-source fields now (see
+// bdSourceBlockHtml). Delivery Date is deliberately NOT included — it no
+// longer exists anywhere in BD source matching, for either mode (see the
+// deliveryDateM comments elsewhere in this file). TradeDealLog/CCDealLog
+// themselves keep these as separate columns (values[MC.buyerSeller] etc
+// still get written/read individually everywhere else in the app,
+// including the Request-edit flow) — only the "Approved" list gets this
+// compiled column, built fresh from those live values at the moment a row
+// is copied over (initial Level 3 sign-off, or a later approved
+// BD-matching change).
 function buildBdMatchingCompiled(values){
   const names = splitBdSourceValue(values[MC.buyerSeller]);
   const recs = splitBdSourceValue(values[MC.noOfRecs]);
@@ -2111,14 +2114,14 @@ function buildBdMatchingCompiled(values){
 // otherwise-identical "Approved" snapshots. Defaults to describing the
 // initial final sign-off when not given.
 // NOTE for whoever maintains the "BD Agreement Record Approved" SharePoint
-// list: the REC (non-CC) branch below now sends ONE "BD Source Matching"
-// column (see buildBdMatchingCompiled) instead of the old separate
-// "Buyer/Seller" / "No of RECs" / "Which deal" / "Delivery Date" / "Source
-// Vintage Start" / "Source Vintage End" / "Source Matching Note" columns.
-// Add a "BD Source Matching" column to that list (any existing old columns
-// can stay — past rows keep their history — new writes just won't use
-// them any more). The CC branch is unaffected and still sends its own
-// separate columns as before.
+// list: BOTH branches below (REC and Carbon Credit) now send ONE
+// "BD Source Matching" column (see buildBdMatchingCompiled) instead of the
+// old separate "Buyer/Seller" / "No of RECs" (or "No of VCUs") / "Which
+// deal" / "Delivery Date" / "Source Vintage Start" / "Source Vintage End" /
+// "Source Matching Note" columns. Make sure the "BD Agreement Record
+// Approved" list has a "BD Source Matching" column (any existing old
+// columns can stay — past rows keep their history — new writes just won't
+// use them any more).
 async function addApprovedDealToList(values, changeNote){
     const ctx = await getApprovedListContext();
     const columnMap = ctx.columnMap;
@@ -2150,13 +2153,14 @@ async function addApprovedDealToList(values, changeNote){
         'Transfer Account Name': values[MC.tigrsIrecName],
         'Payment Term': values[MC.paymentTerm],
         'Prepayment': values[MC.prepayment],
-        'Buyer/Seller': values[MC.buyerSeller],
-        'No of VCUs': values[MC.noOfRecs],
-        'Which deal': values[MC.whichDeal],
-        // Delivery date is gone entirely now — see the deliveryDateM
-        // comments elsewhere in this file (bdSourceBlockHtml,
-        // saveConfirmationToHistory, etc.) — no longer captured for a
-        // Carbon Credit product's BD source matching either.
+        // Buyer/Seller, No of VCUs, Which deal, Vintage Start, Vintage End
+        // and Matching Note are compiled into one column here (see
+        // buildBdMatchingCompiled), same convention as the REC branch below —
+        // Carbon Credit now captures per-source Vintage/Matching Note too
+        // (see bdSourceBlockHtml), so both branches send the same shape.
+        // There's no separate "Delivery Date" column any more either — BD
+        // source matching no longer captures one at all, for either mode.
+        'BD Source Matching': buildBdMatchingCompiled(values),
         'Status': values[MC.status],
         'Submitted By': values[MC.submittedBy],
         'Submitted Date': values[MC.submittedDate],
@@ -2309,7 +2313,24 @@ const CC = {
   // historical rows keep reading correctly without a backfill.
   // NEW COLUMN — add "Closing Account" at the end of the live CCDealLog
   // Excel Table (don't insert it anywhere else) before using this field.
-  closingAccount:62
+  closingAccount:62,
+  // ---- Per-BD-source Vintage & Matching note (CC now has these too) ----
+  // Optional 64th-66th columns, same "; "-joined-per-source convention as
+  // Buyer/Seller (col 25)/No of VCUs (col 26)/Which deal (col 27) — one
+  // entry per BD source, same order, so the same position across all these
+  // columns always describes one source (see bdSourceBlockHtml/
+  // collectBdSources/joinBdSourceField). Each source's Vintage Start/End
+  // entry is a single plain "MMM YYYY" string (e.g. "Jan 2025"), same as
+  // the REC table's sourceVintageStart/sourceVintageEnd (see MC). This is
+  // separate from — and doesn't replace — the product-level "Vintage Start
+  // Year"/"Vintage End Year" fields (CC.vintageStartYear/vintageEndYear
+  // above): those describe the product as a whole, these describe each
+  // individual BD source matched against it. Optional/additive, guarded by
+  // liveColumnCount in saveConfirmationToHistory, so a workbook that hasn't
+  // added these three columns yet can still save, just without this data.
+  // To start capturing it, add "Source Vintage Start", "Source Vintage End"
+  // and "Source Matching Note" at the END of the live CCDealLog Excel Table.
+  sourceVintageStart:63, sourceVintageEnd:64, sourceMatchNote:65
 };
 const CC_COL_COUNT = 63;
 // Registry and Closing account are now two independent fields — a product
@@ -2354,7 +2375,7 @@ function ccRegistryClearingDisplay(registry, clearingAccount){
   return r && c ? r + ' / ' + c : (r || c);
 }
 function ccRawToCanonical(raw){
-  const out = new Array(65).fill('');
+  const out = new Array(68).fill('');
   out[MC.salesPic]=raw[CC.salesPic]??''; out[MC.entity]=raw[CC.entity]??'';
   out[MC.agreementDate]=raw[CC.agreementDate]??''; out[MC.dealId]=raw[CC.dealId]??'';
   out[MC.supplyDemand]=raw[CC.supplyDemand]??''; out[MC.company]=raw[CC.company]??'';
@@ -2402,6 +2423,11 @@ function ccRawToCanonical(raw){
   out[MC.pendingTech]=''; // Tech is fixed to CC, so no physical Pending Tech column is needed.
   out[MC.regTechReminderSentDate]=raw[CC.regVolumeReminderSentDate]??'';
   out[MC.editChangeSummary]=raw[CC.editChangeSummary]??''; out[MC.pendingVolume]=raw[CC.pendingVolume]??'';
+  // Optional 64th-66th columns — see the sourceVintageStart/sourceVintageEnd/
+  // sourceMatchNote comment on CC. Undefined ?? '' on a workbook that hasn't
+  // added these yet, same as every other optional column here.
+  out[MC.sourceVintageStart]=raw[CC.sourceVintageStart]??''; out[MC.sourceVintageEnd]=raw[CC.sourceVintageEnd]??'';
+  out[MC.sourceMatchNote]=raw[CC.sourceMatchNote]??'';
   return out;
 }
 function canonicalToCcRaw(values){
@@ -2438,6 +2464,14 @@ function canonicalToCcRaw(values){
   raw[CC.pendingRegistry]=values[MC.pendingRegistry]??'';
   raw[CC.regVolumeReminderSentDate]=values[MC.regTechReminderSentDate]??'';
   raw[CC.editChangeSummary]=values[MC.editChangeSummary]??''; raw[CC.pendingVolume]=values[MC.pendingVolume]??'';
+  // Optional 64th-66th columns — see the sourceVintageStart/sourceVintageEnd/
+  // sourceMatchNote comment on CC. Safe to always set: fitRowToColumnCount
+  // (see addTableRow/updateTableRow) trims this back down to whatever width
+  // the live CCDealLog table actually has, so a workbook that hasn't added
+  // these columns yet just has this data silently dropped rather than
+  // erroring.
+  raw[CC.sourceVintageStart]=values[MC.sourceVintageStart]??''; raw[CC.sourceVintageEnd]=values[MC.sourceVintageEnd]??'';
+  raw[CC.sourceMatchNote]=values[MC.sourceMatchNote]??'';
   return raw;
 }
 function canonicalizeLogRow(row, tableName){
@@ -2927,16 +2961,23 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
     // matching has a Delivery date field to collect any more (see
     // bdSourceBlockHtml), so this column is always left genuinely blank.
     row[MC.deliveryDateM] = '';
-    // Optional 63rd-65th columns (see the sourceVintageStart/sourceVintageEnd/
-    // sourceMatchNote comment on MC) — RECs only, and only stamped if the
-    // live table actually has them yet.
-    if(currentProductMode !== 'carboncredit' && liveColumnCount > MC.sourceMatchNote){
+    // Optional trailing columns on whichever table is live (see the
+    // sourceVintageStart/sourceVintageEnd/sourceMatchNote comment on MC for
+    // RECs, and the matching comment on CC for Carbon Credit) — only
+    // stamped if that table actually has them yet. The two tables were
+    // extended at different times, so each has its own column-count
+    // threshold to check against (CC.sourceMatchNote vs MC.sourceMatchNote) —
+    // the canonical `row` array itself always uses MC.* indices either way.
+    const liveHasSourceExtras = currentProductMode === 'carboncredit'
+      ? liveColumnCount > CC.sourceMatchNote
+      : liveColumnCount > MC.sourceMatchNote;
+    if(liveHasSourceExtras){
       // row's length may currently sit anywhere from COL_COUNT up to just
       // past regTechReminderSentDate (the only optional column touched
-      // earlier in this REC-mode path) — never as far as this block. Pad
-      // any gap up to here with '' first, so extending the array to include
-      // these 3 new columns doesn't leave sparse "holes" behind (holes
-      // serialize as null, not '', once written to Excel).
+      // earlier in this path) — never as far as this block. Pad any gap up
+      // to here with '' first, so extending the array to include these 3
+      // new columns doesn't leave sparse "holes" behind (holes serialize as
+      // null, not '', once written to Excel).
       for(let idx = row.length; idx < MC.sourceVintageStart; idx++) row[idx] = '';
       row[MC.sourceVintageStart] = matchingActive ? joinBdSourceField(n,'vstart') : '';
       row[MC.sourceVintageEnd] = matchingActive ? joinBdSourceField(n,'vend') : '';
@@ -4869,7 +4910,7 @@ function openEditRequestModal(dealId){
         '<select class="edit-request-matching" data-idx="'+idx+'"'+uidAttr+'>'+matchOptions+'</select></div>' +
       '<div id="er-'+idx+'-dependent" style="display:flex;flex-direction:column;gap:8px;'+(active?'':'display:none;')+'">' +
         '<div id="er-'+idx+'-sources-container">'+ sourcesHtml +'</div>' +
-        (isCC ? '' : '<button type="button" class="secondary er-add-source-btn" data-idx="'+idx+'" style="align-self:flex-start;padding:4px 10px;font-size:12px;">+ Source</button>') +
+        '<button type="button" class="secondary er-add-source-btn" data-idx="'+idx+'" style="align-self:flex-start;padding:4px 10px;font-size:12px;">+ Source</button>' +
       '</div>' +
       regTechHtml +
       volumeHtml +
@@ -5076,17 +5117,224 @@ document.addEventListener('click', (e)=>{
 });
 
 
-const COUNTRIES = ["MY","BN","CN","JP","SA","TH","IN","PH","SG","VN","ID","AU","TW"];
-const CC_COUNTRIES = ["Cambodia", "Kenya", "Uganda", "Brazil", "China", "Turkey", "India", "Vietnam", "Colombia", "Pakistan", "UK / Australia", "Nigeria", "Indonesia", "Uzbekistan", "Uruguay", "Bangladesh", "Egypt", "Nigera", "DRC", "Thailand", "Panama", "Sri Lanka", "Chile", "Mozambique", "Chad", "Madagascar", "Combodia", "Romania", "Laos", "Ethiopia", "Nicaragua, Central America", "USA", "CAN - Ontario", "CAN - Quebec", "Lithunia", "Bulgaria", "Netherlands", "Zambia & zimbabwe", "Dominican Republic", "Philippines", "Paraguay", "Malaysia", "Mauritius", "Argentina", "Mexcio", "Peru", "Myanmar", "Lao", "Nepal", "Canada", "UK/Australia", "Belize, America", "Zimbabwe", "Tanazania", "Zambia", "Mexico", "Gautemala", "Guatemala", "Denmark", "Romania(EU)", "South Africa", "Republic of Congo", "Togo", "Lao PDR", "US", "Papua New Guinea", "Congo"];
 const TECHS = ["ANY","SLR","GEO","BIO","HYD","BGS","SHY","LHY","WND","CC"];
 
-// Hardcoded code -> full name lookups for the Customer version output (per
-// the reference sheet). Keys are matched case-insensitively; anything not
-// found here just falls back to showing the original code as typed.
+// Single unified country list, used for BOTH the RECs and Carbon Credit
+// "Country" dropdown (see tradeBlockHtml/recapEditFormHtml/fullEditFormHtml)
+// — a proper ISO-3166 alpha-2 code/full-name list replaces the REC combo
+// box's small code list and the Carbon Credit tab's separate, messy
+// free-text-derived list (which had typos and duplicate entries like
+// "Nigera"/"Combodia"/"Mexcio"/"Zambia & zimbabwe"). The dropdown shows the
+// full name; the option's VALUE — what val() reads, and what gets written
+// to TradeDealLog/CCDealLog — is always the two-letter code (see
+// selectWithFullNamesHtml). Sorted alphabetically by full name for the
+// dropdown. A row saved before this change (a REC combo free-text value, or
+// one of the Carbon Credit tab's old full-name-as-value entries) still
+// displays fine going forward — countryFullName() below falls back to
+// showing the original stored text unchanged if it isn't a recognized code.
+const COUNTRY_CODES = ["AF","AL","DZ","AD","AO","AG","AR","AM","AU","AT","AZ","BS","BH","BD","BB","BY","BE","BZ","BJ","BT","BO","BA","BW","BR","BN","BG","BF","BI","KH","CM","CA","CV","CF","TD","CL","CN","CO","KM","CG","CD","CR","CI","HR","CU","CY","CZ","DK","DJ","DM","DO","EC","EG","SV","GQ","ER","EE","SZ","ET","FJ","FI","FR","GA","GM","GE","DE","GH","GR","GD","GT","GN","GW","GY","HT","HN","HK","HU","IS","IN","ID","IR","IQ","IE","IL","IT","JM","JP","JO","KZ","KE","KI","KW","KG","LA","LV","LB","LS","LR","LY","LI","LT","LU","MG","MW","MY","MV","ML","MT","MH","MR","MU","MX","FM","MD","MC","MN","ME","MA","MZ","MM","NA","NR","NP","NL","NZ","NI","NE","NG","KP","MK","NO","OM","PK","PW","PA","PG","PY","PE","PH","PL","PT","QA","RO","RU","RW","KN","LC","VC","WS","SM","ST","SA","SN","RS","SC","SL","SG","SK","SI","SB","SO","ZA","KR","SS","ES","LK","SD","SR","SE","CH","SY","TW","TJ","TZ","TH","TL","TG","TO","TT","TN","TR","TM","TV","UG","UA","AE","GB","US","UY","UZ","VU","VA","VE","VN","YE","ZM","ZW"];
+// Code -> full name lookups, used both to render the dropdown above and by
+// countryFullName() for the Customer version / recap output. Keys are
+// matched case-insensitively; anything not found here just falls back to
+// showing the original code (or, for a legacy row, whatever raw text) as
+// typed/stored.
 const COUNTRY_FULLNAMES = {
-  'MY':'Malaysia', 'BN':'Brunei', 'CN':'China', 'JP':'Japan', 'SA':'South Asia',
-  'TH':'Thailand', 'IN':'India', 'PH':'Philipine', 'SG':'Singapore', 'VN':'Vietnam',
-  'ID':'Indonesia', 'INDO':'Indonesia', 'AU':'Australia', 'AUS':'Australia', 'TW':'Taiwan'
+  'AF':'Afghanistan',
+  'AL':'Albania',
+  'DZ':'Algeria',
+  'AD':'Andorra',
+  'AO':'Angola',
+  'AG':'Antigua and Barbuda',
+  'AR':'Argentina',
+  'AM':'Armenia',
+  'AU':'Australia',
+  'AT':'Austria',
+  'AZ':'Azerbaijan',
+  'BS':'Bahamas',
+  'BH':'Bahrain',
+  'BD':'Bangladesh',
+  'BB':'Barbados',
+  'BY':'Belarus',
+  'BE':'Belgium',
+  'BZ':'Belize',
+  'BJ':'Benin',
+  'BT':'Bhutan',
+  'BO':'Bolivia',
+  'BA':'Bosnia and Herzegovina',
+  'BW':'Botswana',
+  'BR':'Brazil',
+  'BN':'Brunei',
+  'BG':'Bulgaria',
+  'BF':'Burkina Faso',
+  'BI':'Burundi',
+  'KH':'Cambodia',
+  'CM':'Cameroon',
+  'CA':'Canada',
+  'CV':'Cape Verde',
+  'CF':'Central African Republic',
+  'TD':'Chad',
+  'CL':'Chile',
+  'CN':'China',
+  'CO':'Colombia',
+  'KM':'Comoros',
+  'CG':'Congo',
+  'CD':'Congo (DRC)',
+  'CR':'Costa Rica',
+  'CI':'Cote d\'Ivoire',
+  'HR':'Croatia',
+  'CU':'Cuba',
+  'CY':'Cyprus',
+  'CZ':'Czech Republic',
+  'DK':'Denmark',
+  'DJ':'Djibouti',
+  'DM':'Dominica',
+  'DO':'Dominican Republic',
+  'EC':'Ecuador',
+  'EG':'Egypt',
+  'SV':'El Salvador',
+  'GQ':'Equatorial Guinea',
+  'ER':'Eritrea',
+  'EE':'Estonia',
+  'SZ':'Eswatini',
+  'ET':'Ethiopia',
+  'FJ':'Fiji',
+  'FI':'Finland',
+  'FR':'France',
+  'GA':'Gabon',
+  'GM':'Gambia',
+  'GE':'Georgia',
+  'DE':'Germany',
+  'GH':'Ghana',
+  'GR':'Greece',
+  'GD':'Grenada',
+  'GT':'Guatemala',
+  'GN':'Guinea',
+  'GW':'Guinea-Bissau',
+  'GY':'Guyana',
+  'HT':'Haiti',
+  'HN':'Honduras',
+  'HK':'Hong Kong',
+  'HU':'Hungary',
+  'IS':'Iceland',
+  'IN':'India',
+  'ID':'Indonesia',
+  'IR':'Iran',
+  'IQ':'Iraq',
+  'IE':'Ireland',
+  'IL':'Israel',
+  'IT':'Italy',
+  'JM':'Jamaica',
+  'JP':'Japan',
+  'JO':'Jordan',
+  'KZ':'Kazakhstan',
+  'KE':'Kenya',
+  'KI':'Kiribati',
+  'KW':'Kuwait',
+  'KG':'Kyrgyzstan',
+  'LA':'Laos',
+  'LV':'Latvia',
+  'LB':'Lebanon',
+  'LS':'Lesotho',
+  'LR':'Liberia',
+  'LY':'Libya',
+  'LI':'Liechtenstein',
+  'LT':'Lithuania',
+  'LU':'Luxembourg',
+  'MG':'Madagascar',
+  'MW':'Malawi',
+  'MY':'Malaysia',
+  'MV':'Maldives',
+  'ML':'Mali',
+  'MT':'Malta',
+  'MH':'Marshall Islands',
+  'MR':'Mauritania',
+  'MU':'Mauritius',
+  'MX':'Mexico',
+  'FM':'Micronesia',
+  'MD':'Moldova',
+  'MC':'Monaco',
+  'MN':'Mongolia',
+  'ME':'Montenegro',
+  'MA':'Morocco',
+  'MZ':'Mozambique',
+  'MM':'Myanmar',
+  'NA':'Namibia',
+  'NR':'Nauru',
+  'NP':'Nepal',
+  'NL':'Netherlands',
+  'NZ':'New Zealand',
+  'NI':'Nicaragua',
+  'NE':'Niger',
+  'NG':'Nigeria',
+  'KP':'North Korea',
+  'MK':'North Macedonia',
+  'NO':'Norway',
+  'OM':'Oman',
+  'PK':'Pakistan',
+  'PW':'Palau',
+  'PA':'Panama',
+  'PG':'Papua New Guinea',
+  'PY':'Paraguay',
+  'PE':'Peru',
+  'PH':'Philippines',
+  'PL':'Poland',
+  'PT':'Portugal',
+  'QA':'Qatar',
+  'RO':'Romania',
+  'RU':'Russia',
+  'RW':'Rwanda',
+  'KN':'Saint Kitts and Nevis',
+  'LC':'Saint Lucia',
+  'VC':'Saint Vincent and the Grenadines',
+  'WS':'Samoa',
+  'SM':'San Marino',
+  'ST':'Sao Tome and Principe',
+  'SA':'Saudi Arabia',
+  'SN':'Senegal',
+  'RS':'Serbia',
+  'SC':'Seychelles',
+  'SL':'Sierra Leone',
+  'SG':'Singapore',
+  'SK':'Slovakia',
+  'SI':'Slovenia',
+  'SB':'Solomon Islands',
+  'SO':'Somalia',
+  'ZA':'South Africa',
+  'KR':'South Korea',
+  'SS':'South Sudan',
+  'ES':'Spain',
+  'LK':'Sri Lanka',
+  'SD':'Sudan',
+  'SR':'Suriname',
+  'SE':'Sweden',
+  'CH':'Switzerland',
+  'SY':'Syria',
+  'TW':'Taiwan',
+  'TJ':'Tajikistan',
+  'TZ':'Tanzania',
+  'TH':'Thailand',
+  'TL':'Timor-Leste',
+  'TG':'Togo',
+  'TO':'Tonga',
+  'TT':'Trinidad and Tobago',
+  'TN':'Tunisia',
+  'TR':'Turkey',
+  'TM':'Turkmenistan',
+  'TV':'Tuvalu',
+  'UG':'Uganda',
+  'UA':'Ukraine',
+  'AE':'United Arab Emirates',
+  'GB':'United Kingdom',
+  'US':'United States',
+  'UY':'Uruguay',
+  'UZ':'Uzbekistan',
+  'VU':'Vanuatu',
+  'VA':'Vatican City',
+  'VE':'Venezuela',
+  'VN':'Vietnam',
+  'YE':'Yemen',
+  'ZM':'Zambia',
+  'ZW':'Zimbabwe'
 };
 const TECH_FULLNAMES = {
   'SLR':'Solar', 'ANY':'Any tech', 'GEO':'Geothermal', 'BIO':'Biomass', 'HYD':'Hydro',
@@ -5098,15 +5346,6 @@ const TECH_FULLNAMES = {
 function countryFullName(code){
   const key = String(code||'').trim().toUpperCase();
   return COUNTRY_FULLNAMES[key] || code;
-}
-// Suggestions for the free-typing Country combo box: every known code plus
-// its full name (e.g. "MY" and "Malaysia"), deduplicated, so the datalist
-// helps whether the user starts typing a code or a country name — while the
-// field stays a plain text input, so anything not on the list can still be
-// typed in freely.
-function countryComboOptions(){
-  const names = COUNTRIES.map(c => COUNTRY_FULLNAMES[c]).filter(Boolean);
-  return [...new Set([...COUNTRIES, ...names])];
 }
 // Our own side of the deal is always "Saxon" internally, but the preview
 // should show the full legal entity name tied to the deal's Entity field
@@ -5887,9 +6126,11 @@ function tradeBlockHtml(n){
   return '<div class="trade-block" data-trade-num="'+n+'">'+
     '<p class="trade-title">Product '+n+'</p>'+
     '<div class="grid">'+
-    (currentProductMode === 'carboncredit'
-      ? lockableField('Country', selectHtml('t'+n+'-country', CC_COUNTRIES, 'Malaysia'),'t'+n+'-country')
-      : lockableField('Country (Full Name)', comboHtml('t'+n+'-country','t'+n+'-country-list',countryComboOptions(),'MY'),'t'+n+'-country'))+
+    // Same full-name dropdown for both product modes now (see
+    // COUNTRY_CODES/COUNTRY_FULLNAMES) — shows the full country name, but
+    // stores/writes the two-letter code (what val() reads, and what ends
+    // up in TradeDealLog/CCDealLog), via selectWithFullNamesHtml.
+    lockableField('Country', selectWithFullNamesHtml('t'+n+'-country', COUNTRY_CODES, COUNTRY_FULLNAMES, 'MY'),'t'+n+'-country')+
     (currentProductMode === 'carboncredit'
       ? lockableField('Registry', selectWithFullNamesHtml('t'+n+'-cc-registry', CC_REGISTRY_OPTIONS, CC_REGISTRY_DISPLAY_NAMES, 'Verra'),'t'+n+'-cc-registry')+
         lockableField('Closing account', selectWithFullNamesHtml('t'+n+'-cc-closing', CC_CLOSING_ACCOUNT_OPTIONS, CC_CLOSING_ACCOUNT_DISPLAY_NAMES, ''),'t'+n+'-cc-closing')
@@ -5930,8 +6171,7 @@ function tradeBlockHtml(n){
     '<!-- Wrapper for matching dependent fields -->'+
     '<div id="t'+n+'-matching-dependent-fields" style="display:none;">'+
       '<div id="t'+n+'-sources-container">'+ bdSourceBlockHtml(n,1) +'</div>'+
-      (currentProductMode === 'carboncredit' ? '' :
-        '<button type="button" class="secondary add-source-btn" data-product="'+n+'" style="margin:2px 0 12px;padding:4px 10px;font-size:12px;">+ Source</button>')+
+      '<button type="button" class="secondary add-source-btn" data-product="'+n+'" style="margin:2px 0 12px;padding:4px 10px;font-size:12px;">+ Source</button>'+
     '</div>'+
   '</div>';
 }
@@ -5978,13 +6218,14 @@ function collectBdSources(n){
   const keys = bdSourceKeysFor(n);
   return keys.map((key, idx)=>{
     // Vintage start/end are collected as a single "MMM YYYY" string per
-    // source (combining the month select + year combo), rather than as 4
+    // source (combining the month select + year combo), rather than as 2
     // separate stored values, so they join across multiple sources into the
-    // same "; "-per-source convention as name/recs/deal/ddate below (see
-    // MC.sourceVintageStart/sourceVintageEnd). RECs-only fields — on a
-    // Carbon Credit product these inputs don't exist in the DOM, and val()
-    // just returns '' for a missing id, so vstart/vend/note come back blank
-    // there without any extra guarding needed.
+    // same "; "-per-source convention as name/recs/deal below (see
+    // MC.sourceVintageStart/sourceVintageEnd). Captured for both RECs and
+    // Carbon Credit now (see bdSourceBlockHtml) — ddate is the only one of
+    // these per-source fields that no longer exists in the DOM for either
+    // mode, and val() just returns '' for a missing id, so it comes back
+    // blank without any extra guarding needed.
     const vsm = val('t'+key+'-m-vstart-month').trim();
     const vsy = val('t'+key+'-m-vstart-year').trim();
     const vem = val('t'+key+'-m-vend-month').trim();
@@ -6048,12 +6289,15 @@ function bdSourceBlockHtml(n, s){
       '</div>'+
     '</div>';
   // Vintage start/end (month & year) and a freeform Matching note are
-  // captured per BD source, same as the other 4 per-source fields above —
-  // but RECs-only (isCC), since Carbon Credit deals don't carry a per-source
-  // vintage or matching note. See collectBdSources/joinBdSourceField for how
-  // these get combined across sources into MC.sourceVintageStart/
+  // captured per BD source, same as the other 3 per-source fields above —
+  // for both RECs and Carbon Credit now. This is a per-SOURCE value,
+  // separate from a Carbon Credit product's own project-level "Vintage
+  // Start Year"/"Vintage End Year" fields (see tradeBlockHtml) — those
+  // describe the product as a whole, this describes each individual BD
+  // source matched against it. See collectBdSources/joinBdSourceField for
+  // how these get combined across sources into MC.sourceVintageStart/
   // sourceVintageEnd/sourceMatchNote at save time.
-  const vintageNoteHtml = isCC ? '' : (s === 1)
+  const vintageNoteHtml = (s === 1)
     ? lockableField('Vintage start month &amp; year',
         '<div style="display:flex;gap:6px;">'+selectHtml('t'+key+'-m-vstart-month', MONTHS, 'Jan')+comboHtml('t'+key+'-m-vstart-year','t'+key+'-m-vstart-year-list', YEARS, '2025')+'</div>',
         ['t'+key+'-m-vstart-month','t'+key+'-m-vstart-year'])+
@@ -6615,7 +6859,7 @@ function buildTradeGroup(startIdx, filled){
   addRow(transferAccountLabel(currentRole()), transfers);
   addRow('Vintage', vintages, false, vintageParts);
   if(currentProductMode !== 'carboncredit') addRow('Tech', techs);
-  addRow('Country', countries);
+  addRow('Country', countries.map(countryFullName));
   addRow('Volume (RECs)', volumes);
   addRow('Price / RECs', prices, false, priceParts);
   addRow('Payment Term', payterms);
@@ -6914,14 +7158,11 @@ function buildPointFormat(){
     addBdField(i, 'whichdeal', 'BD Matching \u2014 Which deal', bdSrcsForPreview.map(e=>dealLabelFor(e.key)||'-').join('; ') || '-');
     // Delivery date is gone entirely now — no product mode's BD source
     // matching captures one at all any more (see bdSourceBlockHtml).
-    // Per-source Vintage start/end and Matching note — RECs only (see
-    // bdSourceBlockHtml/collectBdSources); a Carbon Credit product's sources
-    // simply come back with these blank, so skip the rows entirely there.
-    if(!isCC_i){
-      addBdField(i, 'vintagestart', 'BD Matching \u2014 Vintage Start', bdSrcsForPreview.map(e=>e.vstart||'-').join('; ') || '-');
-      addBdField(i, 'vintageend', 'BD Matching \u2014 Vintage End', bdSrcsForPreview.map(e=>e.vend||'-').join('; ') || '-');
-      addBdField(i, 'matchnote', 'BD Matching \u2014 Matching Note', bdSrcsForPreview.map(e=>e.note||'-').join('; ') || '-');
-    }
+    // Per-source Vintage start/end and Matching note — both RECs and Carbon
+    // Credit now (see bdSourceBlockHtml/collectBdSources).
+    addBdField(i, 'vintagestart', 'BD Matching \u2014 Vintage Start', bdSrcsForPreview.map(e=>e.vstart||'-').join('; ') || '-');
+    addBdField(i, 'vintageend', 'BD Matching \u2014 Vintage End', bdSrcsForPreview.map(e=>e.vend||'-').join('; ') || '-');
+    addBdField(i, 'matchnote', 'BD Matching \u2014 Matching Note', bdSrcsForPreview.map(e=>e.note||'-').join('; ') || '-');
   }
   return lines;
 }
@@ -7134,14 +7375,13 @@ function buildRecapLinesFromRows(dealId, sortedGroup){
     addBdField(i, 'whichdeal', 'BD Matching \u2014 Which deal', dealLabelForStoredValueMulti(v[MC.whichDeal]) || '-');
     // Delivery date is gone entirely now — no product mode's BD source
     // matching captures one at all any more (see bdSourceBlockHtml).
-    // Per-source Vintage start/end and Matching note — RECs only, and only
-    // present on rows saved after these optional columns existed (see the
-    // sourceVintageStart/sourceVintageEnd/sourceMatchNote comment on MC).
-    if(!isCC){
-      addBdField(i, 'vintagestart', 'BD Matching \u2014 Vintage Start', (v[MC.sourceVintageStart] || '') || '-');
-      addBdField(i, 'vintageend', 'BD Matching \u2014 Vintage End', (v[MC.sourceVintageEnd] || '') || '-');
-      addBdField(i, 'matchnote', 'BD Matching \u2014 Matching Note', (v[MC.sourceMatchNote] || '') || '-');
-    }
+    // Per-source Vintage start/end and Matching note — both RECs and Carbon
+    // Credit now, and only present on rows saved after these optional
+    // columns existed (see the sourceVintageStart/sourceVintageEnd/
+    // sourceMatchNote comment on MC/CC).
+    addBdField(i, 'vintagestart', 'BD Matching \u2014 Vintage Start', (v[MC.sourceVintageStart] || '') || '-');
+    addBdField(i, 'vintageend', 'BD Matching \u2014 Vintage End', (v[MC.sourceVintageEnd] || '') || '-');
+    addBdField(i, 'matchnote', 'BD Matching \u2014 Matching Note', (v[MC.sourceMatchNote] || '') || '-');
   });
   return lines;
 }
@@ -7197,7 +7437,7 @@ function recapEditFormHtml(dealId, sortedGroup){
       (isCC ? recapEditFieldHtml('Registry', selectWithFullNamesHtml(idp+'cc-registry', CC_REGISTRY_OPTIONS, CC_REGISTRY_DISPLAY_NAMES, v[MC.registry]||'Verra'))+recapEditFieldHtml('Closing account', selectWithFullNamesHtml(idp+'cc-closing', CC_CLOSING_ACCOUNT_OPTIONS, CC_CLOSING_ACCOUNT_DISPLAY_NAMES, v[MC.cod]||'')) : recapEditFieldHtml('Registry', selectWithFullNamesHtml(idp+'registry', REGISTRIES, REGISTRY_DISPLAY_NAMES, v[MC.registry]||'IREC')))+
       recapEditFieldHtml(transferAccountLabel(role), '<input type="text" id="'+idp+'transfer" value="'+escapeHtml(v[MC.tigrsIrecName]||'')+'"/>')+
       (isCC ? '' : recapEditFieldHtml('Tech', comboHtml(idp+'tech', idp+'tech-list', TECHS, v[MC.tech]||'')))+
-      (isCC ? recapEditFieldHtml('Country', selectHtml(idp+'country', CC_COUNTRIES, v[MC.country]||'Malaysia')) : recapEditFieldHtml('Country (Full Name)', comboHtml(idp+'country', idp+'country-list', countryComboOptions(), v[MC.country]||'')))+
+      recapEditFieldHtml('Country', selectWithFullNamesHtml(idp+'country', COUNTRY_CODES, COUNTRY_FULLNAMES, v[MC.country]||'MY'))+
       (isCC ? recapEditFieldHtml('Vintage Start Year', comboHtml(idp+'vintage-start-year', idp+'vintage-start-year-list', YEARS, v[MC.vFromYY]||''))+recapEditFieldHtml('Vintage End Year', comboHtml(idp+'vintage-end-year', idp+'vintage-end-year-list', YEARS, v[MC.vToYY]||'')) :
         recapEditFieldHtml('Vintage start month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vstart-m', MONTHS, v[MC.vFromMM]||'Jan')+comboHtml(idp+'vstart-y', idp+'vstart-y-list', YEARS, v[MC.vFromYY]||'')+'</div>')+
         recapEditFieldHtml('Vintage end month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vend-m', MONTHS, v[MC.vToMM]||'Dec')+comboHtml(idp+'vend-y', idp+'vend-y-list', YEARS, v[MC.vToYY]||'')+'</div>'))+
@@ -7418,7 +7658,7 @@ function buildFullEditChangeSummary(oldGroup, updatedRows, role){
     if(isCC){
       pdiff('Project Type', ov[MC.vFromMM], nv[MC.vFromMM]);
       pdiff('Methodology', ov[MC.vToMM], nv[MC.vToMM]);
-      pdiff('Country', ov[MC.country], nv[MC.country]);
+      pdiff('Country', countryFullName(ov[MC.country])||ov[MC.country]||'', countryFullName(nv[MC.country])||nv[MC.country]||'');
       pdiff('Vintage Start Year', ov[MC.vFromYY], nv[MC.vFromYY]);
       pdiff('Vintage End Year', ov[MC.vToYY], nv[MC.vToYY]);
       pdiff('Registry', registryDisplayName(ov[MC.registry]), registryDisplayName(nv[MC.registry]));
@@ -7462,7 +7702,7 @@ function fullEditFormHtml(dealId, sortedGroup){
       (isCC ? recapEditFieldHtml('Registry', selectWithFullNamesHtml(idp+'cc-registry', CC_REGISTRY_OPTIONS, CC_REGISTRY_DISPLAY_NAMES, v[MC.registry]||'Verra'))+recapEditFieldHtml('Closing account', selectWithFullNamesHtml(idp+'cc-closing', CC_CLOSING_ACCOUNT_OPTIONS, CC_CLOSING_ACCOUNT_DISPLAY_NAMES, v[MC.cod]||'')) : recapEditFieldHtml('Registry', selectWithFullNamesHtml(idp+'registry', REGISTRIES, REGISTRY_DISPLAY_NAMES, v[MC.registry]||'IREC')))+
       recapEditFieldHtml(transferAccountLabel(role), '<input type="text" id="'+idp+'transfer" value="'+escapeHtml(v[MC.tigrsIrecName]||'')+'"/>')+
       (isCC ? '' : recapEditFieldHtml('Tech', comboHtml(idp+'tech', idp+'tech-list', TECHS, v[MC.tech]||'')))+
-      (isCC ? recapEditFieldHtml('Country', selectHtml(idp+'country', CC_COUNTRIES, v[MC.country]||'Malaysia')) : recapEditFieldHtml('Country (Full Name)', comboHtml(idp+'country', idp+'country-list', countryComboOptions(), v[MC.country]||'')))+
+      recapEditFieldHtml('Country', selectWithFullNamesHtml(idp+'country', COUNTRY_CODES, COUNTRY_FULLNAMES, v[MC.country]||'MY'))+
       (isCC ? recapEditFieldHtml('Vintage Start Year', comboHtml(idp+'vintage-start-year', idp+'vintage-start-year-list', YEARS, v[MC.vFromYY]||''))+recapEditFieldHtml('Vintage End Year', comboHtml(idp+'vintage-end-year', idp+'vintage-end-year-list', YEARS, v[MC.vToYY]||'')) : recapEditFieldHtml('Vintage start month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vstart-m', MONTHS, v[MC.vFromMM]||'Jan')+comboHtml(idp+'vstart-y', idp+'vstart-y-list', YEARS, v[MC.vFromYY]||'')+'</div>')+recapEditFieldHtml('Vintage end month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vend-m', MONTHS, v[MC.vToMM]||'Dec')+comboHtml(idp+'vend-y', idp+'vend-y-list', YEARS, v[MC.vToYY]||'')+'</div>'))+
       recapEditFieldHtml(isCC?'Volume (VCUs)':'Volume (RECs)', '<input type="text" id="'+idp+'volume" value="'+escapeHtml(v[MC.volume]||'')+'"/>')+
       recapEditFieldHtml('Price currency', comboHtml(idp+'currency', idp+'currency-list', CURRENCIES, v[MC.currency]||''))+
@@ -7782,7 +8022,7 @@ function tradeFieldDefs(i){
     {ids:['t'+i+'-vintage-start-month','t'+i+'-vintage-start-year'], label:'Vintage start month & year'},
     {ids:['t'+i+'-vintage-end-month','t'+i+'-vintage-end-year'], label:'Vintage end month & year'},
     {ids:['t'+i+'-tech'], label:'Tech'},
-    {ids:['t'+i+'-country'], label:'Country (Full Name)'},
+    {ids:['t'+i+'-country'], label:'Country'},
     {ids:['t'+i+'-volume'], label:'Volume (RECs)'},
     {ids:['t'+i+'-currency'], label:'Price currency'},
     {ids:['t'+i+'-price'], label:'Price / REC'},
