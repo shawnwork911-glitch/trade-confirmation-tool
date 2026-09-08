@@ -2066,12 +2066,59 @@ async function getApprovedListContext(){
   return {isCC, listName, listId, columnMap};
 }
 
+// Combines one REC row's per-source BD matching fields — Buyer/Seller, No
+// of RECs, Which deal, Vintage Start, Vintage End, Matching note (each
+// already "; "-joined across sources — one entry per BD source, see
+// joinBdSourceField/collectBdSources) — into a single human-readable value
+// for the "Approved" SharePoint list: one "_"-joined block per source
+// ("name_recs_deal_vstart_vend_note"), multiple sources joined by "; ".
+// Delivery Date is deliberately NOT included — it no longer exists anywhere
+// in RECs BD source matching (see the isCC/deliveryDateM comments
+// elsewhere in this file). TradeDealLog itself keeps these as separate
+// columns (values[MC.buyerSeller] etc still get written/read individually
+// everywhere else in the app, including the Request-edit flow) — only the
+// "Approved" list gets this compiled column, built fresh from those live
+// TradeDealLog values at the moment a row is copied over (initial Level 3
+// sign-off, or a later approved BD-matching change).
+function buildBdMatchingCompiled(values){
+  const names = splitBdSourceValue(values[MC.buyerSeller]);
+  const recs = splitBdSourceValue(values[MC.noOfRecs]);
+  // "Which deal" is stored as a raw deal code (e.g. "OWN:...", a Deal Recap
+  // ID, or a Proceed Share code) — run each through the same friendly-label
+  // conversion already used for on-screen display (dealLabelForStoredValue)
+  // so this compiled column reads the way a human expects, not as a raw code.
+  const deals = splitBdSourceValue(values[MC.whichDeal]).map(d => dealLabelForStoredValue(d) || d);
+  const vstarts = splitBdSourceValue(values[MC.sourceVintageStart]);
+  const vends = splitBdSourceValue(values[MC.sourceVintageEnd]);
+  const notes = splitBdSourceValue(values[MC.sourceMatchNote]);
+  const count = Math.max(names.length, recs.length, deals.length, vstarts.length, vends.length, notes.length, 1);
+  const blocks = [];
+  for(let i=0;i<count;i++){
+    const name = names[i] || '', rec = recs[i] || '', deal = deals[i] || '',
+          vstart = vstarts[i] || '', vend = vends[i] || '', note = notes[i] || '';
+    // Skip a wholly-blank source slot (e.g. Open Position, or a row saved
+    // before the optional vintage/note columns existed) rather than
+    // emitting an all-empty "_____" block.
+    if(!(name || rec || deal || vstart || vend || note)) continue;
+    blocks.push([name, rec, deal, vstart, vend, note].join('_'));
+  }
+  return blocks.join('; ');
+}
 // changeNote is optional context describing WHY this entry was added —
 // e.g. the specific Matching/Buyer-Seller/Which-deal diff for a BD source
 // matching change — so the "Approved" list reads as a proper audit log
 // (one row per change, each explaining itself) rather than just a stack of
 // otherwise-identical "Approved" snapshots. Defaults to describing the
 // initial final sign-off when not given.
+// NOTE for whoever maintains the "BD Agreement Record Approved" SharePoint
+// list: the REC (non-CC) branch below now sends ONE "BD Source Matching"
+// column (see buildBdMatchingCompiled) instead of the old separate
+// "Buyer/Seller" / "No of RECs" / "Which deal" / "Delivery Date" / "Source
+// Vintage Start" / "Source Vintage End" / "Source Matching Note" columns.
+// Add a "BD Source Matching" column to that list (any existing old columns
+// can stay — past rows keep their history — new writes just won't use
+// them any more). The CC branch is unaffected and still sends its own
+// separate columns as before.
 async function addApprovedDealToList(values, changeNote){
     const ctx = await getApprovedListContext();
     const columnMap = ctx.columnMap;
@@ -2106,7 +2153,10 @@ async function addApprovedDealToList(values, changeNote){
         'Buyer/Seller': values[MC.buyerSeller],
         'No of VCUs': values[MC.noOfRecs],
         'Which deal': values[MC.whichDeal],
-        'Delivery Date': values[MC.deliveryDateM],
+        // Delivery date is gone entirely now — see the deliveryDateM
+        // comments elsewhere in this file (bdSourceBlockHtml,
+        // saveConfirmationToHistory, etc.) — no longer captured for a
+        // Carbon Credit product's BD source matching either.
         'Status': values[MC.status],
         'Submitted By': values[MC.submittedBy],
         'Submitted Date': values[MC.submittedDate],
@@ -2142,17 +2192,14 @@ async function addApprovedDealToList(values, changeNote){
         'COD': values[MC.cod],
         'TIGRS / IREC NAME': values[MC.tigrsIrecName],
         'Payment Term': values[MC.paymentTerm],
-        'Buyer/Seller': values[MC.buyerSeller],
-        'No of RECs': values[MC.noOfRecs],
-        'Which deal': values[MC.whichDeal],
-        'Delivery Date': values[MC.deliveryDateM],
-        // RECs-only, optional (see the sourceVintageStart/sourceVintageEnd/
-        // sourceMatchNote comment on MC) — undefined on rows saved before
-        // TradeDealLog had these columns, which coerceForColumnType safely
-        // turns into a blank (null) rather than erroring.
-        'Source Vintage Start': values[MC.sourceVintageStart],
-        'Source Vintage End': values[MC.sourceVintageEnd],
-        'Source Matching Note': values[MC.sourceMatchNote],
+        // Buyer/Seller, No of RECs, Which deal, Vintage Start, Vintage End
+        // and Matching Note are compiled into one column here (see
+        // buildBdMatchingCompiled) rather than sent as 6 separate columns —
+        // TradeDealLog itself is unaffected and keeps these as separate
+        // columns; only the "Approved" list gets the compiled form. There's
+        // no separate "Delivery Date" column any more — RECs BD source
+        // matching no longer captures one at all.
+        'BD Source Matching': buildBdMatchingCompiled(values),
         'Status': values[MC.status],
         'Submitted By': values[MC.submittedBy],
         'Submitted Date': values[MC.submittedDate],
@@ -2876,7 +2923,10 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
     row[MC.buyerSeller] = matchingActive ? joinBdSourceField(n,'name') : '';
     row[MC.noOfRecs] = matchingActive ? joinBdSourceField(n,'recs') : '';
     row[MC.whichDeal] = joinBdSourceField(n,'deal');
-    row[MC.deliveryDateM] = joinBdSourceField(n,'ddate');
+    // Delivery date is gone entirely now — no product mode's BD source
+    // matching has a Delivery date field to collect any more (see
+    // bdSourceBlockHtml), so this column is always left genuinely blank.
+    row[MC.deliveryDateM] = '';
     // Optional 63rd-65th columns (see the sourceVintageStart/sourceVintageEnd/
     // sourceMatchNote comment on MC) — RECs only, and only stamped if the
     // live table actually has them yet.
@@ -3204,6 +3254,9 @@ async function requestBdMatchChange(dealId, edits, matchNote){
   if(liveColumnCount < COL_COUNT){
     throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing the "Pending Matching", "Pending Buyer/Seller", "Pending Which Deal", "Pending No of RECs", "Pending Delivery Date", "Change Requested By", "Change Requested Date", "Pending Matching Note", "Pending Registry" and "Pending Tech" columns. Ask an admin to add those ten columns at the end of the table, then try again.');
   }
+  // Delivery date is gone entirely now — the Request-edit modal no longer
+  // collects it for any deal, REC or CC (see erSourceBlockHtml), so this
+  // never diffs or stages it any more.
   // Build the per-product diff up front, using the same wording the
   // in-app Approval queue shows (see the STATUS_PENDING_CHANGE_3 block in
   // renderHistoryTable) — and use it to detect a request that doesn't
@@ -3228,9 +3281,6 @@ async function requestBdMatchChange(dealId, edits, matchNote){
     }
     if((rv[MC.noOfRecs]||'') !== (edit.noOfRecs||'')){
       lines.push('No of RECs: ' + (rv[MC.noOfRecs]||'(blank)') + ' \u2192 ' + (edit.noOfRecs||'(blank)'));
-    }
-    if(toDateInputValue(rv[MC.deliveryDateM]) !== toDateInputValue(edit.deliveryDateM)){
-      lines.push('Delivery date: ' + (formatStoredDate(rv[MC.deliveryDateM])||'(blank)') + ' \u2192 ' + (formatStoredDate(edit.deliveryDateM)||'(blank)'));
     }
     if((rv[MC.registry]||'') !== (edit.registry||'')){
       lines.push('Registry: ' + registryDisplayName(rv[MC.registry]) + ' \u2192 ' + registryDisplayName(edit.registry));
@@ -3264,7 +3314,10 @@ async function requestBdMatchChange(dealId, edits, matchNote){
     values[MC.pendingBuyerSeller] = edit.buyerSeller || '';
     values[MC.pendingWhichDeal] = edit.whichDeal || '';
     values[MC.pendingNoOfRecs] = edit.noOfRecs || '';
-    values[MC.pendingDeliveryDateM] = edit.deliveryDateM || '';
+    // Delivery date is gone entirely now — never staged for any deal, so
+    // approveBdMatchChange's guard never has anything to copy into the
+    // live Delivery Date column.
+    values[MC.pendingDeliveryDateM] = '';
     values[MC.pendingRegistry] = edit.registry || '';
     values[MC.pendingTech] = edit.tech || '';
     // Optional column (see pendingVolume on MC) — only stage it if the
@@ -3299,6 +3352,12 @@ async function approveBdMatchChange(dealId){
   const rows = await getCanonicalTableRows(dealLogTableName());
   const allMatching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
   if(!allMatching.length) return;
+  // Delivery date is gone entirely now — pendingDeliveryDateM is never
+  // staged with a real value for any deal any more (see
+  // requestBdMatchChange), so the live Delivery Date column is simply
+  // never touched here at all. This also protects any legacy row (REC or
+  // CC) that still has a real Delivery Date value sitting in that column
+  // from before it was removed — it's never overwritten or blanked out.
   // Only the row(s) actually carrying a pending change get touched here —
   // a sibling product in the same deal that's still plain "Approved" (i.e.
   // wasn't part of this change request) is left alone entirely: no status
@@ -3344,9 +3403,9 @@ async function approveBdMatchChange(dealId){
     if((values[MC.noOfRecs]||'') !== (values[MC.pendingNoOfRecs]||'')){
       noteLines.push('No of RECs: ' + (values[MC.noOfRecs]||'(blank)') + ' \u2192 ' + (values[MC.pendingNoOfRecs]||'(blank)'));
     }
-    if(toDateInputValue(values[MC.deliveryDateM]) !== toDateInputValue(values[MC.pendingDeliveryDateM])){
-      noteLines.push('Delivery date: ' + (formatStoredDate(values[MC.deliveryDateM])||'(blank)') + ' \u2192 ' + (formatStoredDate(values[MC.pendingDeliveryDateM])||'(blank)'));
-    }
+    // Delivery date is gone entirely now — never staged/diffed here any
+    // more (see the comment above this function); the live column, if a
+    // legacy row still has a real value in it, is left completely alone.
     if((values[MC.registry]||'') !== (values[MC.pendingRegistry]||'')){
       noteLines.push('Registry: ' + registryDisplayName(values[MC.registry]) + ' \u2192 ' + registryDisplayName(values[MC.pendingRegistry]));
     }
@@ -3363,7 +3422,9 @@ async function approveBdMatchChange(dealId){
     values[MC.buyerSeller] = values[MC.pendingBuyerSeller];
     values[MC.whichDeal] = values[MC.pendingWhichDeal];
     values[MC.noOfRecs] = values[MC.pendingNoOfRecs];
-    values[MC.deliveryDateM] = values[MC.pendingDeliveryDateM];
+    // Delivery date is gone entirely now — the live Delivery Date column is
+    // never touched here (see the comment above this function), so a
+    // legacy row that still has a real value in it keeps it untouched.
     // Only ever overwritten with a non-blank value when this product
     // actually went through the Registry/Tech fix flow (edits always carry
     // the product's current value through when no fix was needed — see the
@@ -4179,9 +4240,9 @@ function renderHistoryTable(el, groups, opts){
         if((rv[MC.noOfRecs]||'') !== (rv[MC.pendingNoOfRecs]||'')){
           lines.push('No of RECs: <s>'+escapeHtml(rv[MC.noOfRecs]||'(blank)')+'</s> → <strong>'+escapeHtml(rv[MC.pendingNoOfRecs]||'(blank)')+'</strong>');
         }
-        if(toDateInputValue(rv[MC.deliveryDateM]) !== toDateInputValue(rv[MC.pendingDeliveryDateM])){
-          lines.push('Delivery date: <s>'+escapeHtml(formatStoredDate(rv[MC.deliveryDateM])||'(blank)')+'</s> → <strong>'+escapeHtml(formatStoredDate(rv[MC.pendingDeliveryDateM])||'(blank)')+'</strong>');
-        }
+        // Delivery date is gone entirely now — never staged for any deal
+        // any more (see requestBdMatchChange/approveBdMatchChange), so
+        // there's nothing to diff here.
         if((rv[MC.registry]||'') !== (rv[MC.pendingRegistry]||'')){
           lines.push('Registry: <s>'+escapeHtml(registryDisplayName(rv[MC.registry])||'(blank)')+'</s> → <strong>'+escapeHtml(registryDisplayName(rv[MC.pendingRegistry])||'(blank)')+'</strong>');
         }
@@ -4576,11 +4637,10 @@ function erSourceBlockHtml(idx, s, opts){
       '<label style="margin:0 0 4px;display:block;font-size:12px;">Which deal</label>'+
       '<div id="er-'+key+'-deal-field">'+dealField.fieldHtml+'</div>'+
     '</div>'+
-    '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Delivery date</label>'+
-      '<div class="date-field-wrap">'+
-        '<input type="date" id="er-'+key+'-deliverydate" class="edit-request-deliverydate date-native" data-idx="'+idx+'" value="'+escapeHtml(toDateInputValue(opts.deliveryDateM||''))+'"/>'+
-        '<span class="date-display is-placeholder" data-for="er-'+key+'-deliverydate">dd/mm/yyyy</span>'+
-      '</div></div>'+
+    // Delivery date is gone entirely now — neither RECs nor Carbon Credit
+    // BD source matching captures it any more (see the deliveryDateM
+    // comments elsewhere in this file: bdSourceBlockHtml,
+    // requestBdMatchChange, approveBdMatchChange).
   '</div>';
 }
 // "+ Source" for the request-edit modal - appends a new, blank source block
@@ -4857,7 +4917,10 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
     edits[idx].buyerSeller = keys.map(key => val('er-'+key+'-buyerseller')).join('; ');
     edits[idx].noOfRecs = keys.map(key => val('er-'+key+'-norecs')).join('; ');
     edits[idx].whichDeal = keys.map(key => erDealCodeFor(key)).join('; ');
-    edits[idx].deliveryDateM = keys.map(key => val('er-'+key+'-deliverydate')).join('; ');
+    // Delivery date is gone entirely now — the field doesn't exist in the
+    // DOM for any deal any more (see erSourceBlockHtml), so this is
+    // deliberately left blank rather than joining a run of stray "; "s.
+    edits[idx].deliveryDateM = '';
   });
   document.querySelectorAll('#edit-request-modal-fields .edit-request-registry').forEach(el=>{
     const idx = parseInt(el.getAttribute('data-idx'), 10);
@@ -4917,8 +4980,26 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
     else if(needsVolumeFix(volInp.value)) volumeErrors.push('Volume (RECs) for ' + productLabel + ' still looks like a range — enter a single confirmed number.');
     if(!confirmCb || !confirmCb.checked) volumeErrors.push('Confirm the Volume (RECs) entered for ' + productLabel + '.');
   });
-  if(regTechErrors.length || volumeErrors.length){
-    errEl.textContent = regTechErrors.concat(volumeErrors).join(' ');
+  // "From which deal" is mandatory for every source on a product whose
+  // Matching isn't Open Position — same rule the main form enforces via
+  // tradeFieldDefs (see baseDefs/matchDefs there); this modal has its own
+  // separate set of fields, so it needs its own copy of the same check.
+  const whichDealErrors = [];
+  document.querySelectorAll('#edit-request-modal-fields .edit-request-matching').forEach(sel=>{
+    if(sel.value === 'Open Position') return;
+    const idx = parseInt(sel.getAttribute('data-idx'), 10);
+    const productLabel = document.querySelectorAll('#edit-request-modal-fields .edit-request-matching').length > 1
+      ? 'Product ' + (idx+1) : 'this product';
+    erSourceKeysFor(idx).forEach((key, srcIdx)=>{
+      const dealVal = val('er-'+key+'-whichdeal');
+      if(!dealVal || !dealVal.trim()){
+        const sourceLabel = srcIdx === 0 ? '' : ' (Source '+(srcIdx+1)+')';
+        whichDealErrors.push('Enter "From which deal" for ' + productLabel + sourceLabel + '.');
+      }
+    });
+  });
+  if(regTechErrors.length || volumeErrors.length || whichDealErrors.length){
+    errEl.textContent = regTechErrors.concat(volumeErrors).concat(whichDealErrors).join(' ');
     errEl.style.display = 'block';
     return;
   }
@@ -5857,11 +5938,12 @@ function tradeBlockHtml(n){
 
 // ---- Multiple BD sources per product ----
 // Each product's BD source matching normally has a single "source" (one
-// Buyer/Seller, one No of RECs, one From-which-deal, one Delivery date, all
-// keyed off the plain t{n}-m-* ids). "+ Source" lets a submitter add extra
+// Buyer/Seller, one No of RECs, one From-which-deal, all keyed off the
+// plain t{n}-m-* ids — plus, for a Carbon Credit product only, one Delivery
+// date; see bdSourceBlockHtml). "+ Source" lets a submitter add extra
 // sources on top of that first one when a single product is actually being
 // matched against more than one counterparty/deal - each extra source gets
-// its own set of the same 5 fields, keyed t{n}-{s}-m-* (s = 2, 3, ...), and
+// its own set of the same fields, keyed t{n}-{s}-m-* (s = 2, 3, ...), and
 // every existing per-source function (syncBuyerSellerName, updateDealField,
 // updateDeliveryDateVisibility, dealCodeFor, dealLabelFor, handleMatchingChange's
 // clear-on-Open-Position) already works unchanged against a source purely by
@@ -5870,9 +5952,9 @@ function tradeBlockHtml(n){
 // source's key is computed, (b) building/removing extra source blocks, and
 // (c) reading however many sources currently exist so the values can be
 // combined into the single storage columns (Buyer/Seller, No of RECs, Which
-// deal, Delivery date), each column holding one "; "-separated entry per
-// source, in the same order, so the same position across all four columns
-// always describes one source.
+// deal, and — CC only — Delivery date), each column holding one "; "-joined
+// entry per source, in the same order, so the same position across all
+// these columns always describes one source.
 function bdSourceKeyStr(n, s){ return (s === 1) ? String(n) : (n+'-'+s); }
 // Reads however many source blocks are currently in the DOM for product n
 // (in the order they appear) and returns their keys - used any time values
@@ -5987,12 +6069,15 @@ function bdSourceBlockHtml(n, s){
     ? lockableField('Buyer/Seller name', textHtml('t'+key+'-m-name','Name'),'t'+key+'-m-name')+
       lockableField('No of RECs', textHtml('t'+key+'-m-recs',''),'t'+key+'-m-recs')+
       lockableField('From which deal', '<div id="t'+key+'-m-deal-field">'+textHtml('t'+key+'-m-deal','Deal Recap ID')+'</div>','t'+key+'-m-deal')+
-      lockableField('Delivery date', dateHtml('t'+key+'-m-ddate'),'t'+key+'-m-ddate')+
+      // Delivery date is gone entirely now — neither RECs nor Carbon Credit
+      // BD source matching captures or stores it any more (see the
+      // deliveryDateM comments throughout this file: saveConfirmationToHistory,
+      // addApprovedDealToList, requestBdMatchChange/approveBdMatchChange,
+      // buildPointFormat/buildRecapLinesFromRows, tradeFieldDefs).
       vintageNoteHtml
     : '<div><label style="margin:0 0 6px;display:block;">Buyer/Seller name</label>'+textHtml('t'+key+'-m-name','Name')+'</div>'+
       '<div><label style="margin:0 0 6px;display:block;">No of RECs</label>'+textHtml('t'+key+'-m-recs','')+'</div>'+
       '<div><label style="margin:0 0 6px;display:block;">From which deal</label><div id="t'+key+'-m-deal-field">'+textHtml('t'+key+'-m-deal','Deal Recap ID')+'</div></div>'+
-      '<div id="t'+key+'-m-ddate-wrap"><label style="margin:0 0 6px;display:block;">Delivery date</label>'+dateHtml('t'+key+'-m-ddate')+'</div>'+
       vintageNoteHtml;
   return '<div class="bd-source-block" data-product="'+n+'" data-source="'+s+'"'+
     (s > 1 ? ' style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:12px;"' : '') + '>'+
@@ -6077,14 +6162,12 @@ function updateDealField(n){
   const locked = !!(state[key] && state[key].locked);
   applyFieldLockUi(key, locked);
 }
-// "4. Delivery date" only applies to a matched deal with a real counterparty
-// on the other side - Own RECs is Saxon's own inventory, so there's no
-// separate delivery date to record against it. Hides the field and clears
-// whatever was in it whenever Own RECs is ticked, so t{n}-m-ddate (and the
-// Delivery Date column it's written to in TradeDealLog / the "Approved"
-// list - see MC.deliveryDateM) is left genuinely empty rather than showing
-// a stale or meaningless date. Restored (shown again, still required) for
-// Proceed Share and plain "From which deal" matches.
+// Delivery date is gone entirely now — no product mode's BD source
+// matching has a "t{n}-m-ddate-wrap"/"t{n}-m-ddate" element in the DOM any
+// more (see bdSourceBlockHtml), so this is a dead no-op left in place only
+// because its call sites (updateDealField/handleMatchingChange) are still
+// generically wired to call it after every source-field rebuild; the early
+// return below means it never does anything now.
 function updateDeliveryDateVisibility(n){
   const own = document.getElementById('t'+n+'-m-own');
   const wrap = document.getElementById('t'+n+'-m-ddate-wrap');
@@ -6544,8 +6627,9 @@ function buildTradeGroup(startIdx, filled){
   addRow('BD Source Matching: 1. Buyer/Seller', mNames);
   addRow('2. No of RECs', mRecs);
   addRow('3. From which deal', mDeals);
-  addRow('4. Delivery Date', mDdates);
-  addRow('5. Matching', mMatchings);
+  // Delivery date is gone entirely now — no product mode's BD source
+  // matching has this field at all any more (see bdSourceBlockHtml).
+  addRow('4. Matching', mMatchings);
 
   return {n: size, rows};
 }
@@ -6828,7 +6912,8 @@ function buildPointFormat(){
     addBdField(i, 'buyerseller', 'BD Matching \u2014 Buyer/Seller', bdSrcsForPreview.map(e=>e.name||'-').join('; ') || '-');
     addBdField(i, 'norecs', isCC_i ? 'BD Matching \u2014 No of VCUs' : 'BD Matching \u2014 No of RECs', bdSrcsForPreview.map(e=>e.recs||'-').join('; ') || '-');
     addBdField(i, 'whichdeal', 'BD Matching \u2014 Which deal', bdSrcsForPreview.map(e=>dealLabelFor(e.key)||'-').join('; ') || '-');
-    addBdField(i, 'deliverydate', 'BD Matching \u2014 Delivery Date', bdSrcsForPreview.map(e=>formatStoredDate(e.ddate)||'-').join('; ') || '-');
+    // Delivery date is gone entirely now — no product mode's BD source
+    // matching captures one at all any more (see bdSourceBlockHtml).
     // Per-source Vintage start/end and Matching note — RECs only (see
     // bdSourceBlockHtml/collectBdSources); a Carbon Credit product's sources
     // simply come back with these blank, so skip the rows entirely there.
@@ -7047,7 +7132,8 @@ function buildRecapLinesFromRows(dealId, sortedGroup){
     addBdField(i, 'buyerseller', 'BD Matching \u2014 Buyer/Seller', v[MC.buyerSeller] || '-');
     addBdField(i, 'norecs', isCC ? 'BD Matching \u2014 No of VCUs' : 'BD Matching \u2014 No of RECs', v[MC.noOfRecs] || '-');
     addBdField(i, 'whichdeal', 'BD Matching \u2014 Which deal', dealLabelForStoredValueMulti(v[MC.whichDeal]) || '-');
-    addBdField(i, 'deliverydate', 'BD Matching \u2014 Delivery Date', formatStoredDateMulti(v[MC.deliveryDateM]) || '-');
+    // Delivery date is gone entirely now — no product mode's BD source
+    // matching captures one at all any more (see bdSourceBlockHtml).
     // Per-source Vintage start/end and Matching note — RECs only, and only
     // present on rows saved after these optional columns existed (see the
     // sourceVintageStart/sourceVintageEnd/sourceMatchNote comment on MC).
@@ -7722,19 +7808,17 @@ function tradeFieldDefs(i){
     return baseDefs;
   }
 
-  // If anything other than 'Open Position' is selected, matching fields 1-4 are mandatory
+  // If anything other than 'Open Position' is selected, matching fields 1-3 are mandatory
   // for every source currently on this product (the primary source plus any "+ Source"
-  // blocks added) - except "4. Delivery date", which is hidden and intentionally left
-  // blank for a source with Own RECs ticked (see updateDeliveryDateVisibility): there's
-  // no counterparty delivery to date there.
+  // blocks added). There used to be a "4. Delivery date" requirement here too, but
+  // Delivery date is gone entirely now — no product mode's BD source matching has
+  // that field at all any more (see bdSourceBlockHtml).
   const matchDefs = [];
   bdSourceKeysFor(i).forEach((key, srcIdx)=>{
     const sourceLabel = srcIdx === 0 ? '' : ' (Source '+(srcIdx+1)+')';
-    const isOwnRecs = !!(document.getElementById('t'+key+'-m-own') && document.getElementById('t'+key+'-m-own').checked);
     matchDefs.push({ids:['t'+key+'-m-name'], label:'1. Buyer/Seller name'+sourceLabel});
     matchDefs.push({ids:['t'+key+'-m-recs'], label:'2. No of RECs'+sourceLabel});
     matchDefs.push({ids:['t'+key+'-m-deal'], label:'3. From which deal'+sourceLabel});
-    if(!isOwnRecs) matchDefs.push({ids:['t'+key+'-m-ddate'], label:'4. Delivery date'+sourceLabel});
   });
   return baseDefs.concat(matchDefs);
 }
