@@ -5133,12 +5133,27 @@ const TECHS = ["ANY","SLR","GEO","BIO","HYD","BGS","SHY","LHY","WND","CC"];
 // displays fine going forward — countryFullName() below falls back to
 // showing the original stored text unchanged if it isn't a recognized code.
 const COUNTRY_CODES = ["AF","AL","DZ","AD","AO","AG","AR","AM","AU","AT","AZ","BS","BH","BD","BB","BY","BE","BZ","BJ","BT","BO","BA","BW","BR","BN","BG","BF","BI","KH","CM","CA","CV","CF","TD","CL","CN","CO","KM","CG","CD","CR","CI","HR","CU","CY","CZ","DK","DJ","DM","DO","EC","EG","SV","GQ","ER","EE","SZ","ET","FJ","FI","FR","GA","GM","GE","DE","GH","GR","GD","GT","GN","GW","GY","HT","HN","HK","HU","IS","IN","ID","IR","IQ","IE","IL","IT","JM","JP","JO","KZ","KE","KI","KW","KG","LA","LV","LB","LS","LR","LY","LI","LT","LU","MG","MW","MY","MV","ML","MT","MH","MR","MU","MX","FM","MD","MC","MN","ME","MA","MZ","MM","NA","NR","NP","NL","NZ","NI","NE","NG","KP","MK","NO","OM","PK","PW","PA","PG","PY","PE","PH","PL","PT","QA","RO","RU","RW","KN","LC","VC","WS","SM","ST","SA","SN","RS","SC","SL","SG","SK","SI","SB","SO","ZA","KR","SS","ES","LK","SD","SR","SE","CH","SY","TW","TJ","TZ","TH","TL","TG","TO","TT","TN","TR","TM","TV","UG","UA","AE","GB","US","UY","UZ","VU","VA","VE","VN","YE","ZM","ZW"];
+// REC-only addition: "Europe" (shortform "EU") is a region rather than an
+// ISO-3166 country, so it's kept out of the shared COUNTRY_CODES list
+// (still used as-is by the Carbon Credit tab's Country dropdown) and only
+// spliced in here — alphabetically, between Ethiopia and Fiji, matching
+// the full-name ordering used for the rest of the list — for the REC tab's
+// Country dropdown. COUNTRY_FULLNAMES still gets an 'EU':'Europe' entry
+// below so countryFullName()/recap output display it correctly wherever a
+// REC row's stored Country is 'EU'.
+const REC_COUNTRY_CODES = (function(){
+  const codes = COUNTRY_CODES.slice();
+  const insertBefore = codes.indexOf('FJ'); // Fiji — "Europe" sorts just before it
+  codes.splice(insertBefore === -1 ? codes.length : insertBefore, 0, 'EU');
+  return codes;
+})();
 // Code -> full name lookups, used both to render the dropdown above and by
 // countryFullName() for the Customer version / recap output. Keys are
 // matched case-insensitively; anything not found here just falls back to
 // showing the original code (or, for a legacy row, whatever raw text) as
 // typed/stored.
 const COUNTRY_FULLNAMES = {
+  'EU':'Europe',
   'AF':'Afghanistan',
   'AL':'Albania',
   'DZ':'Algeria',
@@ -6130,7 +6145,7 @@ function tradeBlockHtml(n){
     // COUNTRY_CODES/COUNTRY_FULLNAMES) — shows the full country name, but
     // stores/writes the two-letter code (what val() reads, and what ends
     // up in TradeDealLog/CCDealLog), via selectWithFullNamesHtml.
-    lockableField('Country', selectWithFullNamesHtml('t'+n+'-country', COUNTRY_CODES, COUNTRY_FULLNAMES, 'MY'),'t'+n+'-country')+
+    lockableField('Country', selectWithFullNamesHtml('t'+n+'-country', currentProductMode === 'carboncredit' ? COUNTRY_CODES : REC_COUNTRY_CODES, COUNTRY_FULLNAMES, 'MY'),'t'+n+'-country')+
     (currentProductMode === 'carboncredit'
       ? lockableField('Registry', selectWithFullNamesHtml('t'+n+'-cc-registry', CC_REGISTRY_OPTIONS, CC_REGISTRY_DISPLAY_NAMES, 'Verra'),'t'+n+'-cc-registry')+
         lockableField('Closing account', selectWithFullNamesHtml('t'+n+'-cc-closing', CC_CLOSING_ACCOUNT_OPTIONS, CC_CLOSING_ACCOUNT_DISPLAY_NAMES, ''),'t'+n+'-cc-closing')
@@ -7437,7 +7452,7 @@ function recapEditFormHtml(dealId, sortedGroup){
       (isCC ? recapEditFieldHtml('Registry', selectWithFullNamesHtml(idp+'cc-registry', CC_REGISTRY_OPTIONS, CC_REGISTRY_DISPLAY_NAMES, v[MC.registry]||'Verra'))+recapEditFieldHtml('Closing account', selectWithFullNamesHtml(idp+'cc-closing', CC_CLOSING_ACCOUNT_OPTIONS, CC_CLOSING_ACCOUNT_DISPLAY_NAMES, v[MC.cod]||'')) : recapEditFieldHtml('Registry', selectWithFullNamesHtml(idp+'registry', REGISTRIES, REGISTRY_DISPLAY_NAMES, v[MC.registry]||'IREC')))+
       recapEditFieldHtml(transferAccountLabel(role), '<input type="text" id="'+idp+'transfer" value="'+escapeHtml(v[MC.tigrsIrecName]||'')+'"/>')+
       (isCC ? '' : recapEditFieldHtml('Tech', comboHtml(idp+'tech', idp+'tech-list', TECHS, v[MC.tech]||'')))+
-      recapEditFieldHtml('Country', selectWithFullNamesHtml(idp+'country', COUNTRY_CODES, COUNTRY_FULLNAMES, v[MC.country]||'MY'))+
+      recapEditFieldHtml('Country', selectWithFullNamesHtml(idp+'country', isCC ? COUNTRY_CODES : REC_COUNTRY_CODES, COUNTRY_FULLNAMES, v[MC.country]||'MY'))+
       (isCC ? recapEditFieldHtml('Vintage Start Year', comboHtml(idp+'vintage-start-year', idp+'vintage-start-year-list', YEARS, v[MC.vFromYY]||''))+recapEditFieldHtml('Vintage End Year', comboHtml(idp+'vintage-end-year', idp+'vintage-end-year-list', YEARS, v[MC.vToYY]||'')) :
         recapEditFieldHtml('Vintage start month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vstart-m', MONTHS, v[MC.vFromMM]||'Jan')+comboHtml(idp+'vstart-y', idp+'vstart-y-list', YEARS, v[MC.vFromYY]||'')+'</div>')+
         recapEditFieldHtml('Vintage end month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vend-m', MONTHS, v[MC.vToMM]||'Dec')+comboHtml(idp+'vend-y', idp+'vend-y-list', YEARS, v[MC.vToYY]||'')+'</div>'))+
@@ -7702,7 +7717,7 @@ function fullEditFormHtml(dealId, sortedGroup){
       (isCC ? recapEditFieldHtml('Registry', selectWithFullNamesHtml(idp+'cc-registry', CC_REGISTRY_OPTIONS, CC_REGISTRY_DISPLAY_NAMES, v[MC.registry]||'Verra'))+recapEditFieldHtml('Closing account', selectWithFullNamesHtml(idp+'cc-closing', CC_CLOSING_ACCOUNT_OPTIONS, CC_CLOSING_ACCOUNT_DISPLAY_NAMES, v[MC.cod]||'')) : recapEditFieldHtml('Registry', selectWithFullNamesHtml(idp+'registry', REGISTRIES, REGISTRY_DISPLAY_NAMES, v[MC.registry]||'IREC')))+
       recapEditFieldHtml(transferAccountLabel(role), '<input type="text" id="'+idp+'transfer" value="'+escapeHtml(v[MC.tigrsIrecName]||'')+'"/>')+
       (isCC ? '' : recapEditFieldHtml('Tech', comboHtml(idp+'tech', idp+'tech-list', TECHS, v[MC.tech]||'')))+
-      recapEditFieldHtml('Country', selectWithFullNamesHtml(idp+'country', COUNTRY_CODES, COUNTRY_FULLNAMES, v[MC.country]||'MY'))+
+      recapEditFieldHtml('Country', selectWithFullNamesHtml(idp+'country', isCC ? COUNTRY_CODES : REC_COUNTRY_CODES, COUNTRY_FULLNAMES, v[MC.country]||'MY'))+
       (isCC ? recapEditFieldHtml('Vintage Start Year', comboHtml(idp+'vintage-start-year', idp+'vintage-start-year-list', YEARS, v[MC.vFromYY]||''))+recapEditFieldHtml('Vintage End Year', comboHtml(idp+'vintage-end-year', idp+'vintage-end-year-list', YEARS, v[MC.vToYY]||'')) : recapEditFieldHtml('Vintage start month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vstart-m', MONTHS, v[MC.vFromMM]||'Jan')+comboHtml(idp+'vstart-y', idp+'vstart-y-list', YEARS, v[MC.vFromYY]||'')+'</div>')+recapEditFieldHtml('Vintage end month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vend-m', MONTHS, v[MC.vToMM]||'Dec')+comboHtml(idp+'vend-y', idp+'vend-y-list', YEARS, v[MC.vToYY]||'')+'</div>'))+
       recapEditFieldHtml(isCC?'Volume (VCUs)':'Volume (RECs)', '<input type="text" id="'+idp+'volume" value="'+escapeHtml(v[MC.volume]||'')+'"/>')+
       recapEditFieldHtml('Price currency', comboHtml(idp+'currency', idp+'currency-list', CURRENCIES, v[MC.currency]||''))+
