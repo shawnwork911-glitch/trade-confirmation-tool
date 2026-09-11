@@ -8429,12 +8429,23 @@ document.getElementById('save-agreement-btn').addEventListener('click', async ()
 
 <script>
 /* ---- Redemption Form tab: lists fillable PDFs straight from SharePoint ----
-   Same drive that hosts the shared BD Agreement Record workbook (driveId is
-   already resolved by resolveWorkbook() by the time anyone can reach this
-   tab). Download links use each item's short-lived
-   @microsoft.graph.downloadUrl, so clicking Download goes straight to
-   SharePoint without routing the file's bytes through this page. */
+   NOTE: the "10. REDEMPTION TEMPLATE" folder lives in the Operations site's
+   default "Shared Documents" library — a DIFFERENT document library/drive
+   than the one holding the shared BD Agreement Record workbook (that one's
+   under a separate "Process Improvement" library). So this can't reuse the
+   app's `driveId` global; it resolves the site's default drive itself via
+   `siteId` (also set by resolveWorkbook()) and caches it. Download links use
+   each item's short-lived @microsoft.graph.downloadUrl, so clicking Download
+   goes straight to SharePoint without routing the file's bytes through this
+   page. */
 const REDEMPTION_FOLDER_PATH = '7.OPERATION DOCS/10. REDEMPTION TEMPLATE';
+let redemptionDriveId = null;
+async function getRedemptionDriveId(){
+  if(redemptionDriveId) return redemptionDriveId;
+  const drive = await graphFetch('/sites/' + siteId + '/drive?$select=id');
+  redemptionDriveId = drive.id;
+  return redemptionDriveId;
+}
 const REDEMPTION_LABELS = {
   "REDEMPTION_INFORMATION_CONFIRMATION__AIB_GO.pdf": "AIB GO",
   "RETIREMENT INFORMATION CONFIRMATION (APX-TIGR) 2.pdf": "APX-TIGR",
@@ -8456,7 +8467,7 @@ function formatFileSize(bytes){
 
 async function renderRedemptionTab(forceReload){
   const container = document.getElementById('redemption-list');
-  if(!driveId){
+  if(!siteId){
     container.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Still connecting to SharePoint&hellip; try again in a moment.</p>';
     return;
   }
@@ -8466,7 +8477,8 @@ async function renderRedemptionTab(forceReload){
   }
   container.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Loading&hellip;</p>';
   try{
-    const path = '/drives/' + driveId + '/root:/' + REDEMPTION_FOLDER_PATH.split('/').map(encodeURIComponent).join('/') + ':/children?$select=name,size,webUrl,file&$top=200';
+    const rDriveId = await getRedemptionDriveId();
+    const path = '/drives/' + rDriveId + '/root:/' + REDEMPTION_FOLDER_PATH.split('/').map(encodeURIComponent).join('/') + ':/children?$select=name,size,webUrl,file&$top=200';
     const data = await graphFetch(path);
     const items = (data && data.value ? data.value : []).filter(it => it.file && /\.pdf$/i.test(it.name));
     items.sort((a,b) => {
@@ -8477,7 +8489,11 @@ async function renderRedemptionTab(forceReload){
     redemptionFormsCache = items;
     paintRedemptionList(items);
   }catch(err){
-    container.innerHTML = '<div class="warning-box">Could not load the redemption forms from SharePoint: '
+    // Inline style rather than the shared .warning-box class: that class
+    // defaults to display:none (other tabs toggle it visible via JS on an
+    // element that already exists in the DOM), which would silently hide
+    // this message since it's injected fresh via innerHTML.
+    container.innerHTML = '<div style="display:block;background:#fdecea;border:1px solid #e2a49a;color:#8a2d1f;border-radius:var(--radius);padding:14px 18px;font-size:13px;line-height:1.5;">Could not load the redemption forms from SharePoint: '
       + (err && err.message ? err.message : err)
       + '. Make sure the "10. REDEMPTION TEMPLATE" folder still exists under 7.OPERATION DOCS in the Operations SharePoint site, then hit Refresh.</div>';
   }
