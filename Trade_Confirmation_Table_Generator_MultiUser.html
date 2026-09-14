@@ -855,6 +855,18 @@
   </div>
 </div>
 
+<div id="redemption-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
+  <div style="width:100%;max-width:560px;max-height:85vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:12px;">
+    <h2 style="margin:0;font-size:16px;">Redemption Documents — Deal ID <span id="redemption-modal-dealid"></span></h2>
+    <p style="margin:0;font-size:13px;color:var(--text-secondary);">This is a Stock-Out (R) deal — it isn't fully complete until each product below has its own signed Redemption Form uploaded. One PDF/Word file per product, max 4 MB. Files are saved to the "Redemption Documents" folder on SharePoint, renamed to "Deal ID_Product n".</p>
+    <div id="redemption-modal-fields" style="display:flex;flex-direction:column;gap:12px;"></div>
+    <div id="redemption-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
+      <button type="button" class="secondary" id="redemption-modal-close">Close</button>
+    </div>
+  </div>
+</div>
+
 <div id="full-edit-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
   <div style="width:100%;max-width:640px;max-height:85vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:12px;">
     <h2 style="margin:0;font-size:16px;">Edit agreement — Deal ID <span id="full-edit-modal-dealid"></span></h2>
@@ -914,6 +926,11 @@ const CC_LOG_TABLE_NAME = "TradeDealLog7"; // Excel Table on the workbook's CCDe
 // correction requested via the same "Request edit" flow as Registry/Tech
 // (see the pendingVolume comment on the MC object below); not required for
 // anything else in this app to work: Pending Volume.
+// OPTIONAL 68th-71st columns, only needed for the Redemption Form upload
+// step on an Approved, Order Type "Stock-Out (R)" REC deal (see the
+// redemptionDocName comment on the MC object below); not required for
+// anything else in this app to work: Redemption Document Name, Redemption
+// Document URL, Redemption Uploaded By, Redemption Uploaded Date.
 // NOTE: if you're adding this to an existing workbook, add any new column
 // ("Broker Fee Type"/"Broker Fee Currency"/"Broker Fee Price" included, the
 // 7 "Pending ..."/"Change Requested ..." columns used for post-approval BD
@@ -926,9 +943,12 @@ const CC_LOG_TABLE_NAME = "TradeDealLog7"; // Excel Table on the workbook's CCDe
 // Summary" (what a post-Level-1 "Edit & resend" changed — see the
 // editChangeSummary comment on the MC object below), and now "Pending
 // Volume" (a post-approval Volume (RECs) correction — see the pendingVolume
-// comment on the MC object below)) at the END of the live TradeDealLog
-// Excel Table — don't insert them in the middle, or every existing column
-// index below will point at the wrong data.
+// comment on the MC object below), and now "Redemption Document Name",
+// "Redemption Document URL", "Redemption Uploaded By" and "Redemption
+// Uploaded Date" (the Redemption Form upload step — see the
+// redemptionDocName comment on the MC object below)) at the END of the live
+// TradeDealLog Excel Table — don't insert them in the middle, or every
+// existing column index below will point at the wrong data.
 // "Row Uid": a permanent, per-TRADE-ROW random ID, stamped once at Save
 // agreement time and never touched again — unlike Deal ID (shared by every
 // row of a multi-product agreement) or the Excel row index (which can shift
@@ -1050,7 +1070,31 @@ const MC = {
   // columns yet can still save, just without this data. To start capturing
   // it, add "Source Vintage Start", "Source Vintage End" and "Source
   // Matching Note" at the END of the live TradeDealLog Excel Table.
-  sourceVintageStart:65, sourceVintageEnd:66, sourceMatchNote:67
+  sourceVintageStart:65, sourceVintageEnd:66, sourceMatchNote:67,
+  // ---- Redemption Form upload (RECs, Order Type "Stock-Out (R)" only) ----
+  // Optional 68th-71st columns. Once a REC deal reaches STATUS_APPROVED
+  // (Level 3 sign-off) and its Order Type (MC.supplyDemand) is "Stock-Out
+  // (R)" — see isStockOutR — the deal isn't treated as fully complete until
+  // EVERY product row on it has its own signed Redemption Form uploaded
+  // (one file per physical row/product — see dealNeedsRedemption/
+  // dealRedemptionSummary/openRedemptionModal/uploadRedemptionDocument).
+  // Nothing here changes Status or the 3-level approval chain itself — a
+  // Stock-Out (R) REC deal is still "Approved" the instant Level 3 signs
+  // off, exactly like any other deal; this is purely an additional,
+  // independent per-row completion flag shown alongside that status (a
+  // badge in renderHistoryTable, plus the "Redemption Documents" button/
+  // modal). Only ever populated on the standard (REC) TradeDealLog table —
+  // Carbon Credit deals never use this, so ccRawToCanonical() never sets
+  // these and CC rows simply read back blank. Optional/additive, same
+  // reasoning as regTechReminderSentDate/editChangeSummary/pendingVolume
+  // above — guard on values.length before reading/writing it. To start
+  // capturing it, add "Redemption Document Name", "Redemption Document
+  // URL", "Redemption Uploaded By" and "Redemption Uploaded Date" at the
+  // END of the live TradeDealLog Excel Table. The uploaded file itself is
+  // stored in a "Redemption Documents" folder in the same SharePoint drive
+  // as the workbook (see REDEMPTION_DOC_FOLDER_PATH), renamed to
+  // "<Deal ID>_Product <n>" — see uploadRedemptionDocument.
+  redemptionDocName:68, redemptionDocUrl:69, redemptionUploadedBy:70, redemptionUploadedDate:71
 };
 const COL_COUNT = 59;
 const STANDARD_DRAFT_TABLE_NAME = "TradeDealDrafts";   // Excel Table on the TradeDealDrafts sheet
@@ -2715,6 +2759,106 @@ async function uploadAgreementFile(dealId, file){
   }
   const item = await res.json();
   return { name: item.name, webUrl: item.webUrl };
+}
+
+/* ---- Redemption Form upload (RECs, Order Type "Stock-Out (R)" only) ----
+   Same simple (non-resumable, 4 MB-limited) upload endpoint as
+   uploadAgreementFile above, into a "Redemption Documents" folder in the
+   SAME SharePoint drive that hosts the workbook (`driveId` — the
+   "Process Improvement" library on the Operations site, per resolveWorkbook)
+   — a sibling of "Agreement Files", NOT the separate default-library
+   drive the Redemption Form *templates* list (see REDEMPTION_FOLDER_PATH/
+   getRedemptionDriveId further down) reads from. One file per product/row —
+   productIndex is the 1-based "Product N" position within the deal, same
+   numbering used everywhere else in this app. The filename is always
+   "<Deal ID>_Product <n>" plus the uploaded file's own extension, so a later
+   re-upload for the same product overwrites the same SharePoint file rather
+   than leaving duplicates behind. */
+const REDEMPTION_DOC_FOLDER_PATH = 'Redemption Documents';
+const REDEMPTION_DOC_UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
+async function uploadRedemptionDocument(dealId, productIndex, file){
+  if(!driveId) throw new Error('Not connected to the SharePoint workbook yet — try refreshing the page.');
+  if(file.size > REDEMPTION_DOC_UPLOAD_MAX_BYTES){
+    throw new Error('That file is larger than 4 MB — please compress it or upload a smaller file.');
+  }
+  const token = await getAccessToken(GRAPH_SCOPES);
+  const extMatch = /\.[^.\\\/]+$/.exec(file.name || '');
+  const ext = extMatch ? extMatch[0] : '';
+  const safeName = (dealId + '_Product ' + productIndex + ext).replace(/[\\\/:*?"<>|]/g, '-');
+  const path = '/drives/' + driveId + '/root:/' + REDEMPTION_DOC_FOLDER_PATH.split('/').map(encodeURIComponent).join('/') + '/' + encodeURIComponent(safeName) + ':/content';
+  const res = await fetch('https://graph.microsoft.com/v1.0' + path, {
+    method: 'PUT',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': file.type || 'application/octet-stream' },
+    body: file
+  });
+  if(!res.ok){
+    const text = await res.text().catch(()=> '');
+    throw new Error('Redemption Form upload failed (' + res.status + '): ' + text.slice(0, 300));
+  }
+  const item = await res.json();
+  return { name: item.name, webUrl: item.webUrl };
+}
+// True once a deal's Status/Order Type mean it needs the extra Redemption
+// Form step at all — a REC (never Carbon Credit) deal that has reached
+// STATUS_APPROVED with Order Type "Stock-Out (R)". Doesn't say anything
+// about whether the documents have actually been uploaded yet — see
+// dealRedemptionSummary for that.
+function dealNeedsRedemption(status, sourceTable, orderType){
+  return status === STATUS_APPROVED && sourceTable !== CC_LOG_TABLE_NAME && isStockOutR(orderType);
+}
+// True if this specific product ROW already has its Redemption Form on
+// file. Guarded on values.length since these are optional/additive
+// columns — a workbook that hasn't added them yet just reads as "not
+// uploaded" everywhere rather than erroring.
+function rowHasRedemptionDoc(rv){
+  return !!(rv && rv.length > MC.redemptionDocName && rv[MC.redemptionDocName]);
+}
+// Per-deal roll-up used for the "X of N uploaded" badge and to decide
+// whether the deal counts as fully complete. `rows` must already be
+// sorted by row.index (same order used for "Product N" numbering
+// everywhere else in this app — see groupByDealId).
+function dealRedemptionSummary(rows){
+  const total = rows.length;
+  const uploaded = rows.filter(r => rowHasRedemptionDoc(r.values[0])).length;
+  return { total, uploaded, complete: total > 0 && uploaded === total };
+}
+// Uploads the file for one product on an already-Approved Stock-Out (R) REC
+// deal, then stamps the result onto that row's own
+// redemptionDocName/Url/UploadedBy/UploadedDate columns. Identifies the row
+// primarily by its permanent Row Uid (rowUid — blank on very old rows saved
+// before that column existed), falling back to its 1-based position within
+// the deal's rows sorted by index (the same "Product N" position the modal
+// showed it at) — mirrors the same rowUid-first, position-as-fallback
+// approach used for row identity elsewhere in this file. Always re-reads
+// the live rows first (same pattern as approveDeal/rejectDeal) so this
+// never overwrites a row that's moved on since the modal was opened.
+async function saveRedemptionUpload(dealId, tableName, rowUid, productIndex, file){
+  if(!dealId) return;
+  tableName = tableName === CC_LOG_TABLE_NAME ? CC_LOG_TABLE_NAME : STANDARD_LOG_TABLE_NAME;
+  if(tableName === CC_LOG_TABLE_NAME) throw new Error('Redemption Documents only apply to RECs.');
+  await ensureFreshWorkbookSession();
+  const rows = await getCanonicalTableRows(tableName);
+  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
+  if(!matching.length) throw new Error('Could not find this deal anymore — please refresh and try again.');
+  let row = rowUid ? matching.find(r => String(r.values[0][MC.rowUid] || '') === rowUid) : null;
+  if(!row) row = matching[productIndex - 1];
+  if(!row) throw new Error('Could not find Product ' + productIndex + ' on this deal anymore — please refresh and try again.');
+  if(row.values[0][MC.status] !== STATUS_APPROVED){
+    throw new Error('This deal is no longer Approved — please refresh before uploading.');
+  }
+  const liveColumnCount = await getTableColumnCount(tableName);
+  if(liveColumnCount <= MC.redemptionDocName){
+    throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing the "Redemption Document Name", "Redemption Document URL", "Redemption Uploaded By" and "Redemption Uploaded Date" columns. Ask an admin to add those four columns at the end of the table, then try again.');
+  }
+  const info = await uploadRedemptionDocument(dealId, productIndex, file);
+  const values = row.values[0].slice();
+  while(values.length <= MC.redemptionUploadedDate) values.push('');
+  values[MC.redemptionDocName] = info.name;
+  values[MC.redemptionDocUrl] = info.webUrl;
+  values[MC.redemptionUploadedBy] = currentAccount.username;
+  values[MC.redemptionUploadedDate] = new Date().toISOString();
+  await updateCanonicalTableRow(tableName, row.index, values);
+  await loadHistory();
 }
 
 /* ---- Deal ID assignment ----
@@ -4588,6 +4732,19 @@ function renderHistoryTable(el, groups, opts){
       : '';
     const rowSourceTable = g.sourceTable || (g.rows[0] && g.rows[0]._sourceTable) || STANDARD_LOG_TABLE_NAME;
     const sourceAttr = ' data-logtable="'+escapeHtml(rowSourceTable)+'"';
+    // Redemption Form upload step — Approved, Order Type "Stock-Out (R)"
+    // REC deals only (see dealNeedsRedemption). Purely additive to the
+    // Approved status: a small badge next to it, plus a button that opens
+    // openRedemptionModal, gated the same "owner or admin" way as every
+    // other post-approval action on this row.
+    const redemptionApplies = dealNeedsRedemption(status, rowSourceTable, v[MC.supplyDemand]);
+    const redemptionInfo = redemptionApplies ? dealRedemptionSummary(g.rows) : null;
+    const redemptionBadge = redemptionInfo
+      ? (redemptionInfo.complete
+          ? '<div style="font-size:11px;color:#1f7a4d;margin-top:2px;">✓ Redemption Documents complete</div>'
+          : '<div style="font-size:11px;color:#8a6d1f;margin-top:2px;">⏳ Redemption Documents: '+redemptionInfo.uploaded+' of '+redemptionInfo.total+' uploaded</div>')
+      : '';
+    const canManageRedemption = isOwnerOrAdmin && redemptionApplies;
     html += '<tr style="border-top:1px solid var(--border);">' +
       (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[MC.salesPic]||'')+'</td>' : '') +
       '<td style="padding:6px;">'+(isPendingDealId(v[MC.dealId]) ? '-' : escapeHtml(friendlyDealId(v[MC.dealId])))+'</td>' +
@@ -4598,6 +4755,7 @@ function renderHistoryTable(el, groups, opts){
       '<td style="padding:6px;">'+statusBadge(status)+
         (trail ? '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">'+trail+'</div>' : '')+
         agreementLink+
+        redemptionBadge+
       '</td>' +
       '<td style="padding:6px;white-space:nowrap;">' +
         regTechWarningIcon +
@@ -4607,6 +4765,7 @@ function renderHistoryTable(el, groups, opts){
         (canReject ? ' <button type="button" class="secondary history-reject-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#8a2d1f;border-color:#c1493a;" title="Discards this requested BD source matching correction — the deal\'s already-Approved details are left untouched.">Reject change</button>' : '') +
         (canRequestEdit ? ' <button type="button" class="secondary history-request-edit-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;">Request edit</button>' : '') +
         (canFullEdit ? ' <button type="button" class="secondary history-full-edit-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;" title="'+escapeHtml(fullEditTitle)+'">Edit &amp; resend</button>' : '') +
+        (canManageRedemption ? ' <button type="button" class="secondary history-redemption-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;'+(redemptionInfo.complete?'':'color:#8a6d1f;border-color:#e8c99a;')+'" title="Upload the signed Redemption Form for each product on this deal.">'+(redemptionInfo.complete?'Redemption Documents':'Upload Redemption Docs')+'</button>' : '') +
       '</td>' +
     '</tr>';
     if(status === STATUS_REJECTED && v[MC.rejectReason]){
@@ -5499,6 +5658,89 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
     btn.textContent = editRequestModalStatus === STATUS_APPROVED ? 'Save changes' : 'Submit for Level 3 approval';
   }
 });
+/* ---- Redemption Documents modal ----
+   Opened from the "Upload Redemption Docs"/"Redemption Documents" button
+   renderHistoryTable adds to an Approved, Order Type "Stock-Out (R)" REC
+   deal (see dealNeedsRedemption). One file-picker + Upload/Replace button
+   per product row — each upload happens immediately (same "pick a file,
+   it uploads right away" pattern as the rest of this app's file inputs),
+   and the modal just re-renders itself from the freshly-saved row afterward
+   so the "N of M uploaded" state everywhere else stays in sync too (see
+   saveRedemptionUpload, which calls loadHistory()). */
+let redemptionModalDealId = null;
+let redemptionModalTableName = null;
+function redemptionModalFieldsHtml(rows){
+  return rows.map((r, idx)=>{
+    const rv = r.values[0];
+    const n = idx + 1;
+    const has = rowHasRedemptionDoc(rv);
+    const rowUid = rv[MC.rowUid] || '';
+    const statusHtml = has
+      ? '<div style="font-size:12px;color:#1f7a4d;">✓ <a href="'+escapeHtml(rv[MC.redemptionDocUrl])+'" target="_blank" rel="noopener">'+escapeHtml(rv[MC.redemptionDocName])+'</a>'+
+        (rv[MC.redemptionUploadedBy] ? ' — uploaded by '+escapeHtml(rv[MC.redemptionUploadedBy]) : '')+
+        (rv[MC.redemptionUploadedDate] ? ' on '+escapeHtml(formatStoredDate(rv[MC.redemptionUploadedDate])) : '')+
+        '</div>'
+      : '<div style="font-size:12px;color:#8a6d1f;">Not uploaded yet</div>';
+    return '<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;">' +
+      '<div style="font-weight:600;font-size:13px;margin-bottom:4px;">Product '+n+'</div>' +
+      statusHtml +
+      '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">' +
+        '<input type="file" class="redemption-file-input" accept=".pdf,.doc,.docx" data-idx="'+n+'" data-rowuid="'+escapeHtml(rowUid)+'" style="flex:1;min-width:160px;"/>' +
+        '<button type="button" class="secondary redemption-upload-btn" data-idx="'+n+'" style="padding:4px 10px;font-size:12px;">'+(has?'Replace':'Upload')+'</button>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+function openRedemptionModal(dealId, tableName){
+  redemptionModalDealId = dealId;
+  redemptionModalTableName = tableName === CC_LOG_TABLE_NAME ? CC_LOG_TABLE_NAME : STANDARD_LOG_TABLE_NAME;
+  document.getElementById('redemption-modal-dealid').textContent = friendlyDealId(dealId);
+  document.getElementById('redemption-modal-error').style.display = 'none';
+  const rows = logRowsCache
+    .filter(r => String(r.values[0][MC.dealId] || '').trim() === String(dealId).trim() && (r._sourceTable||STANDARD_LOG_TABLE_NAME) === redemptionModalTableName)
+    .sort((a,b)=> a.index - b.index);
+  document.getElementById('redemption-modal-fields').innerHTML = redemptionModalFieldsHtml(rows);
+  document.getElementById('redemption-modal-overlay').style.display = 'flex';
+}
+function closeRedemptionModal(){
+  document.getElementById('redemption-modal-overlay').style.display = 'none';
+  redemptionModalDealId = null;
+  redemptionModalTableName = null;
+}
+document.getElementById('redemption-modal-close').addEventListener('click', closeRedemptionModal);
+document.getElementById('redemption-modal-overlay').addEventListener('click', (e)=>{
+  if(e.target.id === 'redemption-modal-overlay') closeRedemptionModal();
+});
+document.getElementById('redemption-modal-fields').addEventListener('click', async (e)=>{
+  const btn = e.target.closest('.redemption-upload-btn');
+  if(!btn) return;
+  const idx = parseInt(btn.getAttribute('data-idx'), 10);
+  const fileInput = document.querySelector('#redemption-modal-fields .redemption-file-input[data-idx="'+idx+'"]');
+  const file = fileInput && fileInput.files[0];
+  const errEl = document.getElementById('redemption-modal-error');
+  errEl.style.display = 'none';
+  if(!file){
+    errEl.textContent = 'Choose a file for Product ' + idx + ' first.';
+    errEl.style.display = 'block';
+    return;
+  }
+  const rowUid = fileInput.getAttribute('data-rowuid') || '';
+  const dealId = redemptionModalDealId;
+  const tableName = redemptionModalTableName;
+  const prevLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Uploading…';
+  try{
+    await saveRedemptionUpload(dealId, tableName, rowUid, idx, file);
+    openRedemptionModal(dealId, tableName); // re-render from the freshly-saved row
+  }catch(err){
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = prevLabel;
+  }
+});
+
 document.addEventListener('click', (e)=>{
   const viewBtn = e.target.closest('.history-view-btn');
   if(viewBtn){
@@ -5559,6 +5801,13 @@ document.addEventListener('click', (e)=>{
   if(fullEditBtn){
     setActiveDealLogTable(fullEditBtn.getAttribute('data-logtable'));
     openFullEditModal(fullEditBtn.getAttribute('data-dealid'));
+    return;
+  }
+  const redemptionBtn = e.target.closest('.history-redemption-btn');
+  if(redemptionBtn){
+    const tableName = redemptionBtn.getAttribute('data-logtable');
+    setActiveDealLogTable(tableName);
+    openRedemptionModal(redemptionBtn.getAttribute('data-dealid'), tableName);
   }
 });
 
