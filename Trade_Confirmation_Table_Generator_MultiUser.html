@@ -450,7 +450,7 @@
   #tab-panel-analysis #analysis-export-btn{margin-left:0 !important;}
   @media (min-width:900px){#tab-panel-analysis .confirmation-filter-bar{flex-wrap:wrap;row-gap:7px;}}
   @media (min-width:760px){
-    #tab-panel-confirmations .confirmation-filter-bar{display:grid;grid-template-columns:minmax(220px,1.5fr) minmax(130px,.75fr) minmax(150px,1fr);column-gap:10px;row-gap:8px;align-items:center;}
+    #tab-panel-confirmations .confirmation-filter-bar{display:grid;grid-template-columns:minmax(200px,1.3fr) minmax(115px,.65fr) minmax(130px,.75fr) minmax(130px,.75fr);column-gap:10px;row-gap:8px;align-items:center;}
     #tab-panel-confirmations .confirmation-filter-bar input[type="text"],
     #tab-panel-confirmations .confirmation-filter-bar select{width:100%;max-width:none;min-width:0;}
     #tab-panel-confirmations .confirmation-filter-daterange{grid-column:1 / -1;}
@@ -649,6 +649,7 @@
       <input type="text" id="history-filter-search" placeholder="Search Deal ID or Counterparty…">
       <select id="history-filter-type"><option value="">All types</option><option value="recs">RECs</option><option value="carboncredit">Carbon Credit</option></select>
       <select id="history-filter-status"></select>
+      <select id="history-filter-order"><option value="">All order types</option><option value="Stock-In (T)">Stock-In (T)</option><option value="Stock-Out (T)">Stock-Out (T)</option><option value="Stock-Out (R)">Stock-Out (R)</option></select>
       <span class="confirmation-filter-daterange">
         <span class="analysis-filter-group-label" style="margin-left:0;">Delivery End:</span>
         <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">From <input type="date" id="history-filter-delivery-from"></label>
@@ -666,6 +667,7 @@
       <input type="text" id="queue-filter-search" placeholder="Search Deal ID or Counterparty…">
       <select id="queue-filter-type"><option value="">All types</option><option value="recs">RECs</option><option value="carboncredit">Carbon Credit</option></select>
       <select id="queue-filter-status"></select>
+      <select id="queue-filter-order"><option value="">All order types</option><option value="Stock-In (T)">Stock-In (T)</option><option value="Stock-Out (T)">Stock-Out (T)</option><option value="Stock-Out (R)">Stock-Out (R)</option></select>
       <span class="confirmation-filter-daterange">
         <span class="analysis-filter-group-label" style="margin-left:0;">Delivery End:</span>
         <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">From <input type="date" id="queue-filter-delivery-from"></label>
@@ -683,6 +685,7 @@
       <input type="text" id="admin-filter-search" placeholder="Search Deal ID or Counterparty…">
       <select id="admin-filter-type"><option value="">All types</option><option value="recs">RECs</option><option value="carboncredit">Carbon Credit</option></select>
       <select id="admin-filter-status"></select>
+      <select id="admin-filter-order"><option value="">All order types</option><option value="Stock-In (T)">Stock-In (T)</option><option value="Stock-Out (T)">Stock-Out (T)</option><option value="Stock-Out (R)">Stock-Out (R)</option></select>
       <span class="confirmation-filter-daterange">
         <span class="analysis-filter-group-label" style="margin-left:0;">Delivery End:</span>
         <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">From <input type="date" id="admin-filter-delivery-from"></label>
@@ -703,6 +706,7 @@
     <div class="confirmation-filter-bar">
       <select id="analysis-filter-type"><option value="">All types</option><option value="recs">RECs</option><option value="carboncredit">Carbon Credit</option></select>
       <select id="analysis-filter-bd"><option value="">All BD in-charge</option></select>
+      <select id="analysis-filter-order"><option value="">All order types</option><option value="Stock-In (T)">Stock-In (T)</option><option value="Stock-Out (T)">Stock-Out (T)</option><option value="Stock-Out (R)">Stock-Out (R)</option></select>
       <span class="analysis-row-break" aria-hidden="true"></span>
       <span class="analysis-filter-group-label analysis-dealdate-label">Deal Date:</span>
       <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">From <input type="date" id="analysis-filter-from"></label>
@@ -858,7 +862,7 @@
 <div id="redemption-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
   <div style="width:100%;max-width:560px;max-height:85vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:12px;">
     <h2 style="margin:0;font-size:16px;">Redemption Documents — Deal ID <span id="redemption-modal-dealid"></span></h2>
-    <p style="margin:0;font-size:13px;color:var(--text-secondary);">This is a Stock-Out (R) deal — it isn't fully complete until each product below has its own signed Redemption Form uploaded. One PDF/Word file per product, max 4 MB. Files are saved to the "Redemption Documents" folder on SharePoint, renamed to "Deal ID_Product n".</p>
+    <p style="margin:0;font-size:13px;color:var(--text-secondary);">This is a Stock-Out (R) deal — it isn't fully complete until each product below has at least one signed Redemption Form uploaded. You can upload more than one file per product (e.g. multiple signed pages). PDF/Word files only, max 4 MB each. Files are saved to the "Redemption Documents" folder on SharePoint, renamed to "Deal ID_Product n_1", "Deal ID_Product n_2", etc.</p>
     <div id="redemption-modal-fields" style="display:flex;flex-direction:column;gap:12px;"></div>
     <div id="redemption-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
@@ -1075,9 +1079,13 @@ const MC = {
   // Optional 68th-71st columns. Once a REC deal reaches STATUS_APPROVED
   // (Level 3 sign-off) and its Order Type (MC.supplyDemand) is "Stock-Out
   // (R)" — see isStockOutR — the deal isn't treated as fully complete until
-  // EVERY product row on it has its own signed Redemption Form uploaded
-  // (one file per physical row/product — see dealNeedsRedemption/
-  // dealRedemptionSummary/openRedemptionModal/uploadRedemptionDocument).
+  // EVERY product row on it has AT LEAST ONE signed Redemption Form
+  // uploaded (see dealNeedsRedemption/dealRedemptionSummary/
+  // openRedemptionModal/uploadRedemptionDocument). A product row can have
+  // more than one Redemption Form on file (e.g. several signed pages) — each
+  // of these four columns holds a "; "-joined list, one entry per uploaded
+  // document, in upload order, same convention as the per-BD-source fields
+  // (see joinBdSourceField) and parsed back apart by parseRedemptionDocs.
   // Nothing here changes Status or the 3-level approval chain itself — a
   // Stock-Out (R) REC deal is still "Approved" the instant Level 3 signs
   // off, exactly like any other deal; this is purely an additional,
@@ -1090,10 +1098,13 @@ const MC = {
   // above — guard on values.length before reading/writing it. To start
   // capturing it, add "Redemption Document Name", "Redemption Document
   // URL", "Redemption Uploaded By" and "Redemption Uploaded Date" at the
-  // END of the live TradeDealLog Excel Table. The uploaded file itself is
+  // END of the live TradeDealLog Excel Table. Each uploaded file itself is
   // stored in a "Redemption Documents" folder in the same SharePoint drive
   // as the workbook (see REDEMPTION_DOC_FOLDER_PATH), renamed to
-  // "<Deal ID>_Product <n>" — see uploadRedemptionDocument.
+  // "<Deal ID>_Product <n>_<doc index>" — e.g. "12345_Product 1_1",
+  // "12345_Product 1_2" — so uploading a second/third file for the same
+  // product never overwrites the ones already there. See
+  // uploadRedemptionDocument/saveRedemptionUpload.
   redemptionDocName:68, redemptionDocUrl:69, redemptionUploadedBy:70, redemptionUploadedDate:71
 };
 const COL_COUNT = 59;
@@ -1916,13 +1927,12 @@ function tryOpenDealFromUrl(){
   const group = matches.filter(r => (r._sourceTable||STANDARD_LOG_TABLE_NAME) === dealLogTableName());
   const withHtml = group.find(r => r.values[0][MC.generatedHtml]);
   if(!withHtml) return; // history may not have loaded this deal yet — try again next refresh
-  // Same "creator or admin only" rule as the shared All confirmations list
-  // — a deep link (e.g. from an approval-notification email) shouldn't let
-  // someone else's confirmation be opened just because the link was seen
-  // or forwarded.
-  const ownerEmail = (withHtml.values[0][MC.submittedBy] || '').toLowerCase();
+  // Same "submitter, BD in-charge, or admin only" rule as the shared All
+  // confirmations list (see isDealOwnerEmail) — a deep link (e.g. from an
+  // approval-notification email) shouldn't let someone else's confirmation
+  // be opened just because the link was seen or forwarded.
   const myEmailLower = (currentAccount && currentAccount.username || '').toLowerCase();
-  if(!isAdmin && ownerEmail !== myEmailLower){ urlDealOpened = true; return; }
+  if(!isAdmin && !isDealOwnerEmail(myEmailLower, withHtml.values[0][MC.salesPic], withHtml.values[0][MC.submittedBy])){ urlDealOpened = true; return; }
   const freshHtml = refreshBdMatchingInHtml(withHtml.values[0][MC.generatedHtml], group);
   openViewModal(dealId, freshHtml, withHtml.values[0][MC.agreementFileUrl], group);
   urlDealOpened = true;
@@ -2768,15 +2778,18 @@ async function uploadAgreementFile(dealId, file){
    "Process Improvement" library on the Operations site, per resolveWorkbook)
    — a sibling of "Agreement Files", NOT the separate default-library
    drive the Redemption Form *templates* list (see REDEMPTION_FOLDER_PATH/
-   getRedemptionDriveId further down) reads from. One file per product/row —
-   productIndex is the 1-based "Product N" position within the deal, same
-   numbering used everywhere else in this app. The filename is always
-   "<Deal ID>_Product <n>" plus the uploaded file's own extension, so a later
-   re-upload for the same product overwrites the same SharePoint file rather
-   than leaving duplicates behind. */
+   getRedemptionDriveId further down) reads from. One OR MORE files per
+   product/row — productIndex is the 1-based "Product N" position within the
+   deal, same numbering used everywhere else in this app; docIndex is the
+   1-based position of this particular file among all the files already
+   uploaded for that same product (see saveRedemptionUpload, which works
+   this out from the row's existing redemptionDocName list). The filename is
+   always "<Deal ID>_Product <n>_<docIndex>" plus the uploaded file's own
+   extension, so uploading a second/third file for the same product gets its
+   own SharePoint file instead of overwriting the previous one. */
 const REDEMPTION_DOC_FOLDER_PATH = 'Redemption Documents';
 const REDEMPTION_DOC_UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
-async function uploadRedemptionDocument(dealId, productIndex, file){
+async function uploadRedemptionDocument(dealId, productIndex, docIndex, file){
   if(!driveId) throw new Error('Not connected to the SharePoint workbook yet — try refreshing the page.');
   if(file.size > REDEMPTION_DOC_UPLOAD_MAX_BYTES){
     throw new Error('That file is larger than 4 MB — please compress it or upload a smaller file.');
@@ -2784,7 +2797,7 @@ async function uploadRedemptionDocument(dealId, productIndex, file){
   const token = await getAccessToken(GRAPH_SCOPES);
   const extMatch = /\.[^.\\\/]+$/.exec(file.name || '');
   const ext = extMatch ? extMatch[0] : '';
-  const safeName = (dealId + '_Product ' + productIndex + ext).replace(/[\\\/:*?"<>|]/g, '-');
+  const safeName = (dealId + '_Product ' + productIndex + '_' + docIndex + ext).replace(/[\\\/:*?"<>|]/g, '-');
   const path = '/drives/' + driveId + '/root:/' + REDEMPTION_DOC_FOLDER_PATH.split('/').map(encodeURIComponent).join('/') + '/' + encodeURIComponent(safeName) + ':/content';
   const res = await fetch('https://graph.microsoft.com/v1.0' + path, {
     method: 'PUT',
@@ -2806,32 +2819,57 @@ async function uploadRedemptionDocument(dealId, productIndex, file){
 function dealNeedsRedemption(status, sourceTable, orderType){
   return status === STATUS_APPROVED && sourceTable !== CC_LOG_TABLE_NAME && isStockOutR(orderType);
 }
-// True if this specific product ROW already has its Redemption Form on
-// file. Guarded on values.length since these are optional/additive
+// True if this specific product ROW already has at least one Redemption
+// Form on file. Guarded on values.length since these are optional/additive
 // columns — a workbook that hasn't added them yet just reads as "not
 // uploaded" everywhere rather than erroring.
 function rowHasRedemptionDoc(rv){
   return !!(rv && rv.length > MC.redemptionDocName && rv[MC.redemptionDocName]);
 }
+// Splits a product row's "; "-joined redemptionDocName/Url/UploadedBy/
+// UploadedDate columns back apart into one {name,url,uploadedBy,
+// uploadedDate} object per uploaded file, in upload order — the inverse of
+// how saveRedemptionUpload appends a newly-uploaded file onto those same
+// columns. Returns [] when the row has no Redemption Form on file yet (or
+// the columns don't exist yet on this workbook — see rowHasRedemptionDoc).
+function parseRedemptionDocs(rv){
+  if(!rowHasRedemptionDoc(rv)) return [];
+  const names = String(rv[MC.redemptionDocName] || '').split('; ');
+  const urls = String(rv[MC.redemptionDocUrl] || '').split('; ');
+  const bys = String(rv[MC.redemptionUploadedBy] || '').split('; ');
+  const dates = String(rv[MC.redemptionUploadedDate] || '').split('; ');
+  return names.map((name, i) => ({
+    name: name,
+    url: urls[i] || '',
+    uploadedBy: bys[i] || '',
+    uploadedDate: dates[i] || ''
+  }));
+}
 // Per-deal roll-up used for the "X of N uploaded" badge and to decide
-// whether the deal counts as fully complete. `rows` must already be
-// sorted by row.index (same order used for "Product N" numbering
-// everywhere else in this app — see groupByDealId).
+// whether the deal counts as fully complete. A product only needs AT LEAST
+// ONE Redemption Form to count as "uploaded" here — see rowHasRedemptionDoc
+// — extra files on the same product (see parseRedemptionDocs) don't change
+// this count. `rows` must already be sorted by row.index (same order used
+// for "Product N" numbering everywhere else in this app — see
+// groupByDealId).
 function dealRedemptionSummary(rows){
   const total = rows.length;
   const uploaded = rows.filter(r => rowHasRedemptionDoc(r.values[0])).length;
   return { total, uploaded, complete: total > 0 && uploaded === total };
 }
-// Uploads the file for one product on an already-Approved Stock-Out (R) REC
-// deal, then stamps the result onto that row's own
-// redemptionDocName/Url/UploadedBy/UploadedDate columns. Identifies the row
-// primarily by its permanent Row Uid (rowUid — blank on very old rows saved
-// before that column existed), falling back to its 1-based position within
-// the deal's rows sorted by index (the same "Product N" position the modal
-// showed it at) — mirrors the same rowUid-first, position-as-fallback
-// approach used for row identity elsewhere in this file. Always re-reads
-// the live rows first (same pattern as approveDeal/rejectDeal) so this
-// never overwrites a row that's moved on since the modal was opened.
+// Uploads one more file for one product on an already-Approved Stock-Out
+// (R) REC deal, then APPENDS the result onto that row's own
+// redemptionDocName/Url/UploadedBy/UploadedDate columns (each a "; "-joined
+// list, one entry per uploaded file — see parseRedemptionDocs) rather than
+// overwriting whatever was already there, so a product can end up with
+// several signed Redemption Forms on file. Identifies the row primarily by
+// its permanent Row Uid (rowUid — blank on very old rows saved before that
+// column existed), falling back to its 1-based position within the deal's
+// rows sorted by index (the same "Product N" position the modal showed it
+// at) — mirrors the same rowUid-first, position-as-fallback approach used
+// for row identity elsewhere in this file. Always re-reads the live rows
+// first (same pattern as approveDeal/rejectDeal) so this never overwrites a
+// row that's moved on since the modal was opened.
 async function saveRedemptionUpload(dealId, tableName, rowUid, productIndex, file){
   if(!dealId) return;
   tableName = tableName === CC_LOG_TABLE_NAME ? CC_LOG_TABLE_NAME : STANDARD_LOG_TABLE_NAME;
@@ -2850,13 +2888,16 @@ async function saveRedemptionUpload(dealId, tableName, rowUid, productIndex, fil
   if(liveColumnCount <= MC.redemptionDocName){
     throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing the "Redemption Document Name", "Redemption Document URL", "Redemption Uploaded By" and "Redemption Uploaded Date" columns. Ask an admin to add those four columns at the end of the table, then try again.');
   }
-  const info = await uploadRedemptionDocument(dealId, productIndex, file);
+  const existingDocs = parseRedemptionDocs(row.values[0]);
+  const docIndex = existingDocs.length + 1;
+  const info = await uploadRedemptionDocument(dealId, productIndex, docIndex, file);
   const values = row.values[0].slice();
   while(values.length <= MC.redemptionUploadedDate) values.push('');
-  values[MC.redemptionDocName] = info.name;
-  values[MC.redemptionDocUrl] = info.webUrl;
-  values[MC.redemptionUploadedBy] = currentAccount.username;
-  values[MC.redemptionUploadedDate] = new Date().toISOString();
+  const appendJoined = (curr, addition) => curr ? (curr + '; ' + addition) : addition;
+  values[MC.redemptionDocName] = appendJoined(values[MC.redemptionDocName], info.name);
+  values[MC.redemptionDocUrl] = appendJoined(values[MC.redemptionDocUrl], info.webUrl);
+  values[MC.redemptionUploadedBy] = appendJoined(values[MC.redemptionUploadedBy], currentAccount.username);
+  values[MC.redemptionUploadedDate] = appendJoined(values[MC.redemptionUploadedDate], new Date().toISOString());
   await updateCanonicalTableRow(tableName, row.index, values);
   await loadHistory();
 }
@@ -3658,8 +3699,8 @@ async function requestBdMatchChange(dealId, edits, matchNote){
     throw new Error('You can only request this correction once Level 2 has approved the deal.');
   }
   const myEmail = (currentAccount.username || '').toLowerCase();
-  if((matching[0].values[0][MC.submittedBy] || '').toLowerCase() !== myEmail){
-    throw new Error('Only the original submitter can request a change to this deal.');
+  if(!isDealOwnerEmail(myEmail, matching[0].values[0][MC.salesPic], matching[0].values[0][MC.submittedBy])){
+    throw new Error('Only the original submitter or this deal\'s BD in-charge can request a change to this deal.');
   }
   // Row Uid identity check: confirms each edit is still landing on the
   // exact product it was made against, not just "whatever's in this
@@ -4123,8 +4164,9 @@ function confirmationGroupDeliveryDates(g, fromDate, toDate){
   if(!seen.size && (fromDate || toDate)) return confirmationGroupDeliveryDates(g, null, null);
   return [...seen.entries()].sort((a,b)=>a[0]-b[0]).map(pair=>pair[1]);
 }
-function confirmationGroupMatchesFilter(g, searchLower, statusFilter, typeFilter, deliveryFromFilter, deliveryToFilter){
+function confirmationGroupMatchesFilter(g, searchLower, statusFilter, typeFilter, orderTypeFilter, deliveryFromFilter, deliveryToFilter){
   if(typeFilter && confirmationGroupType(g) !== typeFilter) return false;
+  if(orderTypeFilter && String((g.rows[0].values[0]||[])[MC.supplyDemand] || '').trim() !== orderTypeFilter) return false;
   if(statusFilter && dealGroupStatus(g.rows) !== statusFilter) return false;
   if(deliveryFromFilter || deliveryToFilter){
     // The Delivery End Date must belong to the SAME product falling inside
@@ -4151,24 +4193,26 @@ function confirmationGroupMatchesFilter(g, searchLower, statusFilter, typeFilter
   }
   return true;
 }
-function applyConfirmationFilter(key, listElId, searchElId, statusElId, typeElId, deliveryFromElId, deliveryToElId, countElId){
+function applyConfirmationFilter(key, listElId, searchElId, statusElId, typeElId, orderTypeElId, deliveryFromElId, deliveryToElId, countElId){
   const listEl = document.getElementById(listElId);
   if(!listEl) return;
   const searchEl = document.getElementById(searchElId);
   const statusEl = document.getElementById(statusElId);
   const typeEl = document.getElementById(typeElId);
+  const orderTypeEl = document.getElementById(orderTypeElId);
   const fromEl = document.getElementById(deliveryFromElId);
   const toEl = document.getElementById(deliveryToElId);
   const search = ((searchEl && searchEl.value) || '').trim().toLowerCase();
   const status = (statusEl && statusEl.value) || '';
   const type = (typeEl && typeEl.value) || '';
+  const orderType = (orderTypeEl && orderTypeEl.value) || '';
   const deliveryFromStr = (fromEl && fromEl.value) || '';
   const deliveryToStr = (toEl && toEl.value) || '';
   const deliveryFromDate = deliveryFromStr ? parseStoredDateToDate(deliveryFromStr) : null;
   const deliveryToDate = deliveryToStr ? parseStoredDateToDate(deliveryToStr) : null;
   const full = historyGroupsCache[key] || [];
-  const hasFilter = search || status || type || deliveryFromStr || deliveryToStr;
-  const filtered = hasFilter ? full.filter(g=>confirmationGroupMatchesFilter(g, search, status, type, deliveryFromDate, deliveryToDate)) : full;
+  const hasFilter = search || status || type || orderType || deliveryFromStr || deliveryToStr;
+  const filtered = hasFilter ? full.filter(g=>confirmationGroupMatchesFilter(g, search, status, type, orderType, deliveryFromDate, deliveryToDate)) : full;
   const opts = Object.assign({}, CONFIRMATION_FILTER_OPTS[key]);
   if(hasFilter) opts.emptyText = 'No confirmations match your filter.';
   // Passed through so the Delivery End Date cell only lists the date(s)
@@ -4180,22 +4224,23 @@ function applyConfirmationFilter(key, listElId, searchElId, statusElId, typeElId
   const countEl = document.getElementById(countElId);
   if(countEl) countEl.textContent = hasFilter ? ('Showing ' + filtered.length + ' of ' + full.length) : '';
 }
-function wireConfirmationFilterBar(key, listElId, searchElId, statusElId, typeElId, deliveryFromElId, deliveryToElId, countElId){
-  const run = ()=> applyConfirmationFilter(key, listElId, searchElId, statusElId, typeElId, deliveryFromElId, deliveryToElId, countElId);
+function wireConfirmationFilterBar(key, listElId, searchElId, statusElId, typeElId, orderTypeElId, deliveryFromElId, deliveryToElId, countElId){
+  const run = ()=> applyConfirmationFilter(key, listElId, searchElId, statusElId, typeElId, orderTypeElId, deliveryFromElId, deliveryToElId, countElId);
   const searchEl = document.getElementById(searchElId);
   const statusEl = document.getElementById(statusElId);
   const typeEl = document.getElementById(typeElId);
+  const orderTypeEl = document.getElementById(orderTypeElId);
   const fromEl = document.getElementById(deliveryFromElId);
   const toEl = document.getElementById(deliveryToElId);
   if(searchEl && !searchEl.dataset.wired){ searchEl.addEventListener('input', run); searchEl.dataset.wired = '1'; }
-  [statusEl,typeEl].forEach(el=>{ if(el && !el.dataset.wired){ el.addEventListener('change', run); el.dataset.wired = '1'; } });
+  [statusEl,typeEl,orderTypeEl].forEach(el=>{ if(el && !el.dataset.wired){ el.addEventListener('change', run); el.dataset.wired = '1'; } });
   [fromEl,toEl].forEach(el=>{ if(el && !el.dataset.wired){ el.addEventListener('change', run); el.addEventListener('input', run); el.dataset.wired = '1'; } });
 }
 function wireConfirmationFilterBars(){
   populateConfirmationFilterSelects();
-  wireConfirmationFilterBar('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-type', 'history-filter-delivery-from', 'history-filter-delivery-to', 'history-filter-count');
-  wireConfirmationFilterBar('admin', 'admin-history-list', 'admin-filter-search', 'admin-filter-status', 'admin-filter-type', 'admin-filter-delivery-from', 'admin-filter-delivery-to', 'admin-filter-count');
-  wireConfirmationFilterBar('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-type', 'queue-filter-delivery-from', 'queue-filter-delivery-to', 'queue-filter-count');
+  wireConfirmationFilterBar('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-type', 'history-filter-order', 'history-filter-delivery-from', 'history-filter-delivery-to', 'history-filter-count');
+  wireConfirmationFilterBar('admin', 'admin-history-list', 'admin-filter-search', 'admin-filter-status', 'admin-filter-type', 'admin-filter-order', 'admin-filter-delivery-from', 'admin-filter-delivery-to', 'admin-filter-count');
+  wireConfirmationFilterBar('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-type', 'queue-filter-order', 'queue-filter-delivery-from', 'queue-filter-delivery-to', 'queue-filter-count');
 }
 
 async function loadHistory(){
@@ -4205,8 +4250,12 @@ async function loadHistory(){
     const rows = await getAllCanonicalDealRows();
     logRowsCache = rows;
     const myEmail = (currentAccount.username || '').toLowerCase();
+    // "My saved confirmations" now shows a deal to whoever actually
+    // submitted it OR whoever is set as its BD in-charge (see
+    // isDealOwnerEmail/bdInChargeEmail) — not just the literal submitter,
+    // since a deal is often filled in by ops on a BD's behalf.
     const mineGroups = groupByDealId(
-      rows.filter(r => (String(r.values[0][MC.submittedBy] || '')).toLowerCase() === myEmail)
+      rows.filter(r => isDealOwnerEmail(myEmail, r.values[0][MC.salesPic], r.values[0][MC.submittedBy]))
     ).sort((a,b)=> String(b.rows[0].values[0][MC.submittedDate]||'').localeCompare(String(a.rows[0].values[0][MC.submittedDate]||'')));
     historyGroupsCache.mine = mineGroups;
 
@@ -4233,10 +4282,10 @@ async function loadHistory(){
     }
 
     wireConfirmationFilterBars();
-    applyConfirmationFilter('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-type', 'history-filter-delivery-from', 'history-filter-delivery-to', 'history-filter-count');
-    applyConfirmationFilter('admin', 'admin-history-list', 'admin-filter-search', 'admin-filter-status', 'admin-filter-type', 'admin-filter-delivery-from', 'admin-filter-delivery-to', 'admin-filter-count');
+    applyConfirmationFilter('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-type', 'history-filter-order', 'history-filter-delivery-from', 'history-filter-delivery-to', 'history-filter-count');
+    applyConfirmationFilter('admin', 'admin-history-list', 'admin-filter-search', 'admin-filter-status', 'admin-filter-type', 'admin-filter-order', 'admin-filter-delivery-from', 'admin-filter-delivery-to', 'admin-filter-count');
     if(isAdmin){
-      applyConfirmationFilter('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-type', 'queue-filter-delivery-from', 'queue-filter-delivery-to', 'queue-filter-count');
+      applyConfirmationFilter('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-type', 'queue-filter-order', 'queue-filter-delivery-from', 'queue-filter-delivery-to', 'queue-filter-count');
     }
     refreshAnalysisBdOptions();
     wireAnalysisFilterBar();
@@ -4286,13 +4335,14 @@ function refreshAnalysisBdOptions(){
 function wireAnalysisFilterBar(){
   const typeEl = document.getElementById('analysis-filter-type');
   const bdEl = document.getElementById('analysis-filter-bd');
+  const orderTypeEl = document.getElementById('analysis-filter-order');
   const fromEl = document.getElementById('analysis-filter-from');
   const toEl = document.getElementById('analysis-filter-to');
   const createdFromEl = document.getElementById('analysis-filter-created-from');
   const createdToEl = document.getElementById('analysis-filter-created-to');
   const clearBtn = document.getElementById('analysis-filter-clear');
   const exportBtn = document.getElementById('analysis-export-btn');
-  [typeEl, bdEl, fromEl, toEl, createdFromEl, createdToEl].forEach(el=>{
+  [typeEl, bdEl, orderTypeEl, fromEl, toEl, createdFromEl, createdToEl].forEach(el=>{
     if(!el || el.dataset.wired) return;
     el.addEventListener('change', renderAnalysisTab);
     el.dataset.wired = '1';
@@ -4301,6 +4351,7 @@ function wireAnalysisFilterBar(){
     clearBtn.addEventListener('click', ()=>{
       if(typeEl) typeEl.value = '';
       if(bdEl) bdEl.value = '';
+      if(orderTypeEl) orderTypeEl.value = '';
       if(fromEl) fromEl.value = '';
       if(toEl) toEl.value = '';
       if(createdFromEl) createdFromEl.value = '';
@@ -4317,6 +4368,7 @@ function wireAnalysisFilterBar(){
 function getFilteredAnalysisGroups(){
   const type = (document.getElementById('analysis-filter-type') || {}).value || '';
   const bd = (document.getElementById('analysis-filter-bd') || {}).value || '';
+  const orderType = (document.getElementById('analysis-filter-order') || {}).value || '';
   const fromStr = (document.getElementById('analysis-filter-from') || {}).value || '';
   const toStr = (document.getElementById('analysis-filter-to') || {}).value || '';
   const createdFromStr = (document.getElementById('analysis-filter-created-from') || {}).value || '';
@@ -4330,6 +4382,7 @@ function getFilteredAnalysisGroups(){
     const v = g.rows[0].values[0];
     if(type && confirmationGroupType(g) !== type) return false;
     if(bd && String(v[MC.salesPic] || '').trim() !== bd) return false;
+    if(orderType && String(v[MC.supplyDemand] || '').trim() !== orderType) return false;
     if(fromDate || toDate){
       const dealDate = parseStoredDateToDate(v[MC.agreementDate]);
       if(!dealDate) return false;
@@ -4625,13 +4678,16 @@ function renderHistoryTable(el, groups, opts){
     const v = g.rows[0].values[0];
     const status = dealGroupStatus(g.rows);
     // When restrictOthers is set (the shared "All confirmations" list),
-    // anyone who isn't the confirmation's own creator and isn't an
+    // anyone who isn't the confirmation's own creator, isn't its BD
+    // in-charge (see isDealOwnerEmail/bdInChargeEmail), and isn't an
     // Admin/Super Admin only gets a read-only summary row — no View
     // button (so full details/generated table stay unopenable), no
     // action buttons, no approval trail/agreement link/reject reason/etc.
     // Same underlying data either way; this only changes what's rendered.
-    const ownerEmail = (v[MC.submittedBy] || '').toLowerCase();
-    const isOwnerOrAdmin = isAdmin || (ownerEmail && ownerEmail === myEmailLower);
+    // The BD in-charge gets exactly the same access as the actual
+    // submitter — treated as a second owner, not just a read-only viewer.
+    const isDealOwner = isDealOwnerEmail(myEmailLower, v[MC.salesPic], v[MC.submittedBy]);
+    const isOwnerOrAdmin = isAdmin || isDealOwner;
     const deliveryDatesText = confirmationGroupDeliveryDates(g, deliveryFrom, deliveryTo).join(', ');
     if(restrictOthers && !isOwnerOrAdmin){
       html += '<tr class="confirmation-row-restricted" style="border-top:1px solid var(--border);">' +
@@ -4788,7 +4844,7 @@ function renderHistoryTable(el, groups, opts){
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
         '<div style="background:#fdf3e7;border:1px solid #e8c99a;color:#8a6d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
         '<strong>Returned by Admin Level '+rowRevertInfo.level+(v[MC.rejectedBy]?(' — '+escapeHtml(v[MC.rejectedBy])):'')+':</strong> '+escapeHtml(v[MC.rejectReason]) +
-        (isOwnerOrAdmin && ownerEmail === myEmailLower ? ' <em>Use “Edit &amp; resend” below to make the change and resubmit — it goes straight back to Pending '+rowRevertInfo.resubmitTo+'.</em>' : '') +
+        (isDealOwner ? ' <em>Use “Edit &amp; resend” below to make the change and resubmit — it goes straight back to Pending '+rowRevertInfo.resubmitTo+'.</em>' : '') +
         '</div></td></tr>';
     }
     // A resolved change request's rejection note — status is back to
@@ -5687,25 +5743,31 @@ function redemptionModalFieldsHtml(rows){
   return rows.map((r, idx)=>{
     const rv = r.values[0];
     const n = idx + 1;
-    const has = rowHasRedemptionDoc(rv);
+    const docs = parseRedemptionDocs(rv);
+    const has = docs.length > 0;
     const rowUid = rv[MC.rowUid] || '';
     const registryLabel = registryDisplayName(rv[MC.registry]) || '(no registry)';
     const deliveryLabel = formatStoredDate(rv[MC.deliveryEnd]) || '(no delivery date)';
     const dueSoon = isRedemptionDueSoon(rv[MC.deliveryEnd]);
     const titleText = 'Product '+n+' — '+registryLabel+' — '+deliveryLabel;
     const titleStyle = 'font-size:13px;margin-bottom:4px;' + (has ? 'font-weight:600;' : (dueSoon ? 'font-weight:700;color:#c1493a;' : 'font-weight:600;'));
+    // A product can carry more than one signed Redemption Form on file (see
+    // parseRedemptionDocs) — list every one of them, each with its own
+    // link/uploader/date, rather than just the single most recent upload.
     const statusHtml = has
-      ? '<div style="font-size:12px;color:#1f7a4d;">✓ <a href="'+escapeHtml(rv[MC.redemptionDocUrl])+'" target="_blank" rel="noopener">'+escapeHtml(rv[MC.redemptionDocName])+'</a>'+
-        (rv[MC.redemptionUploadedBy] ? ' — uploaded by '+escapeHtml(rv[MC.redemptionUploadedBy]) : '')+
-        (rv[MC.redemptionUploadedDate] ? ' on '+escapeHtml(formatStoredDate(rv[MC.redemptionUploadedDate])) : '')+
-        '</div>'
+      ? docs.map(d =>
+          '<div style="font-size:12px;color:#1f7a4d;">✓ <a href="'+escapeHtml(d.url)+'" target="_blank" rel="noopener">'+escapeHtml(d.name)+'</a>'+
+          (d.uploadedBy ? ' — uploaded by '+escapeHtml(d.uploadedBy) : '')+
+          (d.uploadedDate ? ' on '+escapeHtml(formatStoredDate(d.uploadedDate)) : '')+
+          '</div>'
+        ).join('')
       : '<div style="font-size:12px;color:#8a6d1f;">Not uploaded yet</div>';
     return '<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;">' +
       '<div style="'+titleStyle+'">'+escapeHtml(titleText)+'</div>' +
       statusHtml +
       '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">' +
         '<input type="file" class="redemption-file-input" accept=".pdf,.doc,.docx" data-idx="'+n+'" data-rowuid="'+escapeHtml(rowUid)+'" style="flex:1;min-width:160px;"/>' +
-        '<button type="button" class="secondary redemption-upload-btn" data-idx="'+n+'" style="padding:4px 10px;font-size:12px;">'+(has?'Replace':'Upload')+'</button>' +
+        '<button type="button" class="secondary redemption-upload-btn" data-idx="'+n+'" style="padding:4px 10px;font-size:12px;">'+(has?'Add another file':'Upload')+'</button>' +
       '</div>' +
     '</div>';
   }).join('');
@@ -6194,7 +6256,51 @@ const MATCHING = ["Partially Matched","Open Position","Matched","V-Matched"];
 const MATCHING_DISPLAY_NAMES = {
   "V-Matched":"Matched without Agreement"
 };
-const BD_NAMES = ["Addam","Aston U","Colwen Chan","Edmund Lam","Jordan Tan","Reik Ong","Roseanne Png","Sharon Lim","Thao","TM Lim"];
+const BD_NAMES = ["Addam","Aston U","Colwen Chan","Edmund Lam","Jane Saw","Jessie Wong","Jordan Tan","Reik Ong","Roseanne Png","Sharon Lim","Thao","TM Lim"];
+// Maps each BD in-charge name (as chosen on the "h-bd" dropdown / stored in
+// MC.salesPic) to their @saxonrenewables.com email — lets a deal be visible
+// and fully actionable to the BD in-charge as well as whoever actually
+// submitted it, not just the literal submitter (see isDealOwnerEmail below,
+// and everywhere it's used: the "My saved confirmations" list in
+// loadHistory, the owner-unlock in renderHistoryTable/tryOpenDealFromUrl,
+// and the submitter-only check in requestBdMatchChange). Keep this in sync
+// with BD_NAMES — every name in that dropdown should have an entry here.
+const BD_NAME_EMAILS = {
+  "Addam": "addam.elfizal@saxonrenewables.com",
+  "Aston U": "aston.u@saxonrenewables.com",
+  "Colwen Chan": "colwen.chan@saxonrenewables.com",
+  "Edmund Lam": "edmund.lam@saxonrenewables.com",
+  "Jane Saw": "jane.saw@saxonrenewables.com",
+  "Jessie Wong": "jessie.wong@saxonrenewables.com",
+  "Jordan Tan": "jordan.tan@saxonrenewables.com",
+  "Reik Ong": "reik.ong@saxonrenewables.com",
+  "Roseanne Png": "roseanne.png@saxonrenewables.com",
+  "Sharon Lim": "sharon.lim@saxonrenewables.com",
+  "Thao": "thao.pham@saxonrenewables.com",
+  "TM Lim": "tm.lim@saxonrenewables.com"
+};
+// Case/whitespace-tolerant lookup — a row's MC.salesPic is normally an
+// exact BD_NAMES value (it's a dropdown), but this stays forgiving of a
+// legacy free-text row saved before "h-bd" became a fixed list.
+function bdInChargeEmail(name){
+  const key = String(name || '').trim();
+  if(!key) return '';
+  if(BD_NAME_EMAILS[key]) return BD_NAME_EMAILS[key].toLowerCase();
+  const lower = key.toLowerCase();
+  const match = Object.keys(BD_NAME_EMAILS).find(n => n.toLowerCase() === lower);
+  return match ? BD_NAME_EMAILS[match].toLowerCase() : '';
+}
+// True if `email` (already lowercased) is either the deal's actual
+// submitter or its BD in-charge — the two identities this app treats as a
+// deal's "owner" for visibility and self-service actions. salesPic/
+// submittedBy are the raw MC.salesPic/MC.submittedBy values off the deal's
+// first row (every row of a deal shares the same BD in-charge and
+// submitter).
+function isDealOwnerEmail(email, salesPic, submittedBy){
+  if(!email) return false;
+  if(String(submittedBy || '').toLowerCase() === email) return true;
+  return bdInChargeEmail(salesPic) === email;
+}
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const YEARS = ["2025","2026","2027","2028","2029","2030"];
 
@@ -8135,6 +8241,23 @@ function toDateInputValue(v){
 function recapEditFieldHtml(label, inputHtml){
   return '<div><label>'+escapeHtml(label)+'</label>'+inputHtml+'</div>';
 }
+// BD in-charge dropdown for the recap/full-edit forms below — same fixed
+// BD_NAMES list as the create-form's "h-bd" dropdown, so an edit can no
+// longer leave a name that doesn't match BD_NAME_EMAILS and silently drop
+// the BD in-charge's visibility/access on the deal (see
+// isDealOwnerEmail/bdInChargeEmail). If the row's currently-saved value
+// isn't one of BD_NAMES (a legacy free-text row, or a name since renamed/
+// removed from the list), it's kept as an extra option at the top rather
+// than being silently swapped for whichever name happens to be first in
+// BD_NAMES — so opening this editor and saving without touching the field
+// never changes who's actually on the deal.
+function bdInChargeSelectHtml(id, currentValue){
+  const current = String(currentValue || '').trim();
+  const names = (current && !BD_NAMES.includes(current)) ? [current].concat(BD_NAMES) : BD_NAMES;
+  const def = current || BD_NAMES[0];
+  const opts = names.map(n => '<option value="'+escapeHtml(n)+'"'+(n===def?' selected':'')+'>'+escapeHtml(n)+'</option>').join('');
+  return '<select id="'+id+'">'+opts+'</select>';
+}
 // dealId/sortedGroup: same shape as everywhere else in the file - the
 // TradeDealLog rows for one deal, sorted by index so Product 1/2/3... lines
 // up with row 1/2/3.... Builds one editable field per non-BD-matching recap
@@ -8151,7 +8274,7 @@ function recapEditFormHtml(dealId, sortedGroup){
     '<div class="grid">'+
       recapEditFieldHtml('Deal Date', '<input type="date" id="re-h-date" value="'+escapeHtml(toDateInputValue(head[MC.agreementDate]))+'"/>')+
       recapEditFieldHtml('Entity', '<input type="text" id="re-h-entity" value="'+escapeHtml(head[MC.entity]||'')+'"/>')+
-      recapEditFieldHtml('BD in-charge', '<input type="text" id="re-h-bd" value="'+escapeHtml(head[MC.salesPic]||'')+'"/>')+
+      recapEditFieldHtml('BD in-charge', bdInChargeSelectHtml('re-h-bd', head[MC.salesPic]))+
       recapEditFieldHtml(role+' Full Name', '<input type="text" id="re-h-company" value="'+escapeHtml(head[MC.company]||'')+'"/>')+
       (isCC ? recapEditFieldHtml('Project Name', '<input type="text" id="re-h-project-name" value="'+escapeHtml(head[MC.projectName]||'')+'"/>')+
               recapEditFieldHtml('Project ID', '<input type="text" id="re-h-project-id" value="'+escapeHtml(head[MC.projectId]||'')+'"/>')+
@@ -8663,7 +8786,7 @@ function fullEditFormHtml(dealId, sortedGroup){
     '<div class="grid">'+
       recapEditFieldHtml('Deal Date', '<input type="date" id="fe-h-date" value="'+escapeHtml(toDateInputValue(head[MC.agreementDate]))+'"/>')+
       recapEditFieldHtml('Entity', '<input type="text" id="fe-h-entity" value="'+escapeHtml(head[MC.entity]||'')+'"/>')+
-      recapEditFieldHtml('BD in-charge', '<input type="text" id="fe-h-bd" value="'+escapeHtml(head[MC.salesPic]||'')+'"/>')+
+      recapEditFieldHtml('BD in-charge', bdInChargeSelectHtml('fe-h-bd', head[MC.salesPic]))+
       recapEditFieldHtml(role+' Full Name', '<input type="text" id="fe-h-company" value="'+escapeHtml(head[MC.company]||'')+'"/>')+
       (isCC ? recapEditFieldHtml('Project Name', '<input type="text" id="fe-h-project-name" value="'+escapeHtml(head[MC.projectName]||'')+'"/>')+recapEditFieldHtml('Project ID', '<input type="text" id="fe-h-project-id" value="'+escapeHtml(head[MC.projectId]||'')+'"/>')+recapEditFieldHtml('Project Type', '<input type="text" id="fe-h-project-type" value="'+escapeHtml(head[MC.vFromMM]||'')+'"/>')+recapEditFieldHtml('Methodology', '<input type="text" id="fe-h-methodology" value="'+escapeHtml(head[MC.vToMM]||'')+'"/>') : '')+
     '</div>';
