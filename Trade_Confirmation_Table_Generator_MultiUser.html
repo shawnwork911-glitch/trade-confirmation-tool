@@ -828,6 +828,20 @@
   </div>
 </div>
 
+<div id="revert-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
+  <div style="width:100%;max-width:420px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:10px;">
+    <h2 style="margin:0;font-size:16px;">Revert to submitter — <span id="revert-modal-dealid"></span></h2>
+    <p style="margin:0;font-size:13px;color:var(--text-secondary);">Nothing has approved this yet, so instead of rejecting it outright you can send it back to whoever submitted it. This comment tells them what to amend — they'll be able to edit the details from "My saved confirmations" and resubmit for your (Level 1) approval.</p>
+    <label style="margin:4px 0 0;">Comment (required)</label>
+    <textarea id="revert-comment" placeholder="e.g. Please confirm the Volume (RECs) with the buyer before resubmitting." style="min-height:90px;"></textarea>
+    <div id="revert-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
+      <button type="button" class="secondary" id="revert-modal-cancel">Cancel</button>
+      <button type="button" id="revert-modal-submit" style="background:#c9962e;">Revert to submitter</button>
+    </div>
+  </div>
+</div>
+
 <div id="edit-request-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
   <div style="width:100%;max-width:640px;max-height:85vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:12px;">
     <h2 style="margin:0;font-size:16px;">Request a correction — Deal ID <span id="edit-request-modal-dealid"></span></h2>
@@ -844,7 +858,7 @@
 <div id="full-edit-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
   <div style="width:100%;max-width:640px;max-height:85vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:12px;">
     <h2 style="margin:0;font-size:16px;">Edit agreement — Deal ID <span id="full-edit-modal-dealid"></span></h2>
-    <p style="margin:0;font-size:13px;color:var(--text-secondary);">Admin Level 1 has already signed off on this deal, so changing its details or products here will send it back through the approval chain: the Status resets to <strong>Pending Level 1</strong>, any Level 2 sign-off already recorded (and the Level 2 agreement attachment) is cleared, and Admin Level 1 gets a fresh approval email along with your justification below. The Deal ID itself does not change. This full-details edit is only available before Level 2 acts — once Level 2 or Level 3 has approved, only Registry, Tech, and BD source matching can still be corrected, via "Request edit".</p>
+    <p id="full-edit-modal-intro" style="margin:0;font-size:13px;color:var(--text-secondary);"></p>
     <div id="full-edit-modal-fields" style="display:flex;flex-direction:column;gap:16px;"></div>
   </div>
 </div>
@@ -1084,6 +1098,24 @@ const STATUS_PENDING_2 = "Pending Level 2";
 const STATUS_PENDING_3 = "Pending Level 3";
 const STATUS_APPROVED = "Approved";
 const STATUS_REJECTED = "Rejected";
+// Admin Level 1's alternative to an outright Reject, for a deal that is
+// still sitting at Pending Level 1 (i.e. nothing has approved it yet — see
+// canActOnStatus/actionableStatusesForRole, which never let ANY role reject
+// at this stage any more; only Approve or Revert are offered there). Instead
+// of a dead-end Rejected status, Revert sends the deal back to whoever
+// submitted it, together with a required comment (stored in the same
+// rejectedBy/rejectedDate/rejectReason columns rejectDeal() uses — the
+// meaning of those columns is simply read differently depending on which
+// status the row is currently at, same convention already used for a
+// rejected BD source matching request, see rejectBdMatchChange). The
+// submitter can then use the existing "Edit & resend" modal (see
+// canFullyEditAfterLevel1/saveFullEditAndResubmit) to fix whatever needs
+// fixing and resubmit — the Status goes back to Pending Level 1 and Admin
+// Level 1 is notified again, exactly like a brand new submission. Reject
+// remains available as before at every OTHER pending stage (Pending Level
+// 2/3, Pending Change - Level 3) since those stages mean at least one
+// approval has already happened.
+const STATUS_REVERTED_1 = "Reverted - Level 1";
 // A fully Approved deal's original submitter can request a change to just
 // its BD source matching fields (Matching, Buyer/Seller, Which deal, No of
 // RECs, Delivery date) — this status means that request is sitting in the
@@ -1595,27 +1627,35 @@ async function notifyOtherApproversAtLevel(levelRole, dealId, description, appro
   }
 }
 
-// Emails the person who submitted the deal if it's Rejected at whatever
-// level it was at. Separate from notifyNextApprover, which only ever emails
-// the *next* approver in the chain. Note: per policy there is deliberately
-// no "fully Approved" email here — the submitter is already notified once,
-// when their Deal ID is first created at Level 1 (see notifyDealIdAssigned
-// below); nothing further is sent when the deal later reaches the last
-// approval level.
+// Emails the person who submitted the deal if it's Rejected — or, at
+// Pending Level 1 only, Reverted (see STATUS_REVERTED_1/revertDeal) — at
+// whatever level it was at. Separate from notifyNextApprover, which only
+// ever emails the *next* approver in the chain. Note: per policy there is
+// deliberately no "fully Approved" email here — the submitter is already
+// notified once, when their Deal ID is first created at Level 1 (see
+// notifyDealIdAssigned below); nothing further is sent when the deal later
+// reaches the last approval level.
 async function notifySubmitter(status, dealId, submitterEmail, reason){
   const email = (submitterEmail || '').trim();
   if(!email) {
     console.warn('No submitter email on file — skipping outcome notification for Deal ID ' + dealId);
     return;
   }
-  if(status !== STATUS_REJECTED) return; // only Rejected has a submitter email
+  // Only Rejected and Reverted have a submitter email.
+  if(status !== STATUS_REJECTED && status !== STATUS_REVERTED_1) return;
   const link = dealDeepLink(dealId);
   const displayId = friendlyDealId(dealId);
   const label = isPendingDealId(dealId) ? 'Your agreement (' + escapeHtml(displayId) + ')' : 'Deal ID <strong>' + escapeHtml(displayId) + '</strong>';
-  const subject = 'Rejected — ' + (isPendingDealId(dealId) ? 'agreement' : 'Deal ID ' + displayId);
-  const html = '<p>' + label + ' has been rejected.</p>' +
-    (reason ? '<p><strong>Reason:</strong> ' + escapeHtml(reason) + '</p>' : '') +
-    '<p><a href="' + link + '">View it in the Trade Confirmation app</a></p>';
+  const isReverted = status === STATUS_REVERTED_1;
+  const subject = (isReverted ? 'Changes requested — ' : 'Rejected — ') + (isPendingDealId(dealId) ? 'agreement' : 'Deal ID ' + displayId);
+  const html = isReverted
+    ? '<p>' + label + ' has been sent back to you by Admin Level 1 for some changes — it has <strong>not</strong> been rejected, and hasn\'t been approved by anyone yet either.</p>' +
+      (reason ? '<p><strong>Comment:</strong> ' + escapeHtml(reason) + '</p>' : '') +
+      '<p>Open "My saved confirmations" in the Trade Confirmation app and use "Edit &amp; resend" on this deal to make the change and send it back for Level 1 approval.</p>' +
+      '<p><a href="' + link + '">Open it in the Trade Confirmation app</a></p>'
+    : '<p>' + label + ' has been rejected.</p>' +
+      (reason ? '<p><strong>Reason:</strong> ' + escapeHtml(reason) + '</p>' : '') +
+      '<p><a href="' + link + '">View it in the Trade Confirmation app</a></p>';
   try{
     await sendMailGraph([email], subject, html);
   }catch(err){
@@ -3238,6 +3278,13 @@ async function rejectDeal(dealId, reason){
   if(!matching.length) return;
   const currentStatus = matching[0].values[0][MC.status];
   if(!canActOnStatus(currentStatus)) throw new Error('You are not able to reject this deal at its current stage.');
+  // Reject is no longer offered at Pending Level 1 — nothing has approved
+  // this deal yet, so Revert (see revertDeal) is the only way to send it
+  // back at this stage. This is a server-side guard behind the UI change
+  // (the Reject button itself is no longer rendered for this status — see
+  // canReject in renderHistoryTable) so a stale page/race can't reject a
+  // deal straight to a dead end before anyone has even looked at it.
+  if(currentStatus === STATUS_PENDING_1) throw new Error('This deal hasn\'t been approved at any level yet, so it can only be reverted back to the submitter (with a comment), not rejected. Use "Revert to submitter" instead.');
   const nowIso = new Date().toISOString();
   for(const r of matching){
     const values = r.values[0].slice();
@@ -3259,6 +3306,43 @@ async function rejectDeal(dealId, reason){
     await updateCanonicalTableRow(dealLogTableName(), r.index, values);
   }
   await notifySubmitter(STATUS_REJECTED, dealId, matching[0].values[0][MC.submittedBy], trimmedReason);
+  await loadHistory();
+}
+/* Admin Level 1's alternative to rejectDeal() while a deal is still at
+   Pending Level 1 (nothing has approved it yet — see the STATUS_REVERTED_1
+   comment above). Sends the deal back to whoever submitted it, with a
+   required comment, WITHOUT marking it a dead-end Rejected: the submitter
+   can reopen it from "My saved confirmations" via the existing "Edit &
+   resend" modal (see canFullyEditAfterLevel1/saveFullEditAndResubmit),
+   correct whatever needs fixing, and resubmit — which puts it straight back
+   at Pending Level 1 for Admin Level 1 to look at again. Reuses the same
+   rejectedBy/rejectedDate/rejectReason columns rejectDeal() writes; while
+   Status is STATUS_REVERTED_1 those columns hold the revert comment instead
+   of a rejection reason (renderHistoryTable/statusBadge key off the current
+   Status to decide how to label them), and saveFullEditAndResubmit clears
+   them again the moment the deal is resubmitted, same as it already does
+   for a genuine rejection note. */
+async function revertDeal(dealId, comment){
+  if(!dealId) return;
+  const trimmedComment = (comment||'').trim();
+  if(!trimmedComment) throw new Error('A comment is required so the submitter knows what to amend.');
+  await ensureFreshWorkbookSession();
+  const rows = await getCanonicalTableRows(dealLogTableName());
+  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId);
+  if(!matching.length) return;
+  const currentStatus = matching[0].values[0][MC.status];
+  if(!canActOnStatus(currentStatus)) throw new Error('You are not able to act on this deal at its current stage.');
+  if(currentStatus !== STATUS_PENDING_1) throw new Error('This deal is no longer waiting for Level 1 approval (current status: ' + (currentStatus || 'Unknown') + '), so it can no longer be reverted this way. Please refresh the page.');
+  const nowIso = new Date().toISOString();
+  for(const r of matching){
+    const values = r.values[0].slice();
+    values[MC.status] = STATUS_REVERTED_1;
+    values[MC.rejectedBy] = currentAccount.username;
+    values[MC.rejectedDate] = nowIso;
+    values[MC.rejectReason] = trimmedComment;
+    await updateCanonicalTableRow(dealLogTableName(), r.index, values);
+  }
+  await notifySubmitter(STATUS_REVERTED_1, dealId, matching[0].values[0][MC.submittedBy], trimmedComment);
   await loadHistory();
 }
 /* ---- Post-approval BD source matching change requests ----
@@ -3632,7 +3716,7 @@ const CONFIRMATION_FILTER_OPTS = {
   admin: {showOwner:true, showActions:false, restrictOthers:true},
   queue: {showOwner:true, showActions:true, emptyText:'Nothing pending right now.'}
 };
-const ALL_CONFIRMATION_STATUSES = [STATUS_PENDING_1, STATUS_PENDING_2, STATUS_PENDING_3, STATUS_PENDING_CHANGE_3, STATUS_APPROVED, STATUS_REJECTED];
+const ALL_CONFIRMATION_STATUSES = [STATUS_PENDING_1, STATUS_REVERTED_1, STATUS_PENDING_2, STATUS_PENDING_3, STATUS_PENDING_CHANGE_3, STATUS_APPROVED, STATUS_REJECTED];
 function confirmationGroupType(g){
   return (g && g.sourceTable === CC_LOG_TABLE_NAME) ? 'carboncredit' : 'recs';
 }
@@ -3811,6 +3895,7 @@ async function loadHistory(){
    exported to .xlsx exactly as shown. */
 const ANALYSIS_STATUS_COLORS = {
   [STATUS_PENDING_1]: '#c9962e',
+  [STATUS_REVERTED_1]: '#b3560f',
   [STATUS_PENDING_2]: '#b3811f',
   [STATUS_PENDING_3]: '#9c6d15',
   [STATUS_PENDING_CHANGE_3]: '#7a4d9f',
@@ -4123,6 +4208,7 @@ function statusBadge(status){
   const color = s === STATUS_APPROVED ? '#1f7a4d'
     : s === STATUS_REJECTED ? '#8a2d1f'
     : s === STATUS_PENDING_CHANGE_3 ? '#7a4d9f'
+    : s === STATUS_REVERTED_1 ? '#b3560f'
     : '#8a6d1f';
   return '<span style="font-weight:600;color:'+color+';">'+escapeHtml(s)+'</span>';
 }
@@ -4197,6 +4283,14 @@ function renderHistoryTable(el, groups, opts){
       return;
     }
     const canAct = showActions && canActOnStatus(status);
+    // At Pending Level 1 (nothing has approved this deal yet), Reject is
+    // replaced by Revert — sending the deal back to the submitter with a
+    // comment instead of a dead-end Rejected status (see STATUS_REVERTED_1
+    // and revertDeal). Every OTHER pending stage still offers a plain
+    // Reject, unchanged, since at least one level has already approved by
+    // then.
+    const canReject = canAct && status !== STATUS_PENDING_1;
+    const canRevert = canAct && status === STATUS_PENDING_1;
     const trail = approvalTrailText(v);
     const agreementUrl = v[MC.agreementFileUrl];
     const agreementLink = agreementUrl
@@ -4268,8 +4362,9 @@ function renderHistoryTable(el, groups, opts){
       '<td style="padding:6px;white-space:nowrap;">' +
         regTechWarningIcon +
         '<button type="button" class="secondary history-view-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;">View</button>' +
-        (canAct ? ' <button type="button" class="secondary history-approve-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;">Approve</button>' +
-                  ' <button type="button" class="secondary history-reject-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#8a2d1f;border-color:#c1493a;">Reject</button>' : '') +
+        (canAct ? ' <button type="button" class="secondary history-approve-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;">Approve</button>' : '') +
+        (canRevert ? ' <button type="button" class="secondary history-revert-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#8a6d1f;border-color:#e8c99a;" title="Send this back to the submitter with a comment instead of rejecting it outright — they can edit the details and resubmit for Level 1 approval.">Revert to submitter</button>' : '') +
+        (canReject ? ' <button type="button" class="secondary history-reject-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#8a2d1f;border-color:#c1493a;">Reject</button>' : '') +
         (canRequestEdit ? ' <button type="button" class="secondary history-request-edit-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;">Request edit</button>' : '') +
         (canFullEdit ? ' <button type="button" class="secondary history-full-edit-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;" title="Edit details/products — resends this deal through Level 1 approval again">Edit &amp; resend</button>' : '') +
       '</td>' +
@@ -4278,6 +4373,19 @@ function renderHistoryTable(el, groups, opts){
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
         '<div style="background:#fdecea;border:1px solid #e2a49a;color:#8a2d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
         '<strong>Rejected'+(v[MC.rejectedBy]?(' by '+escapeHtml(v[MC.rejectedBy])):'')+':</strong> '+escapeHtml(v[MC.rejectReason]) +
+        '</div></td></tr>';
+    }
+    // Reverted by Level 1 — same rejectedBy/rejectedDate/rejectReason columns
+    // as an outright Reject, just read with a different meaning while the
+    // deal sits at STATUS_REVERTED_1 (see revertDeal). Not a dead end: the
+    // owner can open "Edit & resend" (canFullEdit above, extended to this
+    // status by canFullyEditAfterLevel1) to fix what's noted here and send
+    // it back to Admin Level 1.
+    if(status === STATUS_REVERTED_1 && v[MC.rejectReason]){
+      html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
+        '<div style="background:#fdf3e7;border:1px solid #e8c99a;color:#8a6d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
+        '<strong>Returned by Admin Level 1'+(v[MC.rejectedBy]?(' — '+escapeHtml(v[MC.rejectedBy])):'')+':</strong> '+escapeHtml(v[MC.rejectReason]) +
+        (isOwnerOrAdmin && ownerEmail === myEmailLower ? ' <em>Use “Edit &amp; resend” below to make the change and resubmit for Level 1 approval.</em>' : '') +
         '</div></td></tr>';
     }
     // A resolved change request's rejection note — status is back to
@@ -4332,7 +4440,7 @@ function renderHistoryTable(el, groups, opts){
         '<strong>BD source matching change requested'+requestedBy+':</strong>' + rows + noteHtml +
         '</div></td></tr>';
     }
-    if(v[MC.description] && status === STATUS_PENDING_1){
+    if(v[MC.description] && (status === STATUS_PENDING_1 || status === STATUS_REVERTED_1)){
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
         '<div style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:12px;font-weight:bold;color:var(--text);">' +
         '<strong style="color:var(--text);">Commercial Justification:</strong> '+escapeHtml(v[MC.description]) +
@@ -4346,7 +4454,7 @@ function renderHistoryTable(el, groups, opts){
     // actually still being reviewed against this edit. Optional column —
     // v[MC.editChangeSummary] is simply undefined on a workbook that hasn't
     // added it yet, so this block just doesn't render.
-    if(v[MC.editChangeSummary] && [STATUS_PENDING_1, STATUS_PENDING_2, STATUS_PENDING_3].includes(status)){
+    if(v[MC.editChangeSummary] && [STATUS_PENDING_1, STATUS_REVERTED_1, STATUS_PENDING_2, STATUS_PENDING_3].includes(status)){
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
         '<div style="background:#eaf1fb;border:1px solid #b8cdec;color:#1f3a63;border-radius:6px;padding:8px 10px;font-size:12px;">' +
         '<strong>What changed in the latest edit:</strong><br>' + escapeHtml(v[MC.editChangeSummary]).replace(/\n/g,'<br>') +
@@ -4594,6 +4702,40 @@ document.getElementById('reject-modal-submit').addEventListener('click', async (
       await rejectDeal(dealId, reason);
     }
     closeRejectModal();
+  }catch(err){
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
+  }finally{
+    btn.disabled = false;
+  }
+});
+let revertModalDealId = null;
+function openRevertModal(dealId){
+  revertModalDealId = dealId;
+  document.getElementById('revert-modal-dealid').textContent = friendlyDealId(dealId);
+  document.getElementById('revert-comment').value = '';
+  document.getElementById('revert-modal-error').style.display = 'none';
+  document.getElementById('revert-modal-overlay').style.display = 'flex';
+  document.getElementById('revert-comment').focus();
+}
+function closeRevertModal(){
+  document.getElementById('revert-modal-overlay').style.display = 'none';
+  revertModalDealId = null;
+}
+document.getElementById('revert-modal-cancel').addEventListener('click', closeRevertModal);
+document.getElementById('revert-modal-overlay').addEventListener('click', (e)=>{
+  if(e.target.id === 'revert-modal-overlay') closeRevertModal();
+});
+document.getElementById('revert-modal-submit').addEventListener('click', async ()=>{
+  const dealId = revertModalDealId;
+  const comment = document.getElementById('revert-comment').value;
+  const errEl = document.getElementById('revert-modal-error');
+  const btn = document.getElementById('revert-modal-submit');
+  errEl.style.display = 'none';
+  btn.disabled = true;
+  try{
+    await revertDeal(dealId, comment);
+    closeRevertModal();
   }catch(err){
     errEl.textContent = err.message;
     errEl.style.display = 'block';
@@ -5126,6 +5268,12 @@ document.addEventListener('click', (e)=>{
   if(rejectBtn){
     setActiveDealLogTable(rejectBtn.getAttribute('data-logtable'));
     openRejectModal(rejectBtn.getAttribute('data-dealid'));
+    return;
+  }
+  const revertBtn = e.target.closest('.history-revert-btn');
+  if(revertBtn){
+    setActiveDealLogTable(revertBtn.getAttribute('data-logtable'));
+    openRevertModal(revertBtn.getAttribute('data-dealid'));
     return;
   }
   const requestEditBtn = e.target.closest('.history-request-edit-btn');
@@ -7617,13 +7765,16 @@ async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
   }
 }
 
-/* ---- Post-Level-1 "Edit & resend" (full submitter self-edit) ----
-   Only available in the narrow window right after Admin Level 1 has
-   approved a deal and before Admin Level 2 has acted (Status is
-   STATUS_PENDING_2 — see canFullyEditAfterLevel1). Once Level 2 or Level 3
+/* ---- "Edit & resend" (full submitter self-edit) ----
+   Available in two situations — both handled by this same modal/function:
+     - the narrow window right after Admin Level 1 has approved a deal and
+       before Admin Level 2 has acted (Status is STATUS_PENDING_2), or
+     - Admin Level 1 has sent the deal back for changes without approving it
+       (Status is STATUS_REVERTED_1 — see revertDeal)
+   — see canFullyEditAfterLevel1 for the exact check. Once Level 2 or Level 3
    has signed off, this is no longer offered — the submitter can still
-   correct Registry, Tech, and BD source matching via the lighter "Request
-   edit" flow above (canRequestEdit/openEditRequestModal/
+   correct Registry, Tech, Volume, and BD source matching via the lighter
+   "Request edit" flow above (canRequestEdit/openEditRequestModal/
    requestBdMatchChange), which only needs a fresh Level 3 sign-off, but the
    full details/products are locked until then, same as everything else on
    the main form (see lockSubmittedForm).
@@ -7639,7 +7790,8 @@ async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
    Saving here writes straight to the live TradeDealLog row(s) (no separate
    pending/staging columns, no approval gate on the save itself — the
    "approval" is the fact that it now has to go through Level 1/2/3 again)
-   and:
+   and, IF anything besides BD source matching changed (see
+   fullEditChangedOnlyBdMatching):
      - resets Status back to STATUS_PENDING_1
      - clears every approval stamp (Approved By/Date for L1, L2, L3) so the
        trail shown in the UI accurately reflects that none of them have
@@ -7648,20 +7800,38 @@ async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
        old details) and any stale rejection note
      - re-notifies whoever holds Admin Level 1 today, exactly like a brand
        new submission does
-   The Deal ID itself is untouched — it was permanently assigned at the
-   original Level 1 approval and this isn't a new submission, just a
-   correction to the existing one. BD source matching fields aren't editable
-   here (same carve-out as the superadmin recap editor above) — that's what
-   "Request edit" is for. */
+   BD source matching (Matching, Buyer/Seller, No of RECs, Which deal) IS
+   editable here — see fullEditBdMatchingSectionHtml/feSourceBlockHtml above
+   and how saveFullEditAndResubmit writes it below — unlike the superadmin
+   recap editor, which deliberately leaves it out (see recapEditFormHtml).
+   But when we're at STATUS_PENDING_2 (Level 1 has already approved) and the
+   edit doesn't touch anything OUTSIDE BD source matching — i.e. the
+   submitter only corrected Matching/Buyer-Seller/No of RECs/Which deal, not
+   Registry/Tech/Volume/Price/dates/etc — none of the above happens: Status
+   stays STATUS_PENDING_2, Level 1's approval stamp and the Level 2
+   agreement file (if any) are left exactly as they were, and only Admin
+   Level 2 is notified of the updated matching (see skipLevelReset in
+   saveFullEditAndResubmit). This only applies from STATUS_PENDING_2 — a
+   Level 1 revert (STATUS_REVERTED_1) always resubmits to Pending Level 1
+   regardless of what changed, since nothing has approved it yet and that's
+   simply the normal forward path, not a regression. The Deal ID itself is
+   untouched either way — it was permanently assigned at the original Level
+   1 approval and this isn't a new submission, just a correction to the
+   existing one. Once Level 2 or Level 3 has signed off, correcting BD
+   source matching goes back to the heavier, Level-3-gated "Request edit"
+   flow instead (canRequestEdit is only available from STATUS_PENDING_3 or
+   STATUS_APPROVED). */
 function canFullyEditAfterLevel1(status){
-  // Full details/products edit is only available in the short window right
-  // after Admin Level 1 approves and before Admin Level 2 acts. Once Level 2
-  // (or Level 3) has signed off, the submitter can no longer touch the full
+  // Full details/products edit is available in the short window right after
+  // Admin Level 1 approves and before Admin Level 2 acts (STATUS_PENDING_2),
+  // and also while Admin Level 1 has sent the deal back for changes instead
+  // of approving it (STATUS_REVERTED_1 — see revertDeal). Once Level 2 (or
+  // Level 3) has signed off, the submitter can no longer touch the full
   // details here — only Registry, Tech, and BD source matching remain
   // editable, via the separate "Request edit" flow (see canRequestEdit /
   // openEditRequestModal), which sends the deal through a fresh Level 3
   // sign-off instead of restarting the whole chain from Level 1.
-  return status === STATUS_PENDING_2;
+  return status === STATUS_PENDING_2 || status === STATUS_REVERTED_1;
 }
 // Compares the pre-edit row values (oldGroup, untouched) against what's
 // about to be saved (updatedRows, same shape/order) and returns a
@@ -7715,8 +7885,222 @@ function buildFullEditChangeSummary(oldGroup, updatedRows, role){
     pdiff('Delivery End', formatStoredDate(ov[MC.deliveryEnd]), formatStoredDate(nv[MC.deliveryEnd]));
     if(!isCC) pdiff('COD', ov[MC.cod], nv[MC.cod]);
     pdiff('Special Remarks', ov[MC.specialReq], nv[MC.specialReq]);
+    // BD source matching — now editable in this same modal (see
+    // fullEditBdMatchingSectionHtml/saveFullEditAndResubmit), so diff it the
+    // same way as everything else above.
+    pdiff('Matching', matchingDisplayLabel(ov[MC.matching]), matchingDisplayLabel(nv[MC.matching]));
+    pdiff('Buyer/Seller', ov[MC.buyerSeller], nv[MC.buyerSeller]);
+    pdiff(isCC?'No of VCUs':'No of RECs', ov[MC.noOfRecs], nv[MC.noOfRecs]);
+    pdiff('Which deal', dealLabelForStoredValueMulti(ov[MC.whichDeal]), dealLabelForStoredValueMulti(nv[MC.whichDeal]));
   });
   return lines.join('\n');
+}
+// ---- BD source matching, inside the "Edit & resend" modal ----
+// Previously this modal only exposed the "basic" product fields
+// (Registry/Tech/Country/Vintage/Volume/Price/etc.) — Matching, Buyer/
+// Seller, No of RECs and Which deal were left untouched (the row's existing
+// saved values just passed straight through in saveFullEditAndResubmit). BD
+// source matching is exactly the information the submitter is being asked
+// to fix here just as often as the rest of the deal — especially when Admin
+// Level 1 reverts a deal for changes (see STATUS_REVERTED_1/revertDeal), a
+// case where the deal hasn't been approved by anyone yet, so there's no
+// reason to make the submitter wait for the heavier "Request edit" + fresh
+// Level 3 sign-off flow (which only ever applies once a deal has reached
+// Pending Level 3 or Approved — see canRequestEdit) just to fix who a
+// product is matched against.
+// This mirrors the Request-edit modal's own "er-*" source editor
+// (erSourceKeyStr/erSourceKeysFor/erDealCodeFor/erSourceBlockHtml/
+// syncEditRequestBuyerSeller/updateEditRequestDealField/erInitialSourcesFor)
+// almost field-for-field, just re-scoped to this modal's own "fe-bd-" ids/
+// classes so the two modals' DOM never collides if a deal happens to be
+// reopened in one right after the other. Unlike the Request-edit modal,
+// nothing here is staged into pending* columns — it writes straight to
+// MC.matching/buyerSeller/noOfRecs/whichDeal, same as every other field in
+// this modal (see saveFullEditAndResubmit).
+function feSourceKeyStr(idx, s){ return (s === 1) ? String(idx) : (idx+'-'+s); }
+function feSourceKeysFor(idx){
+  const c = document.getElementById('fe-bd-'+idx+'-sources-container');
+  if(!c) return [String(idx)];
+  const nums = Array.from(c.querySelectorAll('.fe-bd-source-block'))
+    .map(b => parseInt(b.getAttribute('data-source'),10))
+    .filter(s => !isNaN(s))
+    .sort((a,b)=> a-b);
+  return (nums.length ? nums : [1]).map(s => feSourceKeyStr(idx,s));
+}
+// Same idea as editRequestDealFieldHtml, scoped to this modal's fe-bd-* ids.
+function fullEditDealFieldHtml(key, storedValue, rowUid){
+  const uidAttr = ' data-uid="'+escapeHtml(rowUid||'')+'"';
+  const parsed = parseWhichDealSource(storedValue);
+  if(parsed.source === 'own'){
+    return {own:true, proceed:false, fieldHtml: '<select id="fe-bd-'+key+'-whichdeal" class="full-edit-whichdeal"'+uidAttr+'>'+
+      OWN_RECS_OPTIONS.map(o=>'<option value="'+escapeHtml(o)+'"'+(o===parsed.option?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>'};
+  }
+  if(parsed.source === 'proceed'){
+    return {own:false, proceed:true, fieldHtml: '<select id="fe-bd-'+key+'-whichdeal" class="full-edit-whichdeal"'+uidAttr+'>'+
+      PROCEED_SHARE_OPTIONS.map(o=>'<option value="'+escapeHtml(o)+'"'+(o===parsed.option?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>'};
+  }
+  return {own:false, proceed:false, fieldHtml: '<input type="text" id="fe-bd-'+key+'-whichdeal" class="full-edit-whichdeal"'+uidAttr+' placeholder="Deal Recap ID" value="'+escapeHtml(storedValue||'')+'"/>'};
+}
+// Same idea as erDealCodeFor, scoped to this modal's fe-bd-* ids.
+function feDealCodeFor(key){
+  const raw = val('fe-bd-'+key+'-whichdeal');
+  if(!raw) return '';
+  const own = document.getElementById('fe-bd-'+key+'-own');
+  const proceed = document.getElementById('fe-bd-'+key+'-proceed');
+  if(own && own.checked) return OWN_RECS_PREFIX + raw;
+  if(proceed && proceed.checked) return PROCEED_SHARE_CODE_MAP[raw] !== undefined ? PROCEED_SHARE_CODE_MAP[raw] : raw;
+  return raw;
+}
+// Same idea as erSourceBlockHtml, scoped to this modal's fe-bd-* ids/classes.
+function feSourceBlockHtml(idx, s, opts){
+  opts = opts || {};
+  const key = feSourceKeyStr(idx, s);
+  const isCC = !!opts.isCC;
+  const noOfRecsLabel = opts.noOfRecsLabel || 'No of RECs';
+  const dealField = fullEditDealFieldHtml(key, opts.whichDeal||'', opts.rowUid||'');
+  return '<div class="fe-bd-source-block" data-source="'+s+'" style="display:flex;flex-direction:column;gap:8px;'+(s>1?'border:1px solid var(--border);border-radius:6px;padding:10px;margin-top:8px;':'')+'">'+
+    (s>1 ? '<div style="display:flex;justify-content:space-between;align-items:center;">'+
+        '<span style="font-size:12px;font-weight:600;color:var(--text-secondary);">Source '+s+'</span>'+
+        '<button type="button" class="secondary fe-bd-remove-source-btn" data-idx="'+idx+'" data-source="'+s+'" style="padding:2px 8px;font-size:11px;color:#8a2d1f;border-color:#c1493a;">Remove source</button>'+
+      '</div>' : '')+
+    '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Buyer/Seller</label>'+
+      '<input type="text" id="fe-bd-'+key+'-buyerseller" class="full-edit-buyerseller" value="'+escapeHtml(opts.buyerSeller||'')+'"/></div>'+
+    '<div><label style="margin:0 0 4px;display:block;font-size:12px;">'+escapeHtml(noOfRecsLabel)+'</label>'+
+      '<input type="text" id="fe-bd-'+key+'-norecs" class="full-edit-norecs" value="'+escapeHtml(opts.noOfRecs||'')+'"/></div>'+
+    '<div>'+
+      (isCC ? '' :
+      '<label style="margin:0 0 6px;display:block;font-size:12px;">Source</label>'+
+      '<div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:8px;">'+
+        '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
+          '<input type="checkbox" id="fe-bd-'+key+'-own" style="width:auto;margin:0;"'+(dealField.own?' checked':'')+'> Own RECs'+
+        '</label>'+
+        '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
+          '<input type="checkbox" id="fe-bd-'+key+'-proceed" style="width:auto;margin:0;"'+(dealField.proceed?' checked':'')+'> Proceed Share'+
+        '</label>'+
+      '</div>')+
+      '<label style="margin:0 0 4px;display:block;font-size:12px;">Which deal</label>'+
+      '<div id="fe-bd-'+key+'-deal-field">'+dealField.fieldHtml+'</div>'+
+    '</div>'+
+  '</div>';
+}
+// "+ Source" for the Edit & resend modal — appends a new, blank source block
+// for product idx.
+document.addEventListener('click', (e)=>{
+  const btn = e.target.closest('.fe-bd-add-source-btn');
+  if(!btn) return;
+  const idx = btn.getAttribute('data-idx');
+  const container = document.getElementById('fe-bd-'+idx+'-sources-container');
+  if(!container) return;
+  const existing = Array.from(container.querySelectorAll('.fe-bd-source-block')).map(b=>parseInt(b.getAttribute('data-source'),10));
+  const nextS = (existing.length ? Math.max.apply(null, existing) : 1) + 1;
+  if(nextS > 8){ return; }
+  const isCC = dealLogTableName() === CC_LOG_TABLE_NAME;
+  container.insertAdjacentHTML('beforeend', feSourceBlockHtml(idx, nextS, {isCC:isCC, noOfRecsLabel: isCC ? 'No of VCUs' : 'No of RECs'}));
+});
+// "Remove source" — takes just that one source block out again.
+document.addEventListener('click', (e)=>{
+  const btn = e.target.closest('.fe-bd-remove-source-btn');
+  if(!btn) return;
+  const block = btn.closest('.fe-bd-source-block');
+  if(block) block.remove();
+});
+// Same idea as syncEditRequestBuyerSeller, scoped to this modal's fe-bd-* ids.
+function syncFullEditBuyerSeller(key){
+  const own = document.getElementById('fe-bd-'+key+'-own');
+  const proceed = document.getElementById('fe-bd-'+key+'-proceed');
+  const nameEl = document.getElementById('fe-bd-'+key+'-buyerseller');
+  if(!own || !proceed || !nameEl) return;
+  if(own.checked){
+    nameEl.value = 'Own RECs';
+    nameEl.readOnly = true;
+  } else if(proceed.checked){
+    nameEl.value = 'Proceed Share';
+    nameEl.readOnly = true;
+  } else if(nameEl.readOnly){
+    nameEl.value = '';
+    nameEl.readOnly = false;
+  }
+}
+// Same idea as updateEditRequestDealField, scoped to this modal's fe-bd-* ids.
+function updateFullEditDealField(key){
+  const own = document.getElementById('fe-bd-'+key+'-own');
+  const proceed = document.getElementById('fe-bd-'+key+'-proceed');
+  const target = document.getElementById('fe-bd-'+key+'-deal-field');
+  if(!own || !proceed || !target) return;
+  if(own.checked){
+    target.innerHTML = '<select id="fe-bd-'+key+'-whichdeal" class="full-edit-whichdeal">'+
+      OWN_RECS_OPTIONS.map((o,i)=>'<option value="'+escapeHtml(o)+'"'+(i===0?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>';
+  } else if(proceed.checked){
+    target.innerHTML = '<select id="fe-bd-'+key+'-whichdeal" class="full-edit-whichdeal">'+
+      PROCEED_SHARE_OPTIONS.map((o,i)=>'<option value="'+escapeHtml(o)+'"'+(i===0?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>';
+  } else {
+    target.innerHTML = '<input type="text" id="fe-bd-'+key+'-whichdeal" class="full-edit-whichdeal" placeholder="Deal Recap ID"/>';
+  }
+  syncFullEditBuyerSeller(key);
+}
+// Own RECs / Proceed Share are mutually exclusive within a source.
+document.addEventListener('change', (e)=>{
+  const m = e.target && e.target.id && e.target.id.match(/^fe-bd-(\d+(?:-\d+)?)-(own|proceed)$/);
+  if(!m) return;
+  const key = m[1], which = m[2];
+  if(which === 'own' && e.target.checked){
+    const p = document.getElementById('fe-bd-'+key+'-proceed');
+    if(p) p.checked = false;
+  } else if(which === 'proceed' && e.target.checked){
+    const o = document.getElementById('fe-bd-'+key+'-own');
+    if(o) o.checked = false;
+  }
+  updateFullEditDealField(key);
+});
+// Open Position means there's nothing to match yet, so Buyer/Seller, No of
+// RECs and Which deal don't apply for any source on this product — hide AND
+// clear them, and collapse any extra "+ Source" blocks back to just the
+// primary source, same as the Request-edit modal's equivalent handler.
+document.addEventListener('change', (e)=>{
+  if(!e.target.classList || !e.target.classList.contains('full-edit-matching')) return;
+  const idx = e.target.getAttribute('data-idx');
+  const dependent = document.getElementById('fe-bd-'+idx+'-dependent');
+  if(!dependent) return;
+  if(e.target.value === 'Open Position'){
+    dependent.style.display = 'none';
+    dependent.querySelectorAll('input[type="text"]').forEach(el=>{ el.value = ''; });
+    dependent.querySelectorAll('input[type="checkbox"]').forEach(cb=>{ cb.checked = false; });
+    feSourceKeysFor(idx).forEach(key => updateFullEditDealField(key));
+    const sourcesContainer = document.getElementById('fe-bd-'+idx+'-sources-container');
+    if(sourcesContainer){
+      sourcesContainer.querySelectorAll('.fe-bd-source-block[data-source]').forEach(b=>{
+        if(parseInt(b.getAttribute('data-source'),10) > 1) b.remove();
+      });
+    }
+  } else {
+    dependent.style.display = 'flex';
+  }
+});
+// Builds one product's "BD source matching" block for the Edit & resend
+// modal — a Matching dropdown plus however many source blocks the deal's
+// current (possibly multi-source, "; "-joined) Buyer/Seller/No of RECs/
+// Which deal values split into (see erInitialSourcesFor, reused as-is since
+// it's generic — it just reads MC columns, no er-specific DOM in it).
+function fullEditBdMatchingSectionHtml(idx, v, isCC){
+  const matchingVal = v[MC.matching] || 'Open Position';
+  const active = matchingVal && matchingVal !== 'Open Position';
+  const matchOptions = MATCHING.map(m =>
+    '<option value="'+escapeHtml(m)+'"'+(m===matchingVal?' selected':'')+'>'+escapeHtml(MATCHING_DISPLAY_NAMES[m]||m)+'</option>'
+  ).join('');
+  const noOfRecsLabel = isCC ? 'No of VCUs' : 'No of RECs';
+  const sourcesHtml = erInitialSourcesFor(v).map((src, i)=> feSourceBlockHtml(idx, i+1, {
+    buyerSeller: src.buyerSeller, noOfRecs: src.noOfRecs, whichDeal: src.whichDeal,
+    isCC: isCC, noOfRecsLabel: noOfRecsLabel, rowUid: v[MC.rowUid]||''
+  })).join('');
+  return '<p class="sub-title">BD source matching</p>'+
+    '<div class="grid" style="margin-bottom:12px;">'+
+      '<div><label style="margin:0 0 4px;display:block;">Matching</label>'+
+        '<select class="full-edit-matching" data-idx="'+idx+'">'+matchOptions+'</select></div>'+
+    '</div>'+
+    '<div id="fe-bd-'+idx+'-dependent" style="display:'+(active?'flex':'none')+';flex-direction:column;gap:8px;">'+
+      '<div id="fe-bd-'+idx+'-sources-container">'+ sourcesHtml +'</div>'+
+      '<button type="button" class="secondary fe-bd-add-source-btn" data-idx="'+idx+'" style="align-self:flex-start;margin-top:4px;padding:4px 10px;font-size:12px;">+ Source</button>'+
+    '</div>';
 }
 // Same field set as recapEditFormHtml, but with its own "fe-" id prefix and
 // its own Cancel/Save/error element ids, so this modal can never collide
@@ -7752,17 +8136,19 @@ function fullEditFormHtml(dealId, sortedGroup){
       recapEditFieldHtml('Delivery end date', '<input type="date" id="'+idp+'dend" value="'+escapeHtml(toDateInputValue(v[MC.deliveryEnd]))+'"/>')+
       (isCC ? recapEditFieldHtml('Prepayment', '<textarea id="'+idp+'prepayment">'+escapeHtml(v[MC.prepayment]||'')+'</textarea>') : recapEditFieldHtml('COD (if applicable)', '<input type="text" id="'+idp+'cod" value="'+escapeHtml(v[MC.cod]||'')+'"/>'))+
       recapEditFieldHtml('Special remarks', '<textarea id="'+idp+'remarks">'+escapeHtml(v[MC.specialReq]||'')+'</textarea>')+
-    '</div></div>';
+    '</div>'+
+    fullEditBdMatchingSectionHtml(idx, v, isCC)+
+    '</div>';
   });
   html += '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;">'+
       '<label style="margin:0;font-size:13px;font-weight:600;" for="fe-justification">Justification for this correction</label>'+
-      '<p style="margin:0;font-size:12px;color:var(--text-secondary);">Required — explain why the details need to change. This is shown to the Admin Level 1 approver alongside the field-by-field changes below when this comes back to them.</p>'+
+      '<p style="margin:0;font-size:12px;color:var(--text-secondary);">Required — explain why the details need to change. This is shown alongside the field-by-field changes below to whichever approval level reviews this next (Admin Level 1, unless the only thing changed is BD source matching — see above).</p>'+
       '<textarea id="fe-justification" rows="3" placeholder="e.g. Buyer confirmed the volume was entered incorrectly at submission"></textarea>'+
     '</div>'+
     '<div id="full-edit-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>'+
     '<div style="display:flex;gap:8px;justify-content:flex-end;">'+
       '<button type="button" class="secondary" id="full-edit-cancel">Cancel</button>'+
-      '<button type="button" id="full-edit-save">Save &amp; resend for Level 1 approval</button>'+
+      '<button type="button" id="full-edit-save">Save changes</button>'+
     '</div>'+
   '</div>';
   return html;
@@ -7777,7 +8163,20 @@ function openFullEditModal(dealId){
   fullEditModalDealId = dealId;
   fullEditModalGroup = group;
   document.getElementById('full-edit-modal-dealid').textContent = friendlyDealId(dealId);
+  const currentStatus = dealGroupStatus(group);
+  const introEl = document.getElementById('full-edit-modal-intro');
+  if(currentStatus === STATUS_REVERTED_1){
+    const revertComment = group[0].values[0][MC.rejectReason] || '';
+    introEl.innerHTML = 'Admin Level 1 sent this back for changes instead of approving it — it has <strong>not</strong> been rejected, and no level has approved it yet, so nothing about the approval trail needs clearing. Fix whatever needs fixing below and it goes straight back to Pending Level 1 for Admin Level 1 to look at again, along with your note.' +
+      (revertComment ? '<br><br><strong>Admin Level 1’s comment:</strong> ' + escapeHtml(revertComment) : '');
+  } else {
+    introEl.innerHTML = 'Admin Level 1 has already signed off on this deal. If you change anything here besides BD source matching (Matching, Buyer/Seller, No of RECs, Which deal) — e.g. Registry, Tech, Volume, Price, dates — it sends the deal back through the approval chain: the Status resets to <strong>Pending Level 1</strong>, any Level 2 sign-off already recorded (and the Level 2 agreement attachment) is cleared, and Admin Level 1 gets a fresh approval email along with your justification below. If you ONLY correct BD source matching and nothing else, Level 1\'s sign-off is left alone: the deal stays at <strong>Pending Level 2</strong> and Admin Level 2 is simply notified of the updated matching along with your justification. The Deal ID itself does not change either way. This full edit is only available before Level 2 acts — once Level 2 or Level 3 has approved, only Registry, Tech, Volume, and BD source matching can still be corrected, via "Request edit" (which needs a fresh Level 3 sign-off instead of restarting from Level 1).';
+  }
   document.getElementById('full-edit-modal-fields').innerHTML = fullEditFormHtml(dealId, group);
+  // Keep each source's Buyer/Seller field in lockstep with its Own RECs/
+  // Proceed Share tickbox right after the form renders, same as the
+  // Request-edit modal does for its own er-* fields.
+  group.forEach((r, idx)=> feSourceKeysFor(idx).forEach(key => syncFullEditBuyerSeller(key)));
   // Assign handlers instead of addEventListener on every open. This prevents
   // repeated clicks/opens from stacking multiple save operations.
   document.getElementById('full-edit-cancel').onclick = closeFullEditModal;
@@ -7795,11 +8194,49 @@ function closeFullEditModal(){
 document.getElementById('full-edit-modal-overlay').addEventListener('click', (e)=>{
   if(e.target.id === 'full-edit-modal-overlay') closeFullEditModal();
 });
+// Columns that saveFullEditAndResubmit always rewrites purely as
+// bookkeeping (the approval trail itself, plus the regenerated recap html)
+// — never counted as a "real" content change when deciding whether an edit
+// touched anything besides BD source matching. Anything else that differs
+// between liveGroup (pre-edit) and updatedRows (about to be saved) counts.
+const FULL_EDIT_TRAIL_COLS = new Set([
+  MC.generatedHtml, MC.status, MC.approvedBy1, MC.approvedDate1,
+  MC.approvedBy2, MC.approvedDate2, MC.approvedBy3, MC.approvedDate3,
+  MC.rejectedBy, MC.rejectedDate, MC.rejectReason,
+  MC.agreementFileName, MC.agreementFileUrl,
+  MC.regTechReminderSentDate, MC.editChangeSummary
+]);
+// The BD source matching fields themselves (see requestBdMatchChange for
+// the equivalent post-approval definition) — the one set of fields this
+// full-edit modal is allowed to change without forcing the deal back
+// through Level 1, per fullEditChangedOnlyBdMatching below.
+const FULL_EDIT_BD_MATCHING_COLS = new Set([MC.matching, MC.buyerSeller, MC.noOfRecs, MC.whichDeal]);
+// True if, across every product row, nothing differs between the live
+// pre-edit values and what's about to be saved except the BD source
+// matching columns above (FULL_EDIT_TRAIL_COLS never counts either way —
+// see saveFullEditAndResubmit). Also true (vacuously) if nothing at all
+// changed. Compares raw stored values column-by-column rather than
+// re-deriving each field, so it can't drift out of sync with whatever
+// fields this modal actually exposes for editing.
+function fullEditChangedOnlyBdMatching(liveGroup, updatedRows){
+  for(let idx = 0; idx < liveGroup.length; idx++){
+    const oldValues = liveGroup[idx].values[0];
+    const newValues = updatedRows[idx].values[0];
+    const len = Math.max(oldValues.length, newValues.length);
+    for(let col = 0; col < len; col++){
+      if(FULL_EDIT_TRAIL_COLS.has(col)) continue;
+      const a = oldValues[col] === undefined || oldValues[col] === null ? '' : oldValues[col];
+      const b = newValues[col] === undefined || newValues[col] === null ? '' : newValues[col];
+      if(String(a) !== String(b) && !FULL_EDIT_BD_MATCHING_COLS.has(col)) return false;
+    }
+  }
+  return true;
+}
 async function saveFullEditAndResubmit(dealId, sortedGroup){
   const btn = document.getElementById('full-edit-save');
   const cancelBtn = document.getElementById('full-edit-cancel');
   const errEl = document.getElementById('full-edit-error');
-  const originalText = 'Save & resend for Level 1 approval';
+  const originalText = 'Save changes';
 
   if(!btn || !cancelBtn || !errEl) return;
 
@@ -7817,7 +8254,8 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
 
     // Re-read the live workbook rows before applying the edit. The modal is based
     // on cached rows and another user/process may have changed the deal since it
-    // was opened. Only continue if the deal is still waiting for Level 2 approval.
+    // was opened. Only continue if the deal is still in one of the two windows
+    // this full edit is offered in — see canFullyEditAfterLevel1.
     const activeTable = dealLogTableName();
     const liveRowsAll = await getCanonicalTableRows(activeTable);
     const liveGroup = liveRowsAll
@@ -7829,8 +8267,9 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
     }
 
     const liveStatus = dealGroupStatus(liveGroup);
-    if(liveStatus !== STATUS_PENDING_2){
-      throw new Error('This deal is no longer waiting for Level 2 approval (current status: ' + (liveStatus || 'Unknown') + '). Please refresh the page before editing it.');
+    const liveWasReverted = liveStatus === STATUS_REVERTED_1;
+    if(!canFullyEditAfterLevel1(liveStatus)){
+      throw new Error('This deal is no longer available for a full edit (current status: ' + (liveStatus || 'Unknown') + '). Please refresh the page before editing it.');
     }
 
     const rv = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
@@ -7844,7 +8283,28 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
 
     const justification = rv('fe-justification');
     if(!justification){
-      throw new Error('A justification for this correction is required — it\'s shown to Admin Level 1 when this comes back to them.');
+      throw new Error('A justification for this correction is required — it\'s shown alongside this change in the deal\'s history and to whichever approval level reviews it next.');
+    }
+
+    // "From which deal" is mandatory for every BD source on a product whose
+    // Matching isn't Open Position — same rule the main form and the
+    // Request-edit modal both enforce, checked here too since this modal has
+    // its own separate fe-bd-* fields for it (see fullEditBdMatchingSectionHtml).
+    const bdWhichDealErrors = [];
+    document.querySelectorAll('#full-edit-modal-fields .full-edit-matching').forEach(sel=>{
+      if(sel.value === 'Open Position') return;
+      const idx = parseInt(sel.getAttribute('data-idx'), 10);
+      const productLabel = liveGroup.length > 1 ? 'Product ' + (idx+1) : 'this product';
+      feSourceKeysFor(idx).forEach((key, srcIdx)=>{
+        const dealVal = val('fe-bd-'+key+'-whichdeal');
+        if(!dealVal || !dealVal.trim()){
+          const sourceLabel = srcIdx === 0 ? '' : ' (Source '+(srcIdx+1)+')';
+          bdWhichDealErrors.push('Enter "From which deal" for ' + productLabel + sourceLabel + ', or set its Matching to Open Position.');
+        }
+      });
+    });
+    if(bdWhichDealErrors.length){
+      throw new Error(bdWhichDealErrors.join(' '));
     }
 
     const isCC = (liveGroup[0]._sourceTable || STANDARD_LOG_TABLE_NAME) === CC_LOG_TABLE_NAME;
@@ -7900,21 +8360,69 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
       const remarksRaw = rv(idp+'remarks');
       values[MC.specialReq] = (!remarksRaw || remarksRaw.toUpperCase() === 'NA') ? 'N/A' : remarksRaw;
 
-      // Retrigger approval from Level 1. All previous approval/rejection/file
-      // stamps are cleared because they relate to the pre-edit version.
-      values[MC.status] = STATUS_PENDING_1;
-      values[MC.approvedBy1] = ''; values[MC.approvedDate1] = '';
-      values[MC.approvedBy2] = ''; values[MC.approvedDate2] = '';
-      values[MC.approvedBy3] = ''; values[MC.approvedDate3] = '';
-      values[MC.agreementFileName] = '';
-      values[MC.agreementFileUrl] = '';
-      values[MC.rejectedBy] = ''; values[MC.rejectedDate] = ''; values[MC.rejectReason] = '';
-      if(values.length > MC.regTechReminderSentDate){
-        values[MC.regTechReminderSentDate] = '';
+      // BD source matching (see fullEditBdMatchingSectionHtml) — a product
+      // can have more than one "+ Source" block, so Buyer/Seller, No of
+      // RECs and Which deal are each joined into a single "; "-separated
+      // value, one entry per source, in the same order (mirrors
+      // joinBdSourceField on the main form / the Request-edit modal's own
+      // collection code). Open Position means none of this applies, so it's
+      // cleared rather than carrying over stale values from before the
+      // switch.
+      const matchingSel = document.querySelector('.full-edit-matching[data-idx="'+idx+'"]');
+      const matchingVal = matchingSel ? matchingSel.value : (liveGroup[idx].values[0][MC.matching] || 'Open Position');
+      values[MC.matching] = matchingVal;
+      if(matchingVal === 'Open Position'){
+        values[MC.buyerSeller] = '';
+        values[MC.noOfRecs] = '';
+        values[MC.whichDeal] = '';
+      } else {
+        const bdKeys = feSourceKeysFor(idx);
+        values[MC.buyerSeller] = bdKeys.map(key => val('fe-bd-'+key+'-buyerseller')).join('; ');
+        values[MC.noOfRecs] = bdKeys.map(key => val('fe-bd-'+key+'-norecs')).join('; ');
+        values[MC.whichDeal] = bdKeys.map(key => feDealCodeFor(key)).join('; ');
       }
 
+      // Status/approval-trail handling is decided once, below, after every
+      // row's content has been built — see skipLevelReset. Nothing about
+      // Status/Approved-By/Approved-Date/agreement file/rejection columns
+      // is touched here any more.
       updatedRows.push({ index: liveGroup[idx].index, values: [values] });
     }
+
+    // If literally the only thing that changed across every product (versus
+    // the live, pre-edit rows) is BD source matching (Matching, Buyer/
+    // Seller, No of RECs, Which deal), and Level 1 has already approved
+    // (liveStatus === STATUS_PENDING_2 — not a Level 1 revert, which always
+    // goes back to Pending Level 1 as its normal, non-regressive path
+    // regardless of what changed), don't send the deal all the way back to
+    // Pending Level 1 for a correction Level 1 never needed to re-review in
+    // the first place. Level 1's sign-off (and the Level 2 agreement
+    // attachment, if one's already been started) stays exactly as it is,
+    // the deal stays at Pending Level 2, and only Admin Level 2 is notified
+    // of the updated matching — see fullEditChangedOnlyBdMatching below.
+    const skipLevelReset = !liveWasReverted && fullEditChangedOnlyBdMatching(liveGroup, updatedRows);
+    const finalStatus = skipLevelReset ? STATUS_PENDING_2 : STATUS_PENDING_1;
+    if(!skipLevelReset){
+      // Retrigger approval from Level 1. All previous approval/rejection/file
+      // stamps are cleared because they relate to the pre-edit version.
+      updatedRows.forEach(r=>{
+        const values = r.values[0];
+        values[MC.status] = STATUS_PENDING_1;
+        values[MC.approvedBy1] = ''; values[MC.approvedDate1] = '';
+        values[MC.approvedBy2] = ''; values[MC.approvedDate2] = '';
+        values[MC.approvedBy3] = ''; values[MC.approvedDate3] = '';
+        values[MC.agreementFileName] = '';
+        values[MC.agreementFileUrl] = '';
+        values[MC.rejectedBy] = ''; values[MC.rejectedDate] = ''; values[MC.rejectReason] = '';
+        if(values.length > MC.regTechReminderSentDate){
+          values[MC.regTechReminderSentDate] = '';
+        }
+      });
+    }
+    // else: leave Status/Approved-By/Approved-Date/agreement file/rejection
+    // columns exactly as liveGroup already had them (each updatedRows[idx]
+    // started as liveGroup[idx].values[0].slice()) — the deal simply stays
+    // at Pending Level 2 with Level 1's approval untouched.
 
     // Regenerate the recap from the edited values before writing.
     const freshHtml = renderPointFormatHtml(buildRecapLinesFromRows(dealId, updatedRows));
@@ -7926,8 +8434,14 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
     const fieldDiff = buildFullEditChangeSummary(liveGroup, updatedRows, role);
     const nowForLabel = new Date();
     const timestampLabel = String(nowForLabel.getUTCDate()).padStart(2,'0')+'/'+String(nowForLabel.getUTCMonth()+1).padStart(2,'0')+'/'+nowForLabel.getUTCFullYear()+' '+String(nowForLabel.getUTCHours()).padStart(2,'0')+':'+String(nowForLabel.getUTCMinutes()).padStart(2,'0')+' UTC';
-    const roundLabel = 'Edit on ' + timestampLabel + ' by ' + (currentAccount.username || 'unknown');
-    const changeSummary = roundLabel + '\nJustification: ' + justification + (fieldDiff ? '\n' + fieldDiff : '');
+    const roundLabel = (liveWasReverted ? 'Edit after Admin Level 1 sent this back, on '
+      : (skipLevelReset ? 'BD source matching edit (kept at Pending Level 2, Level 1 sign-off untouched) on ' : 'Edit on ')) + timestampLabel + ' by ' + (currentAccount.username || 'unknown');
+    // If this edit is resolving a Level 1 revert, carry the admin's own
+    // comment along with the diff so it stays on the permanent edit history
+    // even after rejectReason itself gets cleared below.
+    const revertNoteForSummary = liveWasReverted && liveGroup[0].values[0][MC.rejectReason]
+      ? '\nAdmin Level 1’s comment: ' + liveGroup[0].values[0][MC.rejectReason] : '';
+    const changeSummary = roundLabel + revertNoteForSummary + '\nJustification: ' + justification + (fieldDiff ? '\n' + fieldDiff : '');
 
     const priorSummary = (liveGroup[0].values[0].length > MC.editChangeSummary)
       ? (liveGroup[0].values[0][MC.editChangeSummary] || '') : '';
@@ -7950,22 +8464,27 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
     }
 
     // Verify the actual saved workbook state. This makes sure the approval queue
-    // can only be considered successfully reset after Excel contains Pending L1.
+    // can only be considered successfully saved after Excel contains the
+    // expected status — Pending Level 1 for a normal full edit/resubmit, or
+    // (see skipLevelReset above) still Pending Level 2 when the only thing
+    // that changed was BD source matching.
     const verifyRowsAll = await getCanonicalTableRows(activeTable);
     const verifyGroup = verifyRowsAll
       .filter(r => String(r.values[0][MC.dealId] || '').trim() === String(dealId).trim())
       .sort((a,b)=> a.index - b.index);
     const verifiedStatus = dealGroupStatus(verifyGroup);
-    if(verifiedStatus !== STATUS_PENDING_1){
-      throw new Error('The deal was written, but its Level 1 pending status could not be verified. Please refresh the page and check the approval queue before trying again.');
+    if(verifiedStatus !== finalStatus){
+      throw new Error('The deal was written, but its ' + (skipLevelReset ? 'Pending Level 2' : 'Level 1 pending') + ' status could not be verified. Please refresh the page and check the approval queue before trying again.');
     }
 
     // Email/notification is best-effort. A notification failure must NOT undo or
-    // hide the successful workbook status change.
+    // hide the successful workbook status change. finalStatus decides who gets
+    // paged: Admin Level 1 for a normal resubmit, or Admin Level 2 again when
+    // Level 1's sign-off was left untouched (BD-source-matching-only edit).
     try{
-      await notifyNextApprover(STATUS_PENDING_1, dealId, updatedRows[0].values[0][MC.description], changeSummary);
+      await notifyNextApprover(finalStatus, dealId, updatedRows[0].values[0][MC.description], changeSummary);
     }catch(notificationErr){
-      console.warn('Level 1 notification failed after successful save:', notificationErr);
+      console.warn('Next-approver notification failed after successful save:', notificationErr);
     }
 
     // Refresh the queue. If refresh fails, the workbook is still saved correctly.
