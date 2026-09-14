@@ -816,8 +816,8 @@
 
 <div id="reject-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
   <div style="width:100%;max-width:420px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:10px;">
-    <h2 style="margin:0;font-size:16px;">Reject Deal ID <span id="reject-modal-dealid"></span></h2>
-    <p style="margin:0;font-size:13px;color:var(--text-secondary);">This comment is shown to the person who submitted the confirmation so they know what to fix.</p>
+    <h2 style="margin:0;font-size:16px;">Reject BD source matching change — <span id="reject-modal-dealid"></span></h2>
+    <p style="margin:0;font-size:13px;color:var(--text-secondary);">This only discards the requested BD source matching correction — the deal's already-Approved details are left untouched. This comment is shown to the person who requested the change so they know why.</p>
     <label style="margin:4px 0 0;">Comment (required)</label>
     <textarea id="reject-comment" placeholder="e.g. Price/REC doesn't match the agreed rate — please confirm and resubmit." style="min-height:90px;"></textarea>
     <div id="reject-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
@@ -831,7 +831,7 @@
 <div id="revert-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
   <div style="width:100%;max-width:420px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:10px;">
     <h2 style="margin:0;font-size:16px;">Revert to submitter — <span id="revert-modal-dealid"></span></h2>
-    <p style="margin:0;font-size:13px;color:var(--text-secondary);">Nothing has approved this yet, so instead of rejecting it outright you can send it back to whoever submitted it. This comment tells them what to amend — they'll be able to edit the details from "My saved confirmations" and resubmit for your (Level 1) approval.</p>
+    <p id="revert-modal-intro" style="margin:0;font-size:13px;color:var(--text-secondary);">Instead of rejecting this outright you can send it back to whoever submitted it. This comment tells them what to amend — they'll be able to edit the details from "My saved confirmations" and resubmit for approval.</p>
     <label style="margin:4px 0 0;">Comment (required)</label>
     <textarea id="revert-comment" placeholder="e.g. Please confirm the Volume (RECs) with the buyer before resubmitting." style="min-height:90px;"></textarea>
     <div id="revert-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
@@ -1090,6 +1090,12 @@ const ROLE_LABELS = {
 // Hardcoded, UI-inaccessible superadmin(s) — a safety net so the role
 // assignment table can never be edited into a state with zero superadmins.
 const SUPERADMIN_EMAILS = ["shauyuan.tan@saxonrenewables.com"];
+// Fixed mailbox notified of every BD source matching edit made on a deal
+// that has already completed Level 3 approval — see requestBdMatchChange /
+// notifyOperationsBdMatchChange. Deliberately not role-based (unlike
+// admin1/2/3) since these edits skip the approval chain entirely; Operations
+// just needs to know a fully Approved deal's matching changed.
+const BD_MATCH_OPERATIONS_EMAIL = "operations@saxonrenewables.com";
 const USER_ROLES_TABLE_NAME = "TradeUserRoles"; // must match the Excel Table name you create
 // Column layout for the TradeUserRoles table: Email, Role, Assigned By, Assigned Date
 const RC = { email:0, role:1, assignedBy:2, assignedDate:3 };
@@ -1098,24 +1104,44 @@ const STATUS_PENDING_2 = "Pending Level 2";
 const STATUS_PENDING_3 = "Pending Level 3";
 const STATUS_APPROVED = "Approved";
 const STATUS_REJECTED = "Rejected";
-// Admin Level 1's alternative to an outright Reject, for a deal that is
-// still sitting at Pending Level 1 (i.e. nothing has approved it yet — see
-// canActOnStatus/actionableStatusesForRole, which never let ANY role reject
-// at this stage any more; only Approve or Revert are offered there). Instead
-// of a dead-end Rejected status, Revert sends the deal back to whoever
-// submitted it, together with a required comment (stored in the same
-// rejectedBy/rejectedDate/rejectReason columns rejectDeal() uses — the
-// meaning of those columns is simply read differently depending on which
-// status the row is currently at, same convention already used for a
-// rejected BD source matching request, see rejectBdMatchChange). The
-// submitter can then use the existing "Edit & resend" modal (see
-// canFullyEditAfterLevel1/saveFullEditAndResubmit) to fix whatever needs
-// fixing and resubmit — the Status goes back to Pending Level 1 and Admin
-// Level 1 is notified again, exactly like a brand new submission. Reject
-// remains available as before at every OTHER pending stage (Pending Level
-// 2/3, Pending Change - Level 3) since those stages mean at least one
-// approval has already happened.
+// Revert replaces outright Reject at every stage of the main 3-level chain
+// (Pending Level 1/2/3 — see canActOnStatus/actionableStatusesForRole and
+// the canReject/canRevert split in renderHistoryTable, which never offer a
+// plain Reject at any of these three any more). Instead of a dead-end
+// Rejected status, Revert sends the deal back to whoever submitted it,
+// together with a required comment (stored in the same rejectedBy/
+// rejectedDate/rejectReason columns rejectDeal() uses — the meaning of
+// those columns is simply read differently depending on which status the
+// row is currently at, same convention already used for a rejected BD
+// source matching request, see rejectBdMatchChange). The submitter can then
+// use the existing "Edit & resend" modal (see canFullyEditAfterLevel1/
+// saveFullEditAndResubmit) to fix whatever needs fixing and resubmit — see
+// revertDeal for exactly which level's approval stamp(s) stay intact and
+// which pending status it lands back on for each of the three:
+//   - STATUS_REVERTED_1 (reverted from Pending Level 1 — nothing has
+//     approved this deal yet): resubmitting goes back to Pending Level 1,
+//     exactly like a brand new submission.
+//   - STATUS_REVERTED_2 (reverted from Pending Level 2 — Level 1 already
+//     approved): Level 1's sign-off is left untouched; resubmitting goes
+//     straight back to Pending Level 2, not all the way to Level 1.
+//   - STATUS_REVERTED_3 (reverted from Pending Level 3 — Level 1 and Level
+//     2 already approved, including the Level 2 agreement attachment):
+//     both sign-offs are left untouched; resubmitting goes straight back
+//     to Pending Level 3.
+// Reject remains available ONLY for STATUS_PENDING_CHANGE_3 (a post-
+// approval BD source matching change request — see rejectBdMatchChange),
+// since rejecting one of those just discards the requested correction and
+// leaves the already-Approved deal itself untouched — there's nothing for
+// the submitter to "revert", so Revert doesn't apply there.
 const STATUS_REVERTED_1 = "Reverted - Level 1";
+// See the STATUS_REVERTED_1 comment above — same mechanism, one level up:
+// this is what a deal reverted from Pending Level 2 sits at while it's
+// with the submitter.
+const STATUS_REVERTED_2 = "Reverted - Level 2";
+// See the STATUS_REVERTED_1 comment above — same mechanism, two levels up:
+// this is what a deal reverted from Pending Level 3 sits at while it's
+// with the submitter.
+const STATUS_REVERTED_3 = "Reverted - Level 3";
 // A fully Approved deal's original submitter can request a change to just
 // its BD source matching fields (Matching, Buyer/Seller, Which deal, No of
 // RECs, Delivery date) — this status means that request is sitting in the
@@ -1627,31 +1653,41 @@ async function notifyOtherApproversAtLevel(levelRole, dealId, description, appro
   }
 }
 
-// Emails the person who submitted the deal if it's Rejected — or, at
-// Pending Level 1 only, Reverted (see STATUS_REVERTED_1/revertDeal) — at
+// Emails the person who submitted the deal if it's Rejected — or Reverted,
+// from any of the three levels (see STATUS_REVERTED_1/2/3/revertDeal) — at
 // whatever level it was at. Separate from notifyNextApprover, which only
 // ever emails the *next* approver in the chain. Note: per policy there is
 // deliberately no "fully Approved" email here — the submitter is already
 // notified once, when their Deal ID is first created at Level 1 (see
 // notifyDealIdAssigned below); nothing further is sent when the deal later
 // reaches the last approval level.
+// Per-level wording for a Revert email/UI — level (for "Admin Level N"),
+// standing (what's still true/untouched about the approval trail), and
+// resubmitTo (which level "Edit & resend" sends it back to — see
+// saveFullEditAndResubmit, which this must stay in sync with).
+const REVERT_STATUS_INFO = {
+  [STATUS_REVERTED_1]: {level:1, standing:'hasn\'t been approved by anyone yet either', resubmitTo:'Level 1'},
+  [STATUS_REVERTED_2]: {level:2, standing:'Level 1\'s approval stays in place', resubmitTo:'Level 2'},
+  [STATUS_REVERTED_3]: {level:3, standing:'Level 1 and Level 2\'s approvals stay in place', resubmitTo:'Level 3'}
+};
 async function notifySubmitter(status, dealId, submitterEmail, reason){
   const email = (submitterEmail || '').trim();
   if(!email) {
     console.warn('No submitter email on file — skipping outcome notification for Deal ID ' + dealId);
     return;
   }
-  // Only Rejected and Reverted have a submitter email.
-  if(status !== STATUS_REJECTED && status !== STATUS_REVERTED_1) return;
+  // Only Rejected and Reverted (any level) have a submitter email.
+  const revertInfo = REVERT_STATUS_INFO[status];
+  if(status !== STATUS_REJECTED && !revertInfo) return;
   const link = dealDeepLink(dealId);
   const displayId = friendlyDealId(dealId);
   const label = isPendingDealId(dealId) ? 'Your agreement (' + escapeHtml(displayId) + ')' : 'Deal ID <strong>' + escapeHtml(displayId) + '</strong>';
-  const isReverted = status === STATUS_REVERTED_1;
+  const isReverted = !!revertInfo;
   const subject = (isReverted ? 'Changes requested — ' : 'Rejected — ') + (isPendingDealId(dealId) ? 'agreement' : 'Deal ID ' + displayId);
   const html = isReverted
-    ? '<p>' + label + ' has been sent back to you by Admin Level 1 for some changes — it has <strong>not</strong> been rejected, and hasn\'t been approved by anyone yet either.</p>' +
+    ? '<p>' + label + ' has been sent back to you by Admin Level ' + revertInfo.level + ' for some changes — it has <strong>not</strong> been rejected, and ' + revertInfo.standing + '.</p>' +
       (reason ? '<p><strong>Comment:</strong> ' + escapeHtml(reason) + '</p>' : '') +
-      '<p>Open "My saved confirmations" in the Trade Confirmation app and use "Edit &amp; resend" on this deal to make the change and send it back for Level 1 approval.</p>' +
+      '<p>Open "My saved confirmations" in the Trade Confirmation app and use "Edit &amp; resend" on this deal to make the change — it goes straight back to Pending ' + revertInfo.resubmitTo + '.</p>' +
       '<p><a href="' + link + '">Open it in the Trade Confirmation app</a></p>'
     : '<p>' + label + ' has been rejected.</p>' +
       (reason ? '<p><strong>Reason:</strong> ' + escapeHtml(reason) + '</p>' : '') +
@@ -1744,6 +1780,62 @@ async function notifyChangeSubmitter(dealId, submitterEmail, outcome, reason){
     await sendMailGraph([email], subject, html);
   }catch(err){
     console.error('Change-outcome notification email failed', err);
+  }
+}
+
+// Sent instead of an approval-needed email whenever requestBdMatchChange
+// applies a BD source matching edit immediately — i.e. the deal had already
+// completed Level 3 approval, so there's no approver left to notify and
+// nothing to gate. Always goes to the fixed BD_MATCH_OPERATIONS_EMAIL
+// mailbox, not to whoever currently holds a role, since this is a
+// heads-up/record for Operations rather than an approval task. changeLines
+// is the same per-product diff array requestBdMatchChange already builds
+// for the approval-flow case, so the wording matches either way.
+async function notifyOperationsBdMatchChange(dealId, description, changeLines, matchNote, editorEmail){
+  if(!BD_MATCH_OPERATIONS_EMAIL) return;
+  const link = dealDeepLink(dealId);
+  const displayId = friendlyDealId(dealId);
+  const descBlock = (description && description.trim()) ? '<p><strong>Description:</strong> ' + escapeHtml(description) + '</p>' : '';
+  const noteBlock = matchNote ? '<p><strong>Note from editor:</strong> ' + escapeHtml(matchNote) + '</p>' : '';
+  const html = '<p>Deal ID <strong>' + escapeHtml(displayId) + '</strong> — already fully Approved — just had its BD source matching edited by ' +
+      escapeHtml(editorEmail || 'the original submitter') + '. No approval was needed for this change; it has already been written to TradeDealLog and the Approved list.</p>' +
+    '<p><strong>What changed:</strong><br>' + escapeHtml(changeLines.join('\n')).replace(/\n/g,'<br>') + '</p>' +
+    noteBlock + descBlock +
+    '<p><a href="' + link + '">Open it in the Trade Confirmation app</a></p>';
+  try{
+    await sendMailGraph([BD_MATCH_OPERATIONS_EMAIL], 'BD source matching updated — ' + displayId, html);
+  }catch(err){
+    console.error('Operations BD-match-change notification email failed', err);
+  }
+}
+
+// Admin Level 1 is copied on every BD source matching change, in every
+// pathway that can produce one — an already-Approved deal edited directly
+// (alongside the Operations email above), a change requested for Level 3
+// review (STATUS_PENDING_3), a proactive BD-matching-only edit made while a
+// deal sits at Pending Level 2 (see saveFullEditAndResubmit), and any edit
+// made while resubmitting after a revert. This is purely an FYI heads-up —
+// it never gates or blocks anything, so a failure here must never surface
+// as a save/request failure to the person making the edit (every call site
+// wraps this in its own try/catch). context is a short free-text phrase
+// describing which pathway this came from (e.g. "requested for Level 3
+// review", "kept at Pending Level 2, no re-approval needed"), shown in the
+// email so Admin Level 1 knows what state the deal is actually in.
+async function notifyAdminLevel1BdMatchChange(dealId, description, changeLines, context, editorEmail){
+  const toEmails = emailsForRole('admin1');
+  if(!toEmails.length) return;
+  const link = dealDeepLink(dealId);
+  const displayId = friendlyDealId(dealId);
+  const descBlock = (description && description.trim()) ? '<p><strong>Description:</strong> ' + escapeHtml(description) + '</p>' : '';
+  const html = '<p>Deal ID <strong>' + escapeHtml(displayId) + '</strong> just had its BD source matching changed by ' +
+      escapeHtml(editorEmail || 'the submitter') + (context ? ' (' + escapeHtml(context) + ')' : '') + '.</p>' +
+    '<p><strong>What changed:</strong><br>' + escapeHtml((changeLines||[]).join('\n')).replace(/\n/g,'<br>') + '</p>' +
+    descBlock +
+    '<p><a href="' + link + '">Open it in the Trade Confirmation app</a></p>';
+  try{
+    await sendMailGraph(toEmails, 'BD source matching changed — ' + displayId, html);
+  }catch(err){
+    console.error('Admin Level 1 BD-match-change notification email failed', err);
   }
 }
 
@@ -3264,10 +3356,19 @@ async function approveDeal(dealId, file, transferOverrides){
       '\n\nThe approval itself is saved — this only affects the separate "Approved" list. Check that the list\'s column internal names/types match what the app sends (see addApprovedDealToList in the code), then ask an admin to fix the mismatch and re-copy the missing trade(s).');
   }
 }
-/* Rejects a deal at whatever stage it's currently pending at, recording who
-   rejected it, when, and the comment the submitter will see. Rejection
-   doesn't erase earlier level sign-offs — they stay visible in the approval
-   trail — but the deal must restart from Level 1 if resubmitted. */
+/* Rejects a deal to a dead-end Rejected status. No longer offered anywhere
+   in the main 3-level approval chain (Pending Level 1/2/3) — Revert (see
+   revertDeal) replaced Reject there entirely, so the submitter can fix
+   whatever's wrong and resubmit instead of the deal dying outright. This
+   function is kept only as a defense-in-depth server-side guard (the Reject
+   button itself is no longer rendered for Pending Level 1/2/3 — see
+   canReject in renderHistoryTable, which now only ever renders it for
+   STATUS_PENDING_CHANGE_3, dispatching to rejectBdMatchChange instead of
+   this function — see the reject-modal-submit click handler) so a stale
+   page/race can't reject a deal at any of those three statuses even if it
+   somehow tried to. If this is ever called for STATUS_PENDING_1/2/3 it now
+   always throws; STATUS_REJECTED itself still displays correctly wherever a
+   deal was rejected before this change shipped. */
 async function rejectDeal(dealId, reason){
   if(!dealId) return;
   const trimmedReason = (reason||'').trim();
@@ -3278,13 +3379,12 @@ async function rejectDeal(dealId, reason){
   if(!matching.length) return;
   const currentStatus = matching[0].values[0][MC.status];
   if(!canActOnStatus(currentStatus)) throw new Error('You are not able to reject this deal at its current stage.');
-  // Reject is no longer offered at Pending Level 1 — nothing has approved
-  // this deal yet, so Revert (see revertDeal) is the only way to send it
-  // back at this stage. This is a server-side guard behind the UI change
-  // (the Reject button itself is no longer rendered for this status — see
-  // canReject in renderHistoryTable) so a stale page/race can't reject a
-  // deal straight to a dead end before anyone has even looked at it.
-  if(currentStatus === STATUS_PENDING_1) throw new Error('This deal hasn\'t been approved at any level yet, so it can only be reverted back to the submitter (with a comment), not rejected. Use "Revert to submitter" instead.');
+  // Reject is no longer offered anywhere in the main chain (Pending Level
+  // 1/2/3) — Revert (see revertDeal) is the only way to send a deal back at
+  // any of those three stages now.
+  if(currentStatus === STATUS_PENDING_1 || currentStatus === STATUS_PENDING_2 || currentStatus === STATUS_PENDING_3){
+    throw new Error('This deal is in the main approval chain, which no longer supports an outright Reject — use "Revert to submitter" instead so it can be fixed and resubmitted.');
+  }
   const nowIso = new Date().toISOString();
   for(const r of matching){
     const values = r.values[0].slice();
@@ -3308,20 +3408,36 @@ async function rejectDeal(dealId, reason){
   await notifySubmitter(STATUS_REJECTED, dealId, matching[0].values[0][MC.submittedBy], trimmedReason);
   await loadHistory();
 }
-/* Admin Level 1's alternative to rejectDeal() while a deal is still at
-   Pending Level 1 (nothing has approved it yet — see the STATUS_REVERTED_1
-   comment above). Sends the deal back to whoever submitted it, with a
-   required comment, WITHOUT marking it a dead-end Rejected: the submitter
-   can reopen it from "My saved confirmations" via the existing "Edit &
-   resend" modal (see canFullyEditAfterLevel1/saveFullEditAndResubmit),
-   correct whatever needs fixing, and resubmit — which puts it straight back
-   at Pending Level 1 for Admin Level 1 to look at again. Reuses the same
-   rejectedBy/rejectedDate/rejectReason columns rejectDeal() writes; while
-   Status is STATUS_REVERTED_1 those columns hold the revert comment instead
-   of a rejection reason (renderHistoryTable/statusBadge key off the current
-   Status to decide how to label them), and saveFullEditAndResubmit clears
-   them again the moment the deal is resubmitted, same as it already does
-   for a genuine rejection note. */
+/* Replaces rejectDeal() at every stage of the main 3-level chain (Pending
+   Level 1/2/3 — see the STATUS_REVERTED_1/2/3 comment above). Sends the
+   deal back to whoever submitted it, with a required comment, WITHOUT
+   marking it a dead-end Rejected: the submitter can reopen it from "My
+   saved confirmations" via the existing "Edit & resend" modal (see
+   canFullyEditAfterLevel1/saveFullEditAndResubmit), correct whatever needs
+   fixing, and resubmit — which puts it straight back at the SAME level that
+   reverted it (Pending Level 1/2/3 respectively — see
+   REVERT_TO_PENDING_STATUS below and saveFullEditAndResubmit), not
+   restarting the whole chain from Level 1. Whichever level(s) already
+   approved before the revert stay approved: reverting from Pending Level 2
+   leaves Level 1's stamp untouched; reverting from Pending Level 3 leaves
+   both Level 1's and Level 2's stamps (and the Level 2 agreement file)
+   untouched. Reuses the same rejectedBy/rejectedDate/rejectReason columns
+   rejectDeal() writes; while Status is one of the three Reverted statuses
+   those columns hold the revert comment instead of a rejection reason
+   (renderHistoryTable/statusBadge key off the current Status to decide how
+   to label them), and saveFullEditAndResubmit clears them again the moment
+   the deal is resubmitted, same as it already does for a genuine rejection
+   note. */
+// Which Reverted status each pending stage reverts TO, and — read the other
+// way round — which pending stage saveFullEditAndResubmit sends a deal at
+// that Reverted status back to once the submitter resubmits. Keeping this
+// as one lookup table (rather than duplicating the mapping in both
+// directions) is what keeps revertDeal and saveFullEditAndResubmit in sync.
+const REVERT_TO_PENDING_STATUS = {
+  [STATUS_PENDING_1]: STATUS_REVERTED_1,
+  [STATUS_PENDING_2]: STATUS_REVERTED_2,
+  [STATUS_PENDING_3]: STATUS_REVERTED_3
+};
 async function revertDeal(dealId, comment){
   if(!dealId) return;
   const trimmedComment = (comment||'').trim();
@@ -3332,41 +3448,57 @@ async function revertDeal(dealId, comment){
   if(!matching.length) return;
   const currentStatus = matching[0].values[0][MC.status];
   if(!canActOnStatus(currentStatus)) throw new Error('You are not able to act on this deal at its current stage.');
-  if(currentStatus !== STATUS_PENDING_1) throw new Error('This deal is no longer waiting for Level 1 approval (current status: ' + (currentStatus || 'Unknown') + '), so it can no longer be reverted this way. Please refresh the page.');
+  const revertedStatus = REVERT_TO_PENDING_STATUS[currentStatus];
+  if(!revertedStatus) throw new Error('This deal is no longer at a pending stage that can be reverted (current status: ' + (currentStatus || 'Unknown') + '). Please refresh the page.');
   const nowIso = new Date().toISOString();
   for(const r of matching){
     const values = r.values[0].slice();
-    values[MC.status] = STATUS_REVERTED_1;
+    values[MC.status] = revertedStatus;
     values[MC.rejectedBy] = currentAccount.username;
     values[MC.rejectedDate] = nowIso;
     values[MC.rejectReason] = trimmedComment;
     await updateCanonicalTableRow(dealLogTableName(), r.index, values);
   }
-  await notifySubmitter(STATUS_REVERTED_1, dealId, matching[0].values[0][MC.submittedBy], trimmedComment);
+  await notifySubmitter(revertedStatus, dealId, matching[0].values[0][MC.submittedBy], trimmedComment);
   await loadHistory();
 }
 /* ---- Post-approval BD source matching change requests ----
-   Only the original submitter, and only once a deal is fully Approved, can
-   ask to correct its Matching / Buyer-Seller / Which deal fields (see the
-   "Request edit" button on "My saved confirmations"). The new values are
-   staged in the pending* columns and the deal's Status moves to
-   "Pending Change - Level 3" — exactly like a normal pending stage, it shows
-   up in the Level 3/Superadmin Approval queue — while the live
-   matching/buyerSeller/whichDeal columns (and everything already written to
-   the "Approved" SharePoint list) are left untouched until that approval
-   happens. Also doubles as the vehicle for a Registry/Tech correction (see
-   needsRegistryTechFix/openEditRequestModal) — when a product's Registry
-   holds more than one registry or its Tech holds more than one tech (or
-   "ANY"), the modal lets the submitter pick a single Registry and a single
-   Tech for it, staged here exactly the same way and requiring the same
-   Level 3 sign-off. edits is an array of {matching, buyerSeller, whichDeal,
-   noOfRecs, deliveryDateM, registry, tech, rowUid}, one per product row, in
-   the same order as the deal's rows sorted by index — rowUid is what the
-   modal showed for that product when it was opened, and is checked against
-   a freshly-read row set below (not just trusted by position) before
-   anything is written. registry/tech are always included (even for
-   products that didn't need a fix) carrying that product's current,
-   unchanged value, so the diff below only picks up a real change. */
+   Only the original submitter can ask to correct a deal's Matching /
+   Buyer-Seller / Which deal / No of RECs fields (see the "Request edit"
+   button on "My saved confirmations"), and only once Level 2 has signed off
+   — i.e. currentStatus is STATUS_PENDING_3 or STATUS_APPROVED. What happens
+   next depends on which of those two it is:
+     - STATUS_PENDING_3 (Level 3 hasn't done its first-ever review of this
+       deal yet): unchanged from before — the new values are staged in the
+       pending* columns and the deal's Status moves to
+       "Pending Change - Level 3", showing up in the Level 3/Superadmin
+       Approval queue exactly like a normal pending stage, while the live
+       matching/buyerSeller/whichDeal columns are left untouched until
+       Level 3 approves or rejects it (see approveBdMatchChange/
+       rejectBdMatchChange). This is still just Level 3 doing its normal,
+       first-time sign-off with the corrected data.
+     - STATUS_APPROVED (the deal has already completed Level 3 approval):
+       no approval gate at all — the new values are written straight to the
+       live TradeDealLog columns in this same call, a fresh entry is added
+       to the "Approved" SharePoint list so the change is still on record
+       (same as approveBdMatchChange would do), and BD_MATCH_OPERATIONS_EMAIL
+       is emailed a summary of what changed (see
+       notifyOperationsBdMatchChange) — nobody's approval is needed or
+       waited on.
+   Also doubles as the vehicle for a Registry/Tech (or Volume) correction
+   (see needsRegistryTechFix/needsVolumeFix/openEditRequestModal) — when a
+   product's Registry holds more than one registry or its Tech holds more
+   than one tech (or "ANY"), or its Volume is still an unconfirmed range,
+   the modal lets the submitter pick a single Registry/Tech/Volume for it,
+   handled by the exact same two branches above. edits is an array of
+   {matching, buyerSeller, whichDeal, noOfRecs, deliveryDateM, registry,
+   tech, volume, rowUid}, one per product row, in the same order as the
+   deal's rows sorted by index — rowUid is what the modal showed for that
+   product when it was opened, and is checked against a freshly-read row set
+   below (not just trusted by position) before anything is written.
+   registry/tech/volume are always included (even for products that didn't
+   need a fix) carrying that product's current, unchanged value, so the diff
+   below only picks up a real change. */
 async function requestBdMatchChange(dealId, edits, matchNote){
   if(!dealId) return;
   await ensureFreshWorkbookSession();
@@ -3415,22 +3547,40 @@ async function requestBdMatchChange(dealId, edits, matchNote){
   // write and the email entirely rather than locking the deal into
   // "Pending Change - Level 3" and paging Level 3 for a no-op.
   const changeLines = [];
+  // Same per-row diff text as changeLines, but indexed by row position and
+  // WITHOUT the "Product N —" prefix (blank/undefined for an unchanged
+  // row) — used to build each product's own "Approved" list changeNote in
+  // the immediate-apply (STATUS_APPROVED) branch below, so a multi-product
+  // deal's history entries each describe only their own product, the same
+  // way approveBdMatchChange's per-row noteLines do.
+  const rowChangeLines = new Array(matching.length).fill('');
   const rowChanged = new Array(matching.length).fill(false);
+  // True the moment any row actually changes one of the four real BD source
+  // matching fields (Matching/Buyer-Seller/Which deal/No of RECs) \u2014 kept
+  // separate from rowChanged/changeLines above because those also cover
+  // Registry/Tech/Volume fixes (see the big comment above this function),
+  // which aren't "BD source matching" and shouldn't trigger the Admin Level
+  // 1 notification below on their own.
+  let bdMatchingChanged = false;
   for(let i = 0; i < matching.length; i++){
     const rv = matching[i].values[0];
     const edit = edits[i] || {};
     const lines = [];
     if((rv[MC.matching]||'') !== (edit.matching||'')){
       lines.push('Matching: ' + matchingDisplayLabel(rv[MC.matching]) + ' \u2192 ' + matchingDisplayLabel(edit.matching));
+      bdMatchingChanged = true;
     }
     if((rv[MC.buyerSeller]||'') !== (edit.buyerSeller||'')){
       lines.push('Buyer/Seller: ' + (rv[MC.buyerSeller]||'(blank)') + ' \u2192 ' + (edit.buyerSeller||'(blank)'));
+      bdMatchingChanged = true;
     }
     if((rv[MC.whichDeal]||'') !== (edit.whichDeal||'')){
       lines.push('Which deal: ' + (rv[MC.whichDeal]||'(blank)') + ' \u2192 ' + (edit.whichDeal||'(blank)'));
+      bdMatchingChanged = true;
     }
     if((rv[MC.noOfRecs]||'') !== (edit.noOfRecs||'')){
       lines.push('No of RECs: ' + (rv[MC.noOfRecs]||'(blank)') + ' \u2192 ' + (edit.noOfRecs||'(blank)'));
+      bdMatchingChanged = true;
     }
     if((rv[MC.registry]||'') !== (edit.registry||'')){
       lines.push('Registry: ' + registryDisplayName(rv[MC.registry]) + ' \u2192 ' + registryDisplayName(edit.registry));
@@ -3443,51 +3593,119 @@ async function requestBdMatchChange(dealId, edits, matchNote){
     }
     if(lines.length){
       rowChanged[i] = true;
-      changeLines.push((matching.length > 1 ? 'Product ' + (i+1) + ' \u2014 ' : '') + lines.join(', '));
+      rowChangeLines[i] = lines.join(', ');
+      changeLines.push((matching.length > 1 ? 'Product ' + (i+1) + ' \u2014 ' : '') + rowChangeLines[i]);
     }
   }
   if(!changeLines.length){
     throw new Error('No changes were made — nothing to submit for re-approval.');
   }
   const nowIso = new Date().toISOString();
-  // Only the product(s) that actually changed get staged and flipped to
-  // "Pending Change - Level 3" — an unchanged product in the same deal is
-  // left completely untouched (no write at all), so it stays Approved and
-  // isn't re-queued, re-approved, or re-copied into the "Approved" list
-  // alongside the product that actually needs review.
+  if(currentStatus === STATUS_PENDING_3){
+    // Deal hasn't had its first-ever Level 3 review yet — unchanged
+    // behavior: stage the edit and let Level 3 pick it up as a normal
+    // pending stage. Only the product(s) that actually changed get staged
+    // and flipped to "Pending Change - Level 3" — an unchanged product in
+    // the same deal is left completely untouched (no write at all), so it
+    // isn't re-queued or re-copied into the "Approved" list alongside the
+    // product that actually needs review.
+    for(let i = 0; i < matching.length; i++){
+      if(!rowChanged[i]) continue;
+      const r = matching[i];
+      const edit = edits[i] || {};
+      const values = r.values[0].slice();
+      values[MC.pendingMatching] = edit.matching || '';
+      values[MC.pendingBuyerSeller] = edit.buyerSeller || '';
+      values[MC.pendingWhichDeal] = edit.whichDeal || '';
+      values[MC.pendingNoOfRecs] = edit.noOfRecs || '';
+      // Delivery date is gone entirely now — never staged for any deal, so
+      // approveBdMatchChange's guard never has anything to copy into the
+      // live Delivery Date column.
+      values[MC.pendingDeliveryDateM] = '';
+      values[MC.pendingRegistry] = edit.registry || '';
+      values[MC.pendingTech] = edit.tech || '';
+      // Optional column (see pendingVolume on MC) — only stage it if the
+      // live table actually has it; a workbook that hasn't added it yet
+      // just won't carry a Volume fix through this flow.
+      if(values.length > MC.pendingVolume) values[MC.pendingVolume] = edit.volume || '';
+      values[MC.pendingMatchNote] = matchNote || '';
+      values[MC.pendingRequestedBy] = currentAccount.username;
+      values[MC.pendingRequestedDate] = nowIso;
+      values[MC.status] = STATUS_PENDING_CHANGE_3;
+      // Clear out any note from a previous, already-resolved change request
+      // so it doesn't linger next to this new one.
+      values[MC.rejectedBy] = '';
+      values[MC.rejectedDate] = '';
+      values[MC.rejectReason] = '';
+      await updateCanonicalTableRow(dealLogTableName(), r.index, values);
+    }
+    const notifyBody = changeLines.join('\n') + (matchNote ? '\n\nNote: ' + matchNote : '');
+    await notifyNextApprover(STATUS_PENDING_CHANGE_3, dealId, matching[0].values[0][MC.description], notifyBody);
+    if(bdMatchingChanged){
+      try{
+        await notifyAdminLevel1BdMatchChange(dealId, matching[0].values[0][MC.description], changeLines, 'requested for Level 3 review', currentAccount.username);
+      }catch(err){ console.warn('Admin Level 1 BD-match-change notification failed:', err); }
+    }
+    await loadHistory();
+    return;
+  }
+  // currentStatus === STATUS_APPROVED: the deal has already completed Level
+  // 3 approval, so a BD source matching correction needs no approval at
+  // all — write straight to the live columns, right now, in this call. No
+  // pending* staging, no Status change (stays STATUS_APPROVED throughout),
+  // no Level 3 queue entry. Only the product(s) that actually changed are
+  // touched — same "leave untouched siblings alone" rule as the staged
+  // path above.
+  const approvedListErrors = [];
+  let tradeNum = 0;
   for(let i = 0; i < matching.length; i++){
+    tradeNum++;
     if(!rowChanged[i]) continue;
     const r = matching[i];
     const edit = edits[i] || {};
     const values = r.values[0].slice();
-    values[MC.pendingMatching] = edit.matching || '';
-    values[MC.pendingBuyerSeller] = edit.buyerSeller || '';
-    values[MC.pendingWhichDeal] = edit.whichDeal || '';
-    values[MC.pendingNoOfRecs] = edit.noOfRecs || '';
-    // Delivery date is gone entirely now — never staged for any deal, so
-    // approveBdMatchChange's guard never has anything to copy into the
-    // live Delivery Date column.
-    values[MC.pendingDeliveryDateM] = '';
-    values[MC.pendingRegistry] = edit.registry || '';
-    values[MC.pendingTech] = edit.tech || '';
-    // Optional column (see pendingVolume on MC) — only stage it if the
-    // live table actually has it; a workbook that hasn't added it yet
-    // just won't carry a Volume fix through this flow.
-    if(values.length > MC.pendingVolume) values[MC.pendingVolume] = edit.volume || '';
-    values[MC.pendingMatchNote] = matchNote || '';
-    values[MC.pendingRequestedBy] = currentAccount.username;
-    values[MC.pendingRequestedDate] = nowIso;
-    values[MC.status] = STATUS_PENDING_CHANGE_3;
-    // Clear out any note from a previous, already-resolved change request
-    // so it doesn't linger next to this new one.
-    values[MC.rejectedBy] = '';
-    values[MC.rejectedDate] = '';
-    values[MC.rejectReason] = '';
+    // Same wording/shape as approveBdMatchChange's own per-row changeNote —
+    // rowChangeLines[i] is this product's own diff only (no "Product N —"
+    // prefix, since the Approved-list entry is already scoped to one row).
+    const changeNote = 'BD source matching change: ' + rowChangeLines[i] +
+      (matchNote ? ' — Note: ' + matchNote : '');
+    values[MC.matching] = edit.matching || '';
+    values[MC.buyerSeller] = edit.buyerSeller || '';
+    values[MC.whichDeal] = edit.whichDeal || '';
+    values[MC.noOfRecs] = edit.noOfRecs || '';
+    if(edit.registry) values[MC.registry] = edit.registry;
+    if(edit.tech) values[MC.tech] = edit.tech;
+    if(values.length > MC.pendingVolume && edit.volume) values[MC.volume] = edit.volume;
+    // Fixed now (or was never ambiguous) — clear any reminder-sent stamp so
+    // a future, unrelated ambiguity on this row starts its own fresh
+    // reminder window rather than inheriting an old timestamp. Same guard
+    // as approveBdMatchChange.
+    if(values.length > MC.regTechReminderSentDate &&
+       !needsRegistryTechFix(values[MC.registry], values[MC.tech]) && !needsVolumeFix(values[MC.volume])){
+      values[MC.regTechReminderSentDate] = '';
+    }
     await updateCanonicalTableRow(dealLogTableName(), r.index, values);
+    try{
+      const approvedItemId = await addApprovedDealToList(values, changeNote);
+      if(approvedItemId){
+        values[MC.approvedListItemId] = String(approvedItemId);
+        await updateCanonicalTableRow(dealLogTableName(), r.index, values);
+      }
+    }catch(err){
+      console.error('Could not copy Product ' + tradeNum + '\'s change into the "' + approvedListNameForCurrentLog() + '" list — check that its column internal names match what this app sends (see the fields{} object in addApprovedDealToList).', err);
+      approvedListErrors.push('Product ' + tradeNum + ': ' + err.message);
+    }
   }
-  const notifyBody = changeLines.join('\n') + (matchNote ? '\n\nNote: ' + matchNote : '');
-  await notifyNextApprover(STATUS_PENDING_CHANGE_3, dealId, matching[0].values[0][MC.description], notifyBody);
+  await notifyOperationsBdMatchChange(dealId, matching[0].values[0][MC.description], changeLines, matchNote, currentAccount.username);
+  if(bdMatchingChanged){
+    try{
+      await notifyAdminLevel1BdMatchChange(dealId, matching[0].values[0][MC.description], changeLines, 'already Approved deal, no approval needed', currentAccount.username);
+    }catch(err){ console.warn('Admin Level 1 BD-match-change notification failed:', err); }
+  }
   await loadHistory();
+  if(approvedListErrors.length){
+    alert('The change was applied, but couldn\'t be copied into the "' + approvedListNameForCurrentLog() + '" list for:\n' + approvedListErrors.join('\n'));
+  }
 }
 // Applies a pending BD source matching change: copies pendingMatching/
 // pendingBuyerSeller/pendingWhichDeal into the live columns, clears the
@@ -3716,7 +3934,7 @@ const CONFIRMATION_FILTER_OPTS = {
   admin: {showOwner:true, showActions:false, restrictOthers:true},
   queue: {showOwner:true, showActions:true, emptyText:'Nothing pending right now.'}
 };
-const ALL_CONFIRMATION_STATUSES = [STATUS_PENDING_1, STATUS_REVERTED_1, STATUS_PENDING_2, STATUS_PENDING_3, STATUS_PENDING_CHANGE_3, STATUS_APPROVED, STATUS_REJECTED];
+const ALL_CONFIRMATION_STATUSES = [STATUS_PENDING_1, STATUS_REVERTED_1, STATUS_PENDING_2, STATUS_REVERTED_2, STATUS_PENDING_3, STATUS_REVERTED_3, STATUS_PENDING_CHANGE_3, STATUS_APPROVED, STATUS_REJECTED];
 function confirmationGroupType(g){
   return (g && g.sourceTable === CC_LOG_TABLE_NAME) ? 'carboncredit' : 'recs';
 }
@@ -3897,7 +4115,9 @@ const ANALYSIS_STATUS_COLORS = {
   [STATUS_PENDING_1]: '#c9962e',
   [STATUS_REVERTED_1]: '#b3560f',
   [STATUS_PENDING_2]: '#b3811f',
+  [STATUS_REVERTED_2]: '#b3560f',
   [STATUS_PENDING_3]: '#9c6d15',
+  [STATUS_REVERTED_3]: '#b3560f',
   [STATUS_PENDING_CHANGE_3]: '#7a4d9f',
   [STATUS_APPROVED]: '#1f7a4d',
   [STATUS_REJECTED]: '#8a2d1f'
@@ -4208,7 +4428,7 @@ function statusBadge(status){
   const color = s === STATUS_APPROVED ? '#1f7a4d'
     : s === STATUS_REJECTED ? '#8a2d1f'
     : s === STATUS_PENDING_CHANGE_3 ? '#7a4d9f'
-    : s === STATUS_REVERTED_1 ? '#b3560f'
+    : (s === STATUS_REVERTED_1 || s === STATUS_REVERTED_2 || s === STATUS_REVERTED_3) ? '#b3560f'
     : '#8a6d1f';
   return '<span style="font-weight:600;color:'+color+';">'+escapeHtml(s)+'</span>';
 }
@@ -4283,29 +4503,49 @@ function renderHistoryTable(el, groups, opts){
       return;
     }
     const canAct = showActions && canActOnStatus(status);
-    // At Pending Level 1 (nothing has approved this deal yet), Reject is
-    // replaced by Revert — sending the deal back to the submitter with a
-    // comment instead of a dead-end Rejected status (see STATUS_REVERTED_1
-    // and revertDeal). Every OTHER pending stage still offers a plain
-    // Reject, unchanged, since at least one level has already approved by
-    // then.
-    const canReject = canAct && status !== STATUS_PENDING_1;
-    const canRevert = canAct && status === STATUS_PENDING_1;
+    // Revert replaces Reject at every stage of the main 3-level chain
+    // (Pending Level 1/2/3) — sending the deal back to the submitter with a
+    // comment instead of a dead-end Rejected status (see
+    // STATUS_REVERTED_1/2/3 and revertDeal), and resubmitting lands back on
+    // whichever level reverted it rather than restarting from Level 1. A
+    // plain Reject only remains for STATUS_PENDING_CHANGE_3 (a post-approval
+    // BD source matching change request — see rejectBdMatchChange), since
+    // rejecting one of those just discards the requested correction and
+    // leaves the already-Approved deal itself untouched — there's no deal
+    // detail for the submitter to revert.
+    const canReject = canAct && status === STATUS_PENDING_CHANGE_3;
+    const canRevert = canAct && (status === STATUS_PENDING_1 || status === STATUS_PENDING_2 || status === STATUS_PENDING_3);
+    // Revert button tooltip/title, worded per level so it's clear the
+    // submitter's resubmission lands back at the SAME level rather than
+    // restarting the whole chain (see revertDeal for what actually happens).
+    const revertTitle = status === STATUS_PENDING_1
+      ? 'Send this back to the submitter with a comment instead of rejecting it outright — they can edit the details and resubmit for Level 1 approval.'
+      : status === STATUS_PENDING_2
+      ? 'Send this back to the submitter with a comment instead of rejecting it outright — Level 1\'s approval stays in place; once they resubmit, it comes straight back to Pending Level 2, not Level 1.'
+      : 'Send this back to the submitter with a comment instead of rejecting it outright — Level 1 and Level 2\'s approvals (and the Level 2 agreement) stay in place; once they resubmit, it comes straight back to Pending Level 3, not Level 1.';
     const trail = approvalTrailText(v);
     const agreementUrl = v[MC.agreementFileUrl];
     const agreementLink = agreementUrl
       ? '<div style="font-size:11px;margin-top:2px;"><a href="'+escapeHtml(agreementUrl)+'" target="_blank" rel="noopener">📄 View agreement</a></div>'
       : '';
     const canRequestEdit = showRequestEdit && (status === STATUS_APPROVED || status === STATUS_PENDING_3);
-    // Full details/products edit — only available in the window right
-    // after Admin Level 1 approves, before Level 2 acts (Pending Level 2 —
-    // see canFullyEditAfterLevel1). Deliberately separate from
+    // Full details/products edit — available in the window right after
+    // Admin Level 1 approves and before Level 2 acts (Pending Level 2), or
+    // any time a level has sent the deal back via Revert (Reverted - Level
+    // 1/2/3 — see canFullyEditAfterLevel1). Deliberately separate from
     // canRequestEdit above: this covers everything EXCEPT Registry, Tech,
     // and BD source matching (which stays "Request edit"'s job once Level 2
-    // or Level 3 has approved), and resubmits the whole deal back through
-    // Level 1 rather than just asking Level 3 to sign off on a small
-    // correction.
+    // or Level 3 has approved outright, i.e. without a revert), and — unless
+    // resubmitting from a Level 2 or Level 3 revert (see saveFullEditAndResubmit)
+    // — resubmits the deal back through Level 1.
     const canFullEdit = showFullEdit && canFullyEditAfterLevel1(status);
+    const fullEditTitle = status === STATUS_REVERTED_2
+      ? 'Edit details/products — resubmitting sends this deal straight back to Pending Level 2 (Level 1\'s approval stays in place)'
+      : status === STATUS_REVERTED_3
+      ? 'Edit details/products — resubmitting sends this deal straight back to Pending Level 3 (Level 1 and Level 2\'s approvals stay in place)'
+      : status === STATUS_PENDING_2
+      ? 'Edit details/products — if you only correct BD source matching this stays at Pending Level 2 (Level 1\'s approval stays in place); changing anything else resends the deal through Level 1 approval again'
+      : 'Edit details/products — resends this deal through Level 1 approval again';
     // Ambiguous Registry/Tech, or an unconfirmed Volume (RECs) range (e.g.
     // "170-220" — see needsVolumeFix), shown to whoever's looking at this
     // table — including admin Level 1/2/3 in the Approval queue, not just
@@ -4363,10 +4603,10 @@ function renderHistoryTable(el, groups, opts){
         regTechWarningIcon +
         '<button type="button" class="secondary history-view-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;">View</button>' +
         (canAct ? ' <button type="button" class="secondary history-approve-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;">Approve</button>' : '') +
-        (canRevert ? ' <button type="button" class="secondary history-revert-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#8a6d1f;border-color:#e8c99a;" title="Send this back to the submitter with a comment instead of rejecting it outright — they can edit the details and resubmit for Level 1 approval.">Revert to submitter</button>' : '') +
-        (canReject ? ' <button type="button" class="secondary history-reject-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#8a2d1f;border-color:#c1493a;">Reject</button>' : '') +
+        (canRevert ? ' <button type="button" class="secondary history-revert-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#8a6d1f;border-color:#e8c99a;" title="'+escapeHtml(revertTitle)+'">Revert to submitter</button>' : '') +
+        (canReject ? ' <button type="button" class="secondary history-reject-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#8a2d1f;border-color:#c1493a;" title="Discards this requested BD source matching correction — the deal\'s already-Approved details are left untouched.">Reject change</button>' : '') +
         (canRequestEdit ? ' <button type="button" class="secondary history-request-edit-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;">Request edit</button>' : '') +
-        (canFullEdit ? ' <button type="button" class="secondary history-full-edit-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;" title="Edit details/products — resends this deal through Level 1 approval again">Edit &amp; resend</button>' : '') +
+        (canFullEdit ? ' <button type="button" class="secondary history-full-edit-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;" title="'+escapeHtml(fullEditTitle)+'">Edit &amp; resend</button>' : '') +
       '</td>' +
     '</tr>';
     if(status === STATUS_REJECTED && v[MC.rejectReason]){
@@ -4375,17 +4615,21 @@ function renderHistoryTable(el, groups, opts){
         '<strong>Rejected'+(v[MC.rejectedBy]?(' by '+escapeHtml(v[MC.rejectedBy])):'')+':</strong> '+escapeHtml(v[MC.rejectReason]) +
         '</div></td></tr>';
     }
-    // Reverted by Level 1 — same rejectedBy/rejectedDate/rejectReason columns
-    // as an outright Reject, just read with a different meaning while the
-    // deal sits at STATUS_REVERTED_1 (see revertDeal). Not a dead end: the
-    // owner can open "Edit & resend" (canFullEdit above, extended to this
-    // status by canFullyEditAfterLevel1) to fix what's noted here and send
-    // it back to Admin Level 1.
-    if(status === STATUS_REVERTED_1 && v[MC.rejectReason]){
+    // Reverted by Level 1, 2 or 3 — same rejectedBy/rejectedDate/rejectReason
+    // columns as an outright Reject, just read with a different meaning
+    // while the deal sits at STATUS_REVERTED_1/2/3 (see revertDeal). Not a
+    // dead end: the owner can open "Edit & resend" (canFullEdit above,
+    // extended to these statuses by canFullyEditAfterLevel1) to fix what's
+    // noted here and send it back — to whichever level reverted it, not
+    // necessarily Level 1 (see revertDeal for exactly which stamps stay
+    // intact). Reuses REVERT_STATUS_INFO (see notifySubmitter) so the
+    // wording here always matches what the submitter's email said.
+    const rowRevertInfo = REVERT_STATUS_INFO[status];
+    if(rowRevertInfo && v[MC.rejectReason]){
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
         '<div style="background:#fdf3e7;border:1px solid #e8c99a;color:#8a6d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
-        '<strong>Returned by Admin Level 1'+(v[MC.rejectedBy]?(' — '+escapeHtml(v[MC.rejectedBy])):'')+':</strong> '+escapeHtml(v[MC.rejectReason]) +
-        (isOwnerOrAdmin && ownerEmail === myEmailLower ? ' <em>Use “Edit &amp; resend” below to make the change and resubmit for Level 1 approval.</em>' : '') +
+        '<strong>Returned by Admin Level '+rowRevertInfo.level+(v[MC.rejectedBy]?(' — '+escapeHtml(v[MC.rejectedBy])):'')+':</strong> '+escapeHtml(v[MC.rejectReason]) +
+        (isOwnerOrAdmin && ownerEmail === myEmailLower ? ' <em>Use “Edit &amp; resend” below to make the change and resubmit — it goes straight back to Pending '+rowRevertInfo.resubmitTo+'.</em>' : '') +
         '</div></td></tr>';
     }
     // A resolved change request's rejection note — status is back to
@@ -4454,7 +4698,7 @@ function renderHistoryTable(el, groups, opts){
     // actually still being reviewed against this edit. Optional column —
     // v[MC.editChangeSummary] is simply undefined on a workbook that hasn't
     // added it yet, so this block just doesn't render.
-    if(v[MC.editChangeSummary] && [STATUS_PENDING_1, STATUS_REVERTED_1, STATUS_PENDING_2, STATUS_PENDING_3].includes(status)){
+    if(v[MC.editChangeSummary] && [STATUS_PENDING_1, STATUS_REVERTED_1, STATUS_PENDING_2, STATUS_REVERTED_2, STATUS_PENDING_3, STATUS_REVERTED_3].includes(status)){
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
         '<div style="background:#eaf1fb;border:1px solid #b8cdec;color:#1f3a63;border-radius:6px;padding:8px 10px;font-size:12px;">' +
         '<strong>What changed in the latest edit:</strong><br>' + escapeHtml(v[MC.editChangeSummary]).replace(/\n/g,'<br>') +
@@ -4715,6 +4959,24 @@ function openRevertModal(dealId){
   document.getElementById('revert-modal-dealid').textContent = friendlyDealId(dealId);
   document.getElementById('revert-comment').value = '';
   document.getElementById('revert-modal-error').style.display = 'none';
+  // Level-aware intro text — this modal is now reachable from Pending Level
+  // 1, 2 or 3 (see revertDeal / REVERT_TO_PENDING_STATUS), so the wording
+  // needs to say which level's approval is/isn't already in place and which
+  // level the deal resubmits to, rather than always assuming Level 1.
+  const group = logRowsCache
+    .filter(r => String(r.values[0][MC.dealId] || '').trim() === String(dealId).trim())
+    .sort((a,b)=> a.index - b.index);
+  const currentStatus = group.length ? dealGroupStatus(group) : STATUS_PENDING_1;
+  const introEl = document.getElementById('revert-modal-intro');
+  if(currentStatus === STATUS_PENDING_1){
+    introEl.textContent = 'Nothing has approved this yet, so instead of rejecting it outright you can send it back to whoever submitted it. This comment tells them what to amend — they\'ll be able to edit the details from "My saved confirmations" and resubmit for your (Level 1) approval.';
+  } else if(currentStatus === STATUS_PENDING_2){
+    introEl.textContent = 'Admin Level 1 has already approved this. Instead of rejecting it outright you can send it back to whoever submitted it — Level 1\'s approval stays in place. This comment tells them what to amend — they\'ll be able to edit the details from "My saved confirmations" and resubmit, which goes straight back to Pending Level 2 for your approval again.';
+  } else if(currentStatus === STATUS_PENDING_3){
+    introEl.textContent = 'Admin Level 1 and Level 2 have already approved this (and any Level 2 agreement file stays attached). Instead of rejecting it outright you can send it back to whoever submitted it. This comment tells them what to amend — they\'ll be able to edit the details from "My saved confirmations" and resubmit, which goes straight back to Pending Level 3 for your approval again.';
+  } else {
+    introEl.textContent = 'Instead of rejecting this outright you can send it back to whoever submitted it. This comment tells them what to amend — they\'ll be able to edit the details from "My saved confirmations" and resubmit for approval.';
+  }
   document.getElementById('revert-modal-overlay').style.display = 'flex';
   document.getElementById('revert-comment').focus();
 }
@@ -4744,6 +5006,13 @@ document.getElementById('revert-modal-submit').addEventListener('click', async (
   }
 });
 let editRequestModalDealId = null;
+// Set alongside editRequestModalDealId in openEditRequestModal — lets the
+// submit handler below (and its Saving.../restore-label logic) know whether
+// this particular deal will apply immediately (STATUS_APPROVED, no approval
+// needed — see requestBdMatchChange) or still needs Level 3 to sign off
+// (STATUS_PENDING_3), without recomputing dealGroupStatus from a possibly
+// stale cache mid-submit.
+let editRequestModalStatus = null;
 // ---- Multiple BD sources per product (Request-edit modal) ----
 // Same idea as the main form's "+ Source" (see bdSourceKeyStr/bdSourceKeysFor/
 // collectBdSources): a product row here can carry more than one source in its
@@ -5041,9 +5310,12 @@ function openEditRequestModal(dealId){
     .filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId)
     .sort((a,b)=> a.index - b.index);
   const currentStatus = group.length ? dealGroupStatus(group) : STATUS_APPROVED;
+  editRequestModalStatus = currentStatus;
   document.getElementById('edit-request-modal-intro').textContent = currentStatus === STATUS_APPROVED
-    ? 'This deal is already Approved, so any correction here needs a fresh Level 3 sign-off before it takes effect. The current, live values stay in place everywhere until that happens.'
+    ? 'This deal is already Approved (Level 3 sign-off complete), so a BD source matching correction here needs no further approval — it\'s written to TradeDealLog as soon as you submit, and operations@saxonrenewables.com is emailed a summary of what changed.'
     : 'Level 2 has already approved this deal, so any correction here needs a fresh Level 3 sign-off before it takes effect. The current, live values stay in place everywhere until that happens.';
+  const submitBtn = document.getElementById('edit-request-modal-submit');
+  if(submitBtn) submitBtn.textContent = currentStatus === STATUS_APPROVED ? 'Save changes' : 'Submit for Level 3 approval';
   const isCC = dealLogTableName() === CC_LOG_TABLE_NAME;
   const noOfRecsLabel = isCC ? 'No of VCUs' : 'No of RECs';
   const fieldsEl = document.getElementById('edit-request-modal-fields');
@@ -5089,7 +5361,7 @@ function openEditRequestModal(dealId){
     // clears it), so this always starts blank for a fresh request.
     '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;">' +
       '<label style="margin:0;font-size:13px;font-weight:600;" for="edit-request-match-note">Matching Edit Note</label>' +
-      '<p style="margin:0;font-size:12px;color:var(--text-secondary);">Explain why this correction is needed — shown to the Level 3 approver alongside the changes above.</p>' +
+      '<p style="margin:0;font-size:12px;color:var(--text-secondary);">Explain why this correction is needed — kept alongside the changes above in the deal\'s history, and shown to the Level 3 approver too if this deal hasn\'t completed Level 3 approval yet.</p>' +
       '<textarea id="edit-request-match-note" rows="3" placeholder="e.g. BD confirmed wrong buyer name was entered at submission"></textarea>' +
     '</div>';
   document.getElementById('edit-request-modal-overlay').style.display = 'flex';
@@ -5100,6 +5372,7 @@ function closeEditRequestModal(){
   document.getElementById('edit-request-modal-overlay').style.display = 'none';
   document.getElementById('edit-request-modal-fields').innerHTML = '';
   editRequestModalDealId = null;
+  editRequestModalStatus = null;
 }
 document.getElementById('edit-request-modal-cancel').addEventListener('click', closeEditRequestModal);
 document.getElementById('edit-request-modal-overlay').addEventListener('click', (e)=>{
@@ -5223,7 +5496,7 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
     errEl.style.display = 'block';
   }finally{
     btn.disabled = false;
-    btn.textContent = 'Submit for Level 3 approval';
+    btn.textContent = editRequestModalStatus === STATUS_APPROVED ? 'Save changes' : 'Submit for Level 3 approval';
   }
 });
 document.addEventListener('click', (e)=>{
@@ -7766,72 +8039,80 @@ async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
 }
 
 /* ---- "Edit & resend" (full submitter self-edit) ----
-   Available in two situations — both handled by this same modal/function:
+   Available in four situations — all handled by this same modal/function:
      - the narrow window right after Admin Level 1 has approved a deal and
        before Admin Level 2 has acted (Status is STATUS_PENDING_2), or
-     - Admin Level 1 has sent the deal back for changes without approving it
-       (Status is STATUS_REVERTED_1 — see revertDeal)
+     - any admin level has sent the deal back with a comment via Revert
+       instead of approving/rejecting it (Status is STATUS_REVERTED_1,
+       STATUS_REVERTED_2 or STATUS_REVERTED_3 — see revertDeal)
    — see canFullyEditAfterLevel1 for the exact check. Once Level 2 or Level 3
-   has signed off, this is no longer offered — the submitter can still
-   correct Registry, Tech, Volume, and BD source matching via the lighter
-   "Request edit" flow above (canRequestEdit/openEditRequestModal/
-   requestBdMatchChange), which only needs a fresh Level 3 sign-off, but the
-   full details/products are locked until then, same as everything else on
-   the main form (see lockSubmittedForm).
+   has signed off OUTRIGHT (i.e. no revert in play), this is no longer
+   offered — the submitter can still correct Registry, Tech, Volume, and BD
+   source matching via the lighter "Request edit" flow above
+   (canRequestEdit/openEditRequestModal/requestBdMatchChange), which only
+   needs a fresh Level 3 sign-off, but the full details/products are locked
+   until then, same as everything else on the main form (see
+   lockSubmittedForm).
    A justification note is required every time this is used (see
    fe-justification below) — it's prepended to the auto-generated
-   field-by-field diff and shown to Admin Level 1 alongside it, both in the
-   approval queue and in their approval-needed email, so they know why the
-   correction was made when they review it again. Each round's justification
-   + diff is APPENDED (with a timestamp/editor header) onto whatever's
-   already in Edit Change Summary rather than replacing it, so a deal edited
-   more than once keeps the full history of every round, permanently — see
-   the editChangeSummary comment on MC.
+   field-by-field diff and shown to whichever level reviews it next
+   alongside it, both in the approval queue and in their approval-needed
+   email, so they know why the correction was made when they review it
+   again. Each round's justification + diff is APPENDED (with a
+   timestamp/editor header) onto whatever's already in Edit Change Summary
+   rather than replacing it, so a deal edited more than once keeps the full
+   history of every round, permanently — see the editChangeSummary comment
+   on MC.
    Saving here writes straight to the live TradeDealLog row(s) (no separate
    pending/staging columns, no approval gate on the save itself — the
-   "approval" is the fact that it now has to go through Level 1/2/3 again)
-   and, IF anything besides BD source matching changed (see
-   fullEditChangedOnlyBdMatching):
-     - resets Status back to STATUS_PENDING_1
-     - clears every approval stamp (Approved By/Date for L1, L2, L3) so the
-       trail shown in the UI accurately reflects that none of them have
-       signed off on THIS version of the deal yet
-     - clears the Level 2 agreement file (it was countersigned against the
-       old details) and any stale rejection note
-     - re-notifies whoever holds Admin Level 1 today, exactly like a brand
-       new submission does
+   "approval" is the fact that it now has to go through the approval chain
+   again). What happens to Status and the approval trail depends on exactly
+   which of the four situations above this is (see
+   fullEditTargetForLiveStatus/fullEditChangedOnlyBdMatching in
+   saveFullEditAndResubmit for the precise rules):
+     - STATUS_REVERTED_1, or a plain STATUS_PENDING_2 edit that touches
+       anything besides BD source matching: full reset — Status back to
+       STATUS_PENDING_1, every approval stamp (L1/L2/L3) and the Level 2
+       agreement file cleared, Admin Level 1 renotified from scratch, same
+       as a brand new submission.
+     - a plain STATUS_PENDING_2 edit that ONLY touches BD source matching:
+       no reset at all — Status stays STATUS_PENDING_2, Level 1's approval
+       stamp and the Level 2 agreement file (if any) are left exactly as
+       they were, and only Admin Level 2 is renotified of the updated
+       matching.
+     - STATUS_REVERTED_2: Status goes back to STATUS_PENDING_2 — Level 1's
+       approval stamp stays untouched (there's no Level 2 agreement file to
+       preserve yet, since Level 2 never approved before reverting) — Admin
+       Level 2 is renotified.
+     - STATUS_REVERTED_3: Status goes back to STATUS_PENDING_3 — Level 1's
+       AND Level 2's approval stamps, plus the Level 2 agreement file, all
+       stay untouched — Admin Level 3 is renotified.
+   In every case the revert/rejection comment columns (rejectedBy/
+   rejectedDate/rejectReason) are cleared, since whatever they held is now
+   resolved.
    BD source matching (Matching, Buyer/Seller, No of RECs, Which deal) IS
    editable here — see fullEditBdMatchingSectionHtml/feSourceBlockHtml above
    and how saveFullEditAndResubmit writes it below — unlike the superadmin
    recap editor, which deliberately leaves it out (see recapEditFormHtml).
-   But when we're at STATUS_PENDING_2 (Level 1 has already approved) and the
-   edit doesn't touch anything OUTSIDE BD source matching — i.e. the
-   submitter only corrected Matching/Buyer-Seller/No of RECs/Which deal, not
-   Registry/Tech/Volume/Price/dates/etc — none of the above happens: Status
-   stays STATUS_PENDING_2, Level 1's approval stamp and the Level 2
-   agreement file (if any) are left exactly as they were, and only Admin
-   Level 2 is notified of the updated matching (see skipLevelReset in
-   saveFullEditAndResubmit). This only applies from STATUS_PENDING_2 — a
-   Level 1 revert (STATUS_REVERTED_1) always resubmits to Pending Level 1
-   regardless of what changed, since nothing has approved it yet and that's
-   simply the normal forward path, not a regression. The Deal ID itself is
-   untouched either way — it was permanently assigned at the original Level
-   1 approval and this isn't a new submission, just a correction to the
-   existing one. Once Level 2 or Level 3 has signed off, correcting BD
-   source matching goes back to the heavier, Level-3-gated "Request edit"
-   flow instead (canRequestEdit is only available from STATUS_PENDING_3 or
+   The Deal ID itself is untouched in every case — it was permanently
+   assigned at the original Level 1 approval and this isn't a new
+   submission, just a correction to the existing one. Once Level 2 or Level
+   3 has signed off OUTRIGHT (no revert), correcting BD source matching
+   goes back to the heavier, Level-3-gated "Request edit" flow instead
+   (canRequestEdit is only available from STATUS_PENDING_3 or
    STATUS_APPROVED). */
 function canFullyEditAfterLevel1(status){
   // Full details/products edit is available in the short window right after
   // Admin Level 1 approves and before Admin Level 2 acts (STATUS_PENDING_2),
-  // and also while Admin Level 1 has sent the deal back for changes instead
-  // of approving it (STATUS_REVERTED_1 — see revertDeal). Once Level 2 (or
-  // Level 3) has signed off, the submitter can no longer touch the full
-  // details here — only Registry, Tech, and BD source matching remain
-  // editable, via the separate "Request edit" flow (see canRequestEdit /
-  // openEditRequestModal), which sends the deal through a fresh Level 3
-  // sign-off instead of restarting the whole chain from Level 1.
-  return status === STATUS_PENDING_2 || status === STATUS_REVERTED_1;
+  // and also whenever any level has sent the deal back via Revert
+  // (STATUS_REVERTED_1/2/3 — see revertDeal). Once a level has signed off
+  // OUTRIGHT (no revert in play) beyond Level 1, the submitter can no
+  // longer touch the full details here — only Registry, Tech, and BD source
+  // matching remain editable, via the separate "Request edit" flow (see
+  // canRequestEdit / openEditRequestModal), which sends the deal through a
+  // fresh Level 3 sign-off instead of resubmitting through the main chain.
+  return status === STATUS_PENDING_2 || status === STATUS_REVERTED_1 ||
+    status === STATUS_REVERTED_2 || status === STATUS_REVERTED_3;
 }
 // Compares the pre-edit row values (oldGroup, untouched) against what's
 // about to be saved (updatedRows, same shape/order) and returns a
@@ -8165,10 +8446,16 @@ function openFullEditModal(dealId){
   document.getElementById('full-edit-modal-dealid').textContent = friendlyDealId(dealId);
   const currentStatus = dealGroupStatus(group);
   const introEl = document.getElementById('full-edit-modal-intro');
+  const revertInfo = REVERT_STATUS_INFO[currentStatus];
   if(currentStatus === STATUS_REVERTED_1){
     const revertComment = group[0].values[0][MC.rejectReason] || '';
     introEl.innerHTML = 'Admin Level 1 sent this back for changes instead of approving it — it has <strong>not</strong> been rejected, and no level has approved it yet, so nothing about the approval trail needs clearing. Fix whatever needs fixing below and it goes straight back to Pending Level 1 for Admin Level 1 to look at again, along with your note.' +
       (revertComment ? '<br><br><strong>Admin Level 1’s comment:</strong> ' + escapeHtml(revertComment) : '');
+  } else if(currentStatus === STATUS_REVERTED_2 || currentStatus === STATUS_REVERTED_3){
+    const revertComment = group[0].values[0][MC.rejectReason] || '';
+    const standing = revertInfo ? revertInfo.standing : '';
+    introEl.innerHTML = 'Admin Level ' + revertInfo.level + ' sent this back for changes instead of approving it — it has <strong>not</strong> been rejected, and ' + standing + '. Fix whatever needs fixing below and it goes straight back to Pending Level ' + revertInfo.resubmitTo + ' for Admin Level ' + revertInfo.level + ' to look at again, along with your note.' +
+      (revertComment ? '<br><br><strong>Admin Level ' + revertInfo.level + '’s comment:</strong> ' + escapeHtml(revertComment) : '');
   } else {
     introEl.innerHTML = 'Admin Level 1 has already signed off on this deal. If you change anything here besides BD source matching (Matching, Buyer/Seller, No of RECs, Which deal) — e.g. Registry, Tech, Volume, Price, dates — it sends the deal back through the approval chain: the Status resets to <strong>Pending Level 1</strong>, any Level 2 sign-off already recorded (and the Level 2 agreement attachment) is cleared, and Admin Level 1 gets a fresh approval email along with your justification below. If you ONLY correct BD source matching and nothing else, Level 1\'s sign-off is left alone: the deal stays at <strong>Pending Level 2</strong> and Admin Level 2 is simply notified of the updated matching along with your justification. The Deal ID itself does not change either way. This full edit is only available before Level 2 acts — once Level 2 or Level 3 has approved, only Registry, Tech, Volume, and BD source matching can still be corrected, via "Request edit" (which needs a fresh Level 3 sign-off instead of restarting from Level 1).';
   }
@@ -8232,6 +8519,24 @@ function fullEditChangedOnlyBdMatching(liveGroup, updatedRows){
   }
   return true;
 }
+// True if any product row's Matching/Buyer-Seller/No of RECs/Which deal
+// actually differs from its live pre-edit value — unlike
+// fullEditChangedOnlyBdMatching above, this doesn't care whether anything
+// ELSE also changed; it's purely "did BD source matching change at all",
+// used to decide whether Admin Level 1 needs the separate heads-up email
+// (see notifyAdminLevel1BdMatchChange) after a full "Edit & resend" save.
+function fullEditBdMatchingFieldsChanged(liveGroup, updatedRows){
+  for(let idx = 0; idx < liveGroup.length; idx++){
+    const oldValues = liveGroup[idx].values[0];
+    const newValues = updatedRows[idx].values[0];
+    for(const col of FULL_EDIT_BD_MATCHING_COLS){
+      const a = oldValues[col] === undefined || oldValues[col] === null ? '' : oldValues[col];
+      const b = newValues[col] === undefined || newValues[col] === null ? '' : newValues[col];
+      if(String(a) !== String(b)) return true;
+    }
+  }
+  return false;
+}
 async function saveFullEditAndResubmit(dealId, sortedGroup){
   const btn = document.getElementById('full-edit-save');
   const cancelBtn = document.getElementById('full-edit-cancel');
@@ -8267,7 +8572,11 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
     }
 
     const liveStatus = dealGroupStatus(liveGroup);
-    const liveWasReverted = liveStatus === STATUS_REVERTED_1;
+    // Set only when this save is resolving a Revert (see revertDeal) rather than
+    // a proactive edit made while sitting at Pending Level 2. Carries the level
+    // that reverted it, so messaging/resubmission can stay level-aware instead
+    // of assuming Level 1 (the only case the app used to support).
+    const revertInfo = REVERT_STATUS_INFO[liveStatus];
     if(!canFullyEditAfterLevel1(liveStatus)){
       throw new Error('This deal is no longer available for a full edit (current status: ' + (liveStatus || 'Unknown') + '). Please refresh the page before editing it.');
     }
@@ -8389,40 +8698,58 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
       updatedRows.push({ index: liveGroup[idx].index, values: [values] });
     }
 
-    // If literally the only thing that changed across every product (versus
-    // the live, pre-edit rows) is BD source matching (Matching, Buyer/
-    // Seller, No of RECs, Which deal), and Level 1 has already approved
-    // (liveStatus === STATUS_PENDING_2 — not a Level 1 revert, which always
-    // goes back to Pending Level 1 as its normal, non-regressive path
-    // regardless of what changed), don't send the deal all the way back to
-    // Pending Level 1 for a correction Level 1 never needed to re-review in
-    // the first place. Level 1's sign-off (and the Level 2 agreement
-    // attachment, if one's already been started) stays exactly as it is,
-    // the deal stays at Pending Level 2, and only Admin Level 2 is notified
-    // of the updated matching — see fullEditChangedOnlyBdMatching below.
-    const skipLevelReset = !liveWasReverted && fullEditChangedOnlyBdMatching(liveGroup, updatedRows);
-    const finalStatus = skipLevelReset ? STATUS_PENDING_2 : STATUS_PENDING_1;
-    if(!skipLevelReset){
-      // Retrigger approval from Level 1. All previous approval/rejection/file
-      // stamps are cleared because they relate to the pre-edit version.
-      updatedRows.forEach(r=>{
-        const values = r.values[0];
-        values[MC.status] = STATUS_PENDING_1;
+    // Decide where this resubmission lands and which approval-trail columns
+    // (if any) need clearing. Four scenarios, per canFullyEditAfterLevel1:
+    //  - liveStatus is STATUS_REVERTED_2 (Admin Level 2 sent it back while
+    //    reviewing): resubmit goes straight back to Pending Level 2. Level
+    //    1's sign-off stays intact — it was never in question.
+    //  - liveStatus is STATUS_REVERTED_3 (Admin Level 3 sent it back while
+    //    reviewing): resubmit goes straight back to Pending Level 3. Level
+    //    1 AND Level 2's sign-offs, and the Level 2 agreement file, all
+    //    stay intact.
+    //  - liveStatus is STATUS_REVERTED_1 (Admin Level 1 sent it back — the
+    //    original revert case): nothing has approved this yet either way,
+    //    so resubmit always goes back to Pending Level 1.
+    //  - liveStatus is plain STATUS_PENDING_2 (a proactive edit, not
+    //    resolving any revert): if literally the only thing that changed
+    //    across every product versus the live, pre-edit rows is BD source
+    //    matching (Matching, Buyer/Seller, No of RECs, Which deal), don't
+    //    send the deal all the way back to Pending Level 1 for a correction
+    //    Level 1 never needed to re-review — stay at Pending Level 2 with
+    //    Level 1's sign-off untouched. Otherwise, retrigger approval from
+    //    Level 1 (see fullEditChangedOnlyBdMatching below).
+    const skipLevelReset = !revertInfo && liveStatus === STATUS_PENDING_2
+      && fullEditChangedOnlyBdMatching(liveGroup, updatedRows);
+    let finalStatus;
+    if(liveStatus === STATUS_REVERTED_2) finalStatus = STATUS_PENDING_2;
+    else if(liveStatus === STATUS_REVERTED_3) finalStatus = STATUS_PENDING_3;
+    else finalStatus = skipLevelReset ? STATUS_PENDING_2 : STATUS_PENDING_1;
+
+    updatedRows.forEach(r=>{
+      const values = r.values[0];
+      values[MC.status] = finalStatus;
+      // Approval stamps below Level 1 only survive when finalStatus keeps
+      // that level's sign-off in force; anything at or above the level being
+      // re-reviewed is cleared because it relates to the pre-edit version
+      // (Level 3's stamp is always blank here regardless, since none of
+      // these statuses can be reached after Level 3 has actually approved).
+      if(finalStatus === STATUS_PENDING_1){
         values[MC.approvedBy1] = ''; values[MC.approvedDate1] = '';
+        values[MC.agreementFileName] = ''; values[MC.agreementFileUrl] = '';
+      }
+      if(finalStatus === STATUS_PENDING_1 || finalStatus === STATUS_PENDING_2){
         values[MC.approvedBy2] = ''; values[MC.approvedDate2] = '';
-        values[MC.approvedBy3] = ''; values[MC.approvedDate3] = '';
-        values[MC.agreementFileName] = '';
-        values[MC.agreementFileUrl] = '';
-        values[MC.rejectedBy] = ''; values[MC.rejectedDate] = ''; values[MC.rejectReason] = '';
-        if(values.length > MC.regTechReminderSentDate){
-          values[MC.regTechReminderSentDate] = '';
-        }
-      });
-    }
-    // else: leave Status/Approved-By/Approved-Date/agreement file/rejection
-    // columns exactly as liveGroup already had them (each updatedRows[idx]
-    // started as liveGroup[idx].values[0].slice()) — the deal simply stays
-    // at Pending Level 2 with Level 1's approval untouched.
+      }
+      values[MC.approvedBy3] = ''; values[MC.approvedDate3] = '';
+      // The old revert comment is always cleared on resubmission — it's
+      // been carried into revertNoteForSummary/changeSummary below before
+      // this point, so nothing is lost, and a resubmitted deal shouldn't
+      // still show a stale "reverted" reason.
+      values[MC.rejectedBy] = ''; values[MC.rejectedDate] = ''; values[MC.rejectReason] = '';
+      if(values.length > MC.regTechReminderSentDate && finalStatus === STATUS_PENDING_1){
+        values[MC.regTechReminderSentDate] = '';
+      }
+    });
 
     // Regenerate the recap from the edited values before writing.
     const freshHtml = renderPointFormatHtml(buildRecapLinesFromRows(dealId, updatedRows));
@@ -8434,13 +8761,13 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
     const fieldDiff = buildFullEditChangeSummary(liveGroup, updatedRows, role);
     const nowForLabel = new Date();
     const timestampLabel = String(nowForLabel.getUTCDate()).padStart(2,'0')+'/'+String(nowForLabel.getUTCMonth()+1).padStart(2,'0')+'/'+nowForLabel.getUTCFullYear()+' '+String(nowForLabel.getUTCHours()).padStart(2,'0')+':'+String(nowForLabel.getUTCMinutes()).padStart(2,'0')+' UTC';
-    const roundLabel = (liveWasReverted ? 'Edit after Admin Level 1 sent this back, on '
+    const roundLabel = (revertInfo ? ('Edit after Admin Level ' + revertInfo.level + ' sent this back, on ')
       : (skipLevelReset ? 'BD source matching edit (kept at Pending Level 2, Level 1 sign-off untouched) on ' : 'Edit on ')) + timestampLabel + ' by ' + (currentAccount.username || 'unknown');
-    // If this edit is resolving a Level 1 revert, carry the admin's own
+    // If this edit is resolving a revert (at any level), carry the admin's own
     // comment along with the diff so it stays on the permanent edit history
-    // even after rejectReason itself gets cleared below.
-    const revertNoteForSummary = liveWasReverted && liveGroup[0].values[0][MC.rejectReason]
-      ? '\nAdmin Level 1’s comment: ' + liveGroup[0].values[0][MC.rejectReason] : '';
+    // even after rejectReason itself gets cleared above.
+    const revertNoteForSummary = revertInfo && liveGroup[0].values[0][MC.rejectReason]
+      ? '\nAdmin Level ' + revertInfo.level + '’s comment: ' + liveGroup[0].values[0][MC.rejectReason] : '';
     const changeSummary = roundLabel + revertNoteForSummary + '\nJustification: ' + justification + (fieldDiff ? '\n' + fieldDiff : '');
 
     const priorSummary = (liveGroup[0].values[0].length > MC.editChangeSummary)
@@ -8474,7 +8801,7 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
       .sort((a,b)=> a.index - b.index);
     const verifiedStatus = dealGroupStatus(verifyGroup);
     if(verifiedStatus !== finalStatus){
-      throw new Error('The deal was written, but its ' + (skipLevelReset ? 'Pending Level 2' : 'Level 1 pending') + ' status could not be verified. Please refresh the page and check the approval queue before trying again.');
+      throw new Error('The deal was written, but its ' + finalStatus + ' status could not be verified. Please refresh the page and check the approval queue before trying again.');
     }
 
     // Email/notification is best-effort. A notification failure must NOT undo or
@@ -8485,6 +8812,22 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
       await notifyNextApprover(finalStatus, dealId, updatedRows[0].values[0][MC.description], changeSummary);
     }catch(notificationErr){
       console.warn('Next-approver notification failed after successful save:', notificationErr);
+    }
+
+    // Admin Level 1 also gets a heads-up whenever this save actually changed
+    // BD source matching — except when finalStatus is STATUS_PENDING_1,
+    // since Level 1 is already the one being paged above as the next
+    // approver for this exact edit, and a second email would just repeat
+    // the same information.
+    if(finalStatus !== STATUS_PENDING_1 && fullEditBdMatchingFieldsChanged(liveGroup, updatedRows)){
+      const bdMatchContext = revertInfo
+        ? ('resubmitted after Admin Level ' + revertInfo.level + ' sent it back')
+        : 'kept at Pending Level 2, Level 1 sign-off untouched';
+      try{
+        await notifyAdminLevel1BdMatchChange(dealId, updatedRows[0].values[0][MC.description], fieldDiff ? fieldDiff.split('\n') : [], bdMatchContext, currentAccount.username);
+      }catch(err){
+        console.warn('Admin Level 1 BD-match-change notification failed:', err);
+      }
     }
 
     // Refresh the queue. If refresh fails, the workbook is still saved correctly.
