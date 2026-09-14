@@ -450,7 +450,7 @@
   #tab-panel-analysis #analysis-export-btn{margin-left:0 !important;}
   @media (min-width:900px){#tab-panel-analysis .confirmation-filter-bar{flex-wrap:wrap;row-gap:7px;}}
   @media (min-width:760px){
-    #tab-panel-confirmations .confirmation-filter-bar{display:grid;grid-template-columns:minmax(200px,1.3fr) minmax(115px,.6fr) minmax(115px,.6fr) minmax(140px,.9fr);column-gap:10px;row-gap:8px;align-items:center;}
+    #tab-panel-confirmations .confirmation-filter-bar{display:grid;grid-template-columns:minmax(220px,1.5fr) minmax(130px,.75fr) minmax(150px,1fr);column-gap:10px;row-gap:8px;align-items:center;}
     #tab-panel-confirmations .confirmation-filter-bar input[type="text"],
     #tab-panel-confirmations .confirmation-filter-bar select{width:100%;max-width:none;min-width:0;}
     #tab-panel-confirmations .confirmation-filter-daterange{grid-column:1 / -1;}
@@ -648,7 +648,6 @@
     <div class="confirmation-filter-bar">
       <input type="text" id="history-filter-search" placeholder="Search Deal ID or Counterparty…">
       <select id="history-filter-type"><option value="">All types</option><option value="recs">RECs</option><option value="carboncredit">Carbon Credit</option></select>
-      <select id="history-filter-order"><option value="">All order types</option></select>
       <select id="history-filter-status"></select>
       <span class="confirmation-filter-daterange">
         <span class="analysis-filter-group-label" style="margin-left:0;">Delivery End:</span>
@@ -666,7 +665,6 @@
     <div class="confirmation-filter-bar">
       <input type="text" id="queue-filter-search" placeholder="Search Deal ID or Counterparty…">
       <select id="queue-filter-type"><option value="">All types</option><option value="recs">RECs</option><option value="carboncredit">Carbon Credit</option></select>
-      <select id="queue-filter-order"><option value="">All order types</option></select>
       <select id="queue-filter-status"></select>
       <span class="confirmation-filter-daterange">
         <span class="analysis-filter-group-label" style="margin-left:0;">Delivery End:</span>
@@ -684,7 +682,6 @@
     <div class="confirmation-filter-bar">
       <input type="text" id="admin-filter-search" placeholder="Search Deal ID or Counterparty…">
       <select id="admin-filter-type"><option value="">All types</option><option value="recs">RECs</option><option value="carboncredit">Carbon Credit</option></select>
-      <select id="admin-filter-order"><option value="">All order types</option></select>
       <select id="admin-filter-status"></select>
       <span class="confirmation-filter-daterange">
         <span class="analysis-filter-group-label" style="margin-left:0;">Delivery End:</span>
@@ -702,10 +699,9 @@
 
   <div class="card">
     <p class="card-title">Confirmations analysis</p>
-    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Breaks down every saved confirmation (one entry per deal, matching "All confirmations") by status, filterable by type (RECs or Carbon Credit), order type, BD in-charge, Deal Date, and the date the agreement was created (submitted) by the user. "Export to Excel" downloads exactly the rows shown below.</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Breaks down every saved confirmation (one entry per deal, matching "All confirmations") by status, filterable by type (RECs or Carbon Credit), BD in-charge, Deal Date, and the date the agreement was created (submitted) by the user. "Export to Excel" downloads exactly the rows shown below.</p>
     <div class="confirmation-filter-bar">
       <select id="analysis-filter-type"><option value="">All types</option><option value="recs">RECs</option><option value="carboncredit">Carbon Credit</option></select>
-      <select id="analysis-filter-order"><option value="">All order types</option></select>
       <select id="analysis-filter-bd"><option value="">All BD in-charge</option></select>
       <span class="analysis-row-break" aria-hidden="true"></span>
       <span class="analysis-filter-group-label analysis-dealdate-label">Deal Date:</span>
@@ -4104,14 +4100,6 @@ function populateConfirmationFilterSelects(){
     sel.innerHTML = '<option value="">All statuses</option>' +
       optsFor[id].map(s=>'<option value="'+escapeHtml(s)+'">'+escapeHtml(s)+'</option>').join('');
   });
-  // Order Type filter — same fixed list used on the deal form (ORDER_TYPES),
-  // applies to every filter bar (My Saved / Approval Queue / All / Analysis).
-  ['history-filter-order','admin-filter-order','queue-filter-order','analysis-filter-order'].forEach(id=>{
-    const sel = document.getElementById(id);
-    if(!sel || sel.options.length > 1) return; // already populated (leave the placeholder option in place)
-    sel.innerHTML = '<option value="">All order types</option>' +
-      ORDER_TYPES.map(o=>'<option value="'+escapeHtml(o)+'">'+escapeHtml(o)+'</option>').join('');
-  });
 }
 // Every distinct Delivery End Date across the deal's product rows,
 // formatted (dd/mm/yyyy) and sorted chronologically. When fromDate/toDate
@@ -4135,9 +4123,8 @@ function confirmationGroupDeliveryDates(g, fromDate, toDate){
   if(!seen.size && (fromDate || toDate)) return confirmationGroupDeliveryDates(g, null, null);
   return [...seen.entries()].sort((a,b)=>a[0]-b[0]).map(pair=>pair[1]);
 }
-function confirmationGroupMatchesFilter(g, searchLower, statusFilter, typeFilter, orderFilter, deliveryFromFilter, deliveryToFilter){
+function confirmationGroupMatchesFilter(g, searchLower, statusFilter, typeFilter, deliveryFromFilter, deliveryToFilter){
   if(typeFilter && confirmationGroupType(g) !== typeFilter) return false;
-  if(orderFilter && String((g.rows[0].values[0][MC.supplyDemand])||'').trim() !== orderFilter) return false;
   if(statusFilter && dealGroupStatus(g.rows) !== statusFilter) return false;
   if(deliveryFromFilter || deliveryToFilter){
     // The Delivery End Date must belong to the SAME product falling inside
@@ -4164,26 +4151,24 @@ function confirmationGroupMatchesFilter(g, searchLower, statusFilter, typeFilter
   }
   return true;
 }
-function applyConfirmationFilter(key, listElId, searchElId, statusElId, typeElId, orderElId, deliveryFromElId, deliveryToElId, countElId){
+function applyConfirmationFilter(key, listElId, searchElId, statusElId, typeElId, deliveryFromElId, deliveryToElId, countElId){
   const listEl = document.getElementById(listElId);
   if(!listEl) return;
   const searchEl = document.getElementById(searchElId);
   const statusEl = document.getElementById(statusElId);
   const typeEl = document.getElementById(typeElId);
-  const orderEl = document.getElementById(orderElId);
   const fromEl = document.getElementById(deliveryFromElId);
   const toEl = document.getElementById(deliveryToElId);
   const search = ((searchEl && searchEl.value) || '').trim().toLowerCase();
   const status = (statusEl && statusEl.value) || '';
   const type = (typeEl && typeEl.value) || '';
-  const order = (orderEl && orderEl.value) || '';
   const deliveryFromStr = (fromEl && fromEl.value) || '';
   const deliveryToStr = (toEl && toEl.value) || '';
   const deliveryFromDate = deliveryFromStr ? parseStoredDateToDate(deliveryFromStr) : null;
   const deliveryToDate = deliveryToStr ? parseStoredDateToDate(deliveryToStr) : null;
   const full = historyGroupsCache[key] || [];
-  const hasFilter = search || status || type || order || deliveryFromStr || deliveryToStr;
-  const filtered = hasFilter ? full.filter(g=>confirmationGroupMatchesFilter(g, search, status, type, order, deliveryFromDate, deliveryToDate)) : full;
+  const hasFilter = search || status || type || deliveryFromStr || deliveryToStr;
+  const filtered = hasFilter ? full.filter(g=>confirmationGroupMatchesFilter(g, search, status, type, deliveryFromDate, deliveryToDate)) : full;
   const opts = Object.assign({}, CONFIRMATION_FILTER_OPTS[key]);
   if(hasFilter) opts.emptyText = 'No confirmations match your filter.';
   // Passed through so the Delivery End Date cell only lists the date(s)
@@ -4195,23 +4180,22 @@ function applyConfirmationFilter(key, listElId, searchElId, statusElId, typeElId
   const countEl = document.getElementById(countElId);
   if(countEl) countEl.textContent = hasFilter ? ('Showing ' + filtered.length + ' of ' + full.length) : '';
 }
-function wireConfirmationFilterBar(key, listElId, searchElId, statusElId, typeElId, orderElId, deliveryFromElId, deliveryToElId, countElId){
-  const run = ()=> applyConfirmationFilter(key, listElId, searchElId, statusElId, typeElId, orderElId, deliveryFromElId, deliveryToElId, countElId);
+function wireConfirmationFilterBar(key, listElId, searchElId, statusElId, typeElId, deliveryFromElId, deliveryToElId, countElId){
+  const run = ()=> applyConfirmationFilter(key, listElId, searchElId, statusElId, typeElId, deliveryFromElId, deliveryToElId, countElId);
   const searchEl = document.getElementById(searchElId);
   const statusEl = document.getElementById(statusElId);
   const typeEl = document.getElementById(typeElId);
-  const orderEl = document.getElementById(orderElId);
   const fromEl = document.getElementById(deliveryFromElId);
   const toEl = document.getElementById(deliveryToElId);
   if(searchEl && !searchEl.dataset.wired){ searchEl.addEventListener('input', run); searchEl.dataset.wired = '1'; }
-  [statusEl,typeEl,orderEl].forEach(el=>{ if(el && !el.dataset.wired){ el.addEventListener('change', run); el.dataset.wired = '1'; } });
+  [statusEl,typeEl].forEach(el=>{ if(el && !el.dataset.wired){ el.addEventListener('change', run); el.dataset.wired = '1'; } });
   [fromEl,toEl].forEach(el=>{ if(el && !el.dataset.wired){ el.addEventListener('change', run); el.addEventListener('input', run); el.dataset.wired = '1'; } });
 }
 function wireConfirmationFilterBars(){
   populateConfirmationFilterSelects();
-  wireConfirmationFilterBar('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-type', 'history-filter-order', 'history-filter-delivery-from', 'history-filter-delivery-to', 'history-filter-count');
-  wireConfirmationFilterBar('admin', 'admin-history-list', 'admin-filter-search', 'admin-filter-status', 'admin-filter-type', 'admin-filter-order', 'admin-filter-delivery-from', 'admin-filter-delivery-to', 'admin-filter-count');
-  wireConfirmationFilterBar('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-type', 'queue-filter-order', 'queue-filter-delivery-from', 'queue-filter-delivery-to', 'queue-filter-count');
+  wireConfirmationFilterBar('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-type', 'history-filter-delivery-from', 'history-filter-delivery-to', 'history-filter-count');
+  wireConfirmationFilterBar('admin', 'admin-history-list', 'admin-filter-search', 'admin-filter-status', 'admin-filter-type', 'admin-filter-delivery-from', 'admin-filter-delivery-to', 'admin-filter-count');
+  wireConfirmationFilterBar('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-type', 'queue-filter-delivery-from', 'queue-filter-delivery-to', 'queue-filter-count');
 }
 
 async function loadHistory(){
@@ -4249,10 +4233,10 @@ async function loadHistory(){
     }
 
     wireConfirmationFilterBars();
-    applyConfirmationFilter('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-type', 'history-filter-order', 'history-filter-delivery-from', 'history-filter-delivery-to', 'history-filter-count');
-    applyConfirmationFilter('admin', 'admin-history-list', 'admin-filter-search', 'admin-filter-status', 'admin-filter-type', 'admin-filter-order', 'admin-filter-delivery-from', 'admin-filter-delivery-to', 'admin-filter-count');
+    applyConfirmationFilter('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-type', 'history-filter-delivery-from', 'history-filter-delivery-to', 'history-filter-count');
+    applyConfirmationFilter('admin', 'admin-history-list', 'admin-filter-search', 'admin-filter-status', 'admin-filter-type', 'admin-filter-delivery-from', 'admin-filter-delivery-to', 'admin-filter-count');
     if(isAdmin){
-      applyConfirmationFilter('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-type', 'queue-filter-order', 'queue-filter-delivery-from', 'queue-filter-delivery-to', 'queue-filter-count');
+      applyConfirmationFilter('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-type', 'queue-filter-delivery-from', 'queue-filter-delivery-to', 'queue-filter-count');
     }
     refreshAnalysisBdOptions();
     wireAnalysisFilterBar();
@@ -4301,7 +4285,6 @@ function refreshAnalysisBdOptions(){
 }
 function wireAnalysisFilterBar(){
   const typeEl = document.getElementById('analysis-filter-type');
-  const orderEl = document.getElementById('analysis-filter-order');
   const bdEl = document.getElementById('analysis-filter-bd');
   const fromEl = document.getElementById('analysis-filter-from');
   const toEl = document.getElementById('analysis-filter-to');
@@ -4309,7 +4292,7 @@ function wireAnalysisFilterBar(){
   const createdToEl = document.getElementById('analysis-filter-created-to');
   const clearBtn = document.getElementById('analysis-filter-clear');
   const exportBtn = document.getElementById('analysis-export-btn');
-  [typeEl, orderEl, bdEl, fromEl, toEl, createdFromEl, createdToEl].forEach(el=>{
+  [typeEl, bdEl, fromEl, toEl, createdFromEl, createdToEl].forEach(el=>{
     if(!el || el.dataset.wired) return;
     el.addEventListener('change', renderAnalysisTab);
     el.dataset.wired = '1';
@@ -4317,7 +4300,6 @@ function wireAnalysisFilterBar(){
   if(clearBtn && !clearBtn.dataset.wired){
     clearBtn.addEventListener('click', ()=>{
       if(typeEl) typeEl.value = '';
-      if(orderEl) orderEl.value = '';
       if(bdEl) bdEl.value = '';
       if(fromEl) fromEl.value = '';
       if(toEl) toEl.value = '';
@@ -4334,7 +4316,6 @@ function wireAnalysisFilterBar(){
 // and ISO-ish strings, same as the rest of the app's date columns).
 function getFilteredAnalysisGroups(){
   const type = (document.getElementById('analysis-filter-type') || {}).value || '';
-  const order = (document.getElementById('analysis-filter-order') || {}).value || '';
   const bd = (document.getElementById('analysis-filter-bd') || {}).value || '';
   const fromStr = (document.getElementById('analysis-filter-from') || {}).value || '';
   const toStr = (document.getElementById('analysis-filter-to') || {}).value || '';
@@ -4348,7 +4329,6 @@ function getFilteredAnalysisGroups(){
   return (historyGroupsCache.admin || []).filter(g=>{
     const v = g.rows[0].values[0];
     if(type && confirmationGroupType(g) !== type) return false;
-    if(order && String(v[MC.supplyDemand] || '').trim() !== order) return false;
     if(bd && String(v[MC.salesPic] || '').trim() !== bd) return false;
     if(fromDate || toDate){
       const dealDate = parseStoredDateToDate(v[MC.agreementDate]);
@@ -5689,12 +5669,31 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
    saveRedemptionUpload, which calls loadHistory()). */
 let redemptionModalDealId = null;
 let redemptionModalTableName = null;
+// True once a product's Delivery End Date is within 1 week from today (or
+// already passed) — same "due soon" window the Redemption Form reminder
+// Power Automate flow uses to decide who to email (see the flow's
+// Filter_array_-_Redemption_Due_Soon step: addDays(utcNow(), 7)). Used
+// purely to flag the product title red/bold in the Redemption Documents
+// modal; doesn't affect anything else.
+function isRedemptionDueSoon(deliveryEndRaw){
+  const d = parseStoredDateToDate(deliveryEndRaw);
+  if(!d) return false;
+  const today = new Date();
+  const todayUtc = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+  const weekFromNowUtc = todayUtc + 7 * 24 * 60 * 60 * 1000;
+  return d.getTime() <= weekFromNowUtc;
+}
 function redemptionModalFieldsHtml(rows){
   return rows.map((r, idx)=>{
     const rv = r.values[0];
     const n = idx + 1;
     const has = rowHasRedemptionDoc(rv);
     const rowUid = rv[MC.rowUid] || '';
+    const registryLabel = registryDisplayName(rv[MC.registry]) || '(no registry)';
+    const deliveryLabel = formatStoredDate(rv[MC.deliveryEnd]) || '(no delivery date)';
+    const dueSoon = isRedemptionDueSoon(rv[MC.deliveryEnd]);
+    const titleText = 'Product '+n+' — '+registryLabel+' — '+deliveryLabel;
+    const titleStyle = 'font-size:13px;margin-bottom:4px;' + (has ? 'font-weight:600;' : (dueSoon ? 'font-weight:700;color:#c1493a;' : 'font-weight:600;'));
     const statusHtml = has
       ? '<div style="font-size:12px;color:#1f7a4d;">✓ <a href="'+escapeHtml(rv[MC.redemptionDocUrl])+'" target="_blank" rel="noopener">'+escapeHtml(rv[MC.redemptionDocName])+'</a>'+
         (rv[MC.redemptionUploadedBy] ? ' — uploaded by '+escapeHtml(rv[MC.redemptionUploadedBy]) : '')+
@@ -5702,7 +5701,7 @@ function redemptionModalFieldsHtml(rows){
         '</div>'
       : '<div style="font-size:12px;color:#8a6d1f;">Not uploaded yet</div>';
     return '<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;">' +
-      '<div style="font-weight:600;font-size:13px;margin-bottom:4px;">Product '+n+'</div>' +
+      '<div style="'+titleStyle+'">'+escapeHtml(titleText)+'</div>' +
       statusHtml +
       '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">' +
         '<input type="file" class="redemption-file-input" accept=".pdf,.doc,.docx" data-idx="'+n+'" data-rowuid="'+escapeHtml(rowUid)+'" style="flex:1;min-width:160px;"/>' +
