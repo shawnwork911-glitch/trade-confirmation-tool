@@ -1107,7 +1107,10 @@ const MC = {
   // as the workbook (see REDEMPTION_DOC_FOLDER_PATH), renamed to
   // "<Deal ID>_Product <n>_<doc index>" — e.g. "12345_Product 1_1",
   // "12345_Product 1_2" — so uploading a second/third file for the same
-  // product never overwrites the ones already there. See
+  // product never overwrites the ones already there. redemptionDocName
+  // itself, though, stores the uploader's OWN original filename (not that
+  // renamed one) so they can visually confirm they picked the right
+  // document — see sanitizeRedemptionDocDisplayName/
   // uploadRedemptionDocument/saveRedemptionUpload.
   redemptionDocName:68, redemptionDocUrl:69, redemptionUploadedBy:70, redemptionUploadedDate:71
 };
@@ -2801,6 +2804,16 @@ async function uploadAgreementFile(dealId, file){
    PUTs — the uploadUrl itself is already scoped/authenticated). Files that
    fit under Graph's 4 MB simple-upload ceiling still go through one PUT, to
    keep the common case a single round trip. */
+// The display name stored/shown for an uploaded Redemption Form is the
+// user's OWN original filename (see uploadRedemptionDocument), not the
+// "<Deal ID>_Product n_docIndex" name the file is actually saved under on
+// SharePoint — that way the user can tell, at a glance, that they picked
+// the right document. Names are "; "-joined (see parseRedemptionDocs), so
+// guard against a stray "; " inside someone's own filename splitting the
+// list wrong on the way back apart.
+function sanitizeRedemptionDocDisplayName(name){
+  return String(name || '').replace(/;\s*/g, ', ');
+}
 const REDEMPTION_DOC_FOLDER_PATH = 'Redemption Documents';
 const REDEMPTION_DOC_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
 const REDEMPTION_DOC_SIMPLE_UPLOAD_MAX_BYTES = 4 * 1024 * 1024; // Graph's own ceiling for PUT .../content
@@ -2826,7 +2839,7 @@ async function uploadRedemptionDocument(dealId, productIndex, docIndex, file){
       throw new Error('Redemption Form upload failed (' + res.status + '): ' + text.slice(0, 300));
     }
     const item = await res.json();
-    return { name: item.name, webUrl: item.webUrl };
+    return { name: sanitizeRedemptionDocDisplayName(file.name), webUrl: item.webUrl };
   }
   // Larger files (up to REDEMPTION_DOC_UPLOAD_MAX_BYTES): resumable upload
   // session, chunked. conflictBehavior 'replace' mirrors the simple PUT's
@@ -2866,7 +2879,7 @@ async function uploadRedemptionDocument(dealId, productIndex, docIndex, file){
     start = end;
   }
   if(!item) throw new Error('Redemption Form upload did not complete — please try again.');
-  return { name: item.name, webUrl: item.webUrl };
+  return { name: sanitizeRedemptionDocDisplayName(file.name), webUrl: item.webUrl };
 }
 // True once a deal's Status/Order Type mean it needs the extra Redemption
 // Form step at all — a REC (never Carbon Credit) deal that has reached
@@ -5820,10 +5833,13 @@ function redemptionModalFieldsHtml(rows){
     const has = docs.length > 0;
     const rowUid = rv[MC.rowUid] || '';
     const registryLabel = registryDisplayName(rv[MC.registry]) || '(no registry)';
-    const deliveryLabel = formatStoredDate(rv[MC.deliveryEnd]) || '(no delivery date)';
+    const quantityLabel = String(rv[MC.volume] || '').trim() || '(no quantity)';
     const vintageTag = redemptionVintageTag(rv[MC.vFromYY], rv[MC.vToYY]);
+    // Delivery End Date still drives the due-soon highlight (below) even
+    // though it's no longer shown in the title itself — the title shows
+    // quantity instead, per request.
     const dueSoon = isRedemptionDueSoon(rv[MC.deliveryEnd]);
-    const titleText = 'Product '+n+' — '+registryLabel+(vintageTag ? ' — '+vintageTag : '')+' — '+deliveryLabel;
+    const titleText = 'Product '+n+' — '+registryLabel+(vintageTag ? ' — '+vintageTag : '')+' — '+quantityLabel;
     const titleStyle = 'font-size:13px;margin-bottom:4px;' + (has ? 'font-weight:600;' : (dueSoon ? 'font-weight:700;color:#c1493a;' : 'font-weight:600;'));
     // A product can carry more than one signed Redemption Form on file (see
     // parseRedemptionDocs) — list every one of them, each with its own
@@ -5840,8 +5856,8 @@ function redemptionModalFieldsHtml(rows){
       '<div style="'+titleStyle+'">'+escapeHtml(titleText)+'</div>' +
       statusHtml +
       '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">' +
-        '<input type="file" class="redemption-file-input" accept=".pdf,.doc,.docx" data-idx="'+n+'" data-rowuid="'+escapeHtml(rowUid)+'" style="flex:1;min-width:160px;"/>' +
-        '<button type="button" class="secondary redemption-upload-btn" data-idx="'+n+'" style="padding:4px 10px;font-size:12px;">'+(has?'Add another file':'Upload')+'</button>' +
+        '<input type="file" class="redemption-file-input" accept=".pdf,.doc,.docx" multiple data-idx="'+n+'" data-rowuid="'+escapeHtml(rowUid)+'" style="flex:1;min-width:160px;"/>' +
+        '<button type="button" class="secondary redemption-upload-btn" data-idx="'+n+'" style="padding:4px 10px;font-size:12px;">'+(has?'Add file(s)':'Upload')+'</button>' +
       '</div>' +
     '</div>';
   }).join('');
@@ -5866,16 +5882,28 @@ document.getElementById('redemption-modal-close').addEventListener('click', clos
 document.getElementById('redemption-modal-overlay').addEventListener('click', (e)=>{
   if(e.target.id === 'redemption-modal-overlay') closeRedemptionModal();
 });
+// The file input allows selecting several files at once (see
+// redemptionModalFieldsHtml's "multiple" attribute) — uploaded ONE AT A
+// TIME, in order, awaiting each saveRedemptionUpload call before starting
+// the next. That's deliberate, not just simplicity: saveRedemptionUpload
+// re-reads the row's live existing-docs count to assign the next docIndex
+// and to append onto the redemptionDocName/Url/UploadedBy/UploadedDate
+// columns, so two uploads for the same row racing in parallel could each
+// read the row before the other's write lands and clobber one another's
+// append (a classic lost-update). Doing them sequentially — each one
+// fully re-reading, writing, and reloading history before the next starts
+// — sidesteps that entirely, at the cost of N sequential round trips
+// instead of one batch call.
 document.getElementById('redemption-modal-fields').addEventListener('click', async (e)=>{
   const btn = e.target.closest('.redemption-upload-btn');
   if(!btn) return;
   const idx = parseInt(btn.getAttribute('data-idx'), 10);
   const fileInput = document.querySelector('#redemption-modal-fields .redemption-file-input[data-idx="'+idx+'"]');
-  const file = fileInput && fileInput.files[0];
+  const files = fileInput ? Array.from(fileInput.files) : [];
   const errEl = document.getElementById('redemption-modal-error');
   errEl.style.display = 'none';
-  if(!file){
-    errEl.textContent = 'Choose a file for Product ' + idx + ' first.';
+  if(!files.length){
+    errEl.textContent = 'Choose at least one file for Product ' + idx + ' first.';
     errEl.style.display = 'block';
     return;
   }
@@ -5884,13 +5912,20 @@ document.getElementById('redemption-modal-fields').addEventListener('click', asy
   const tableName = redemptionModalTableName;
   const prevLabel = btn.textContent;
   btn.disabled = true;
-  btn.textContent = 'Uploading…';
+  let uploaded = 0;
   try{
-    await saveRedemptionUpload(dealId, tableName, rowUid, idx, file);
-    openRedemptionModal(dealId, tableName); // re-render from the freshly-saved row
+    for(let i = 0; i < files.length; i++){
+      btn.textContent = files.length > 1 ? ('Uploading ' + (i+1) + ' of ' + files.length + '…') : 'Uploading…';
+      await saveRedemptionUpload(dealId, tableName, rowUid, idx, files[i]);
+      uploaded++;
+    }
   }catch(err){
-    errEl.textContent = err.message;
+    errEl.textContent = err.message + (uploaded > 0 ? (' (' + uploaded + ' of ' + files.length + ' file' + (files.length > 1 ? 's' : '') + ' in this batch uploaded before the error — see the list above.)') : '');
     errEl.style.display = 'block';
+  }
+  if(uploaded > 0){
+    openRedemptionModal(dealId, tableName); // re-render from the freshly-saved row(s)
+  }else{
     btn.disabled = false;
     btn.textContent = prevLabel;
   }
