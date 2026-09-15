@@ -649,7 +649,7 @@
       <input type="text" id="history-filter-search" placeholder="Search Deal ID or Counterparty…">
       <select id="history-filter-type"><option value="">All types</option><option value="recs">RECs</option><option value="carboncredit">Carbon Credit</option></select>
       <select id="history-filter-status"></select>
-      <select id="history-filter-order"><option value="">All order types</option><option value="Stock-In (T)">Stock-In (T)</option><option value="Stock-Out (T)">Stock-Out (T)</option><option value="Stock-Out (R)">Stock-Out (R)</option></select>
+      <select id="history-filter-order"><option value="">All order types</option><option value="Stock-In (T)">Stock-In (T)</option><option value="Stock-Out (T)">Stock-Out (T)</option><option value="Stock-Out (R)">Stock-Out (R)</option><option value="Stock-In (R)">Stock-In (R)</option></select>
       <span class="confirmation-filter-daterange">
         <span class="analysis-filter-group-label" style="margin-left:0;">Delivery End:</span>
         <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">From <input type="date" id="history-filter-delivery-from"></label>
@@ -667,7 +667,7 @@
       <input type="text" id="queue-filter-search" placeholder="Search Deal ID or Counterparty…">
       <select id="queue-filter-type"><option value="">All types</option><option value="recs">RECs</option><option value="carboncredit">Carbon Credit</option></select>
       <select id="queue-filter-status"></select>
-      <select id="queue-filter-order"><option value="">All order types</option><option value="Stock-In (T)">Stock-In (T)</option><option value="Stock-Out (T)">Stock-Out (T)</option><option value="Stock-Out (R)">Stock-Out (R)</option></select>
+      <select id="queue-filter-order"><option value="">All order types</option><option value="Stock-In (T)">Stock-In (T)</option><option value="Stock-Out (T)">Stock-Out (T)</option><option value="Stock-Out (R)">Stock-Out (R)</option><option value="Stock-In (R)">Stock-In (R)</option></select>
       <span class="confirmation-filter-daterange">
         <span class="analysis-filter-group-label" style="margin-left:0;">Delivery End:</span>
         <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">From <input type="date" id="queue-filter-delivery-from"></label>
@@ -685,7 +685,7 @@
       <input type="text" id="admin-filter-search" placeholder="Search Deal ID or Counterparty…">
       <select id="admin-filter-type"><option value="">All types</option><option value="recs">RECs</option><option value="carboncredit">Carbon Credit</option></select>
       <select id="admin-filter-status"></select>
-      <select id="admin-filter-order"><option value="">All order types</option><option value="Stock-In (T)">Stock-In (T)</option><option value="Stock-Out (T)">Stock-Out (T)</option><option value="Stock-Out (R)">Stock-Out (R)</option></select>
+      <select id="admin-filter-order"><option value="">All order types</option><option value="Stock-In (T)">Stock-In (T)</option><option value="Stock-Out (T)">Stock-Out (T)</option><option value="Stock-Out (R)">Stock-Out (R)</option><option value="Stock-In (R)">Stock-In (R)</option></select>
       <span class="confirmation-filter-daterange">
         <span class="analysis-filter-group-label" style="margin-left:0;">Delivery End:</span>
         <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">From <input type="date" id="admin-filter-delivery-from"></label>
@@ -706,7 +706,7 @@
     <div class="confirmation-filter-bar">
       <select id="analysis-filter-type"><option value="">All types</option><option value="recs">RECs</option><option value="carboncredit">Carbon Credit</option></select>
       <select id="analysis-filter-bd"><option value="">All BD in-charge</option></select>
-      <select id="analysis-filter-order"><option value="">All order types</option><option value="Stock-In (T)">Stock-In (T)</option><option value="Stock-Out (T)">Stock-Out (T)</option><option value="Stock-Out (R)">Stock-Out (R)</option></select>
+      <select id="analysis-filter-order"><option value="">All order types</option><option value="Stock-In (T)">Stock-In (T)</option><option value="Stock-Out (T)">Stock-Out (T)</option><option value="Stock-Out (R)">Stock-Out (R)</option><option value="Stock-In (R)">Stock-In (R)</option></select>
       <span class="analysis-row-break" aria-hidden="true"></span>
       <span class="analysis-filter-group-label analysis-dealdate-label">Deal Date:</span>
       <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">From <input type="date" id="analysis-filter-from"></label>
@@ -862,7 +862,7 @@
 <div id="redemption-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
   <div style="width:100%;max-width:560px;max-height:85vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:12px;">
     <h2 style="margin:0;font-size:16px;">Redemption Documents — Deal ID <span id="redemption-modal-dealid"></span></h2>
-    <p style="margin:0;font-size:13px;color:var(--text-secondary);">This is a Stock-Out (R) deal — it isn't fully complete until each product below has at least one signed Redemption Form uploaded. You can upload more than one file per product (e.g. multiple signed pages). PDF/Word files only, max 10 MB each. Files are saved to the "Redemption Documents" folder on SharePoint, renamed to "Deal ID_Product n_1", "Deal ID_Product n_2", etc.</p>
+    <p style="margin:0;font-size:13px;color:var(--text-secondary);">This is a Stock-Out (R)/Stock-In (R) deal — it isn't fully complete until each product below has at least one signed Redemption Form uploaded. You can upload more than one file per product (e.g. multiple signed pages). PDF/Word files only, max 10 MB each. Files are saved to the "Redemption Documents" folder on SharePoint, renamed to "Deal ID_Product n_1", "Deal ID_Product n_2", etc.</p>
     <div id="redemption-modal-fields" style="display:flex;flex-direction:column;gap:12px;"></div>
     <div id="redemption-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
@@ -931,7 +931,8 @@ const CC_LOG_TABLE_NAME = "TradeDealLog7"; // Excel Table on the workbook's CCDe
 // (see the pendingVolume comment on the MC object below); not required for
 // anything else in this app to work: Pending Volume.
 // OPTIONAL 68th-71st columns, only needed for the Redemption Form upload
-// step on an Approved, Order Type "Stock-Out (R)" REC deal (see the
+// step on an Approved, Order Type "Stock-Out (R)" or "Stock-In (R)" REC
+// deal (see the
 // redemptionDocName comment on the MC object below); not required for
 // anything else in this app to work: Redemption Document Name, Redemption
 // Document URL, Redemption Uploaded By, Redemption Uploaded Date.
@@ -1075,19 +1076,22 @@ const MC = {
   // it, add "Source Vintage Start", "Source Vintage End" and "Source
   // Matching Note" at the END of the live TradeDealLog Excel Table.
   sourceVintageStart:65, sourceVintageEnd:66, sourceMatchNote:67,
-  // ---- Redemption Form upload (RECs, Order Type "Stock-Out (R)" only) ----
+  // ---- Redemption Form upload (RECs, Order Type "Stock-Out (R)" or
+  // "Stock-In (R)" only) ----
   // Optional 68th-71st columns. Once a REC deal reaches STATUS_APPROVED
   // (Level 3 sign-off) and its Order Type (MC.supplyDemand) is "Stock-Out
-  // (R)" — see isStockOutR — the deal isn't treated as fully complete until
-  // EVERY product row on it has AT LEAST ONE signed Redemption Form
-  // uploaded (see dealNeedsRedemption/dealRedemptionSummary/
-  // openRedemptionModal/uploadRedemptionDocument). A product row can have
-  // more than one Redemption Form on file (e.g. several signed pages) — each
-  // of these four columns holds a "; "-joined list, one entry per uploaded
-  // document, in upload order, same convention as the per-BD-source fields
-  // (see joinBdSourceField) and parsed back apart by parseRedemptionDocs.
+  // (R)" or "Stock-In (R)" — see isRedemptionOrderType — the deal isn't
+  // treated as fully complete until EVERY product row on it has AT LEAST
+  // ONE signed Redemption Form uploaded (see dealNeedsRedemption/
+  // dealRedemptionSummary/openRedemptionModal/uploadRedemptionDocument). A
+  // product row can have more than one Redemption Form on file (e.g.
+  // several signed pages) — each of these four columns holds a "; "-joined
+  // list, one entry per uploaded document, in upload order, same
+  // convention as the per-BD-source fields (see joinBdSourceField) and
+  // parsed back apart by parseRedemptionDocs.
   // Nothing here changes Status or the 3-level approval chain itself — a
-  // Stock-Out (R) REC deal is still "Approved" the instant Level 3 signs
+  // Stock-Out (R)/Stock-In (R) REC deal is still "Approved" the instant
+  // Level 3 signs
   // off, exactly like any other deal; this is purely an additional,
   // independent per-row completion flag shown alongside that status (a
   // badge in renderHistoryTable, plus the "Redemption Documents" button/
@@ -2771,7 +2775,8 @@ async function uploadAgreementFile(dealId, file){
   return { name: item.name, webUrl: item.webUrl };
 }
 
-/* ---- Redemption Form upload (RECs, Order Type "Stock-Out (R)" only) ----
+/* ---- Redemption Form upload (RECs, Order Type "Stock-Out (R)" or
+   "Stock-In (R)" only) ----
    Uploads into a "Redemption Documents" folder in the SAME SharePoint drive
    that hosts the workbook (`driveId` — the "Process Improvement" library on
    the Operations site, per resolveWorkbook) — a sibling of "Agreement
@@ -2865,11 +2870,11 @@ async function uploadRedemptionDocument(dealId, productIndex, docIndex, file){
 }
 // True once a deal's Status/Order Type mean it needs the extra Redemption
 // Form step at all — a REC (never Carbon Credit) deal that has reached
-// STATUS_APPROVED with Order Type "Stock-Out (R)". Doesn't say anything
-// about whether the documents have actually been uploaded yet — see
-// dealRedemptionSummary for that.
+// STATUS_APPROVED with Order Type "Stock-Out (R)" or "Stock-In (R)" — see
+// isRedemptionOrderType. Doesn't say anything about whether the documents
+// have actually been uploaded yet — see dealRedemptionSummary for that.
 function dealNeedsRedemption(status, sourceTable, orderType){
-  return status === STATUS_APPROVED && sourceTable !== CC_LOG_TABLE_NAME && isStockOutR(orderType);
+  return status === STATUS_APPROVED && sourceTable !== CC_LOG_TABLE_NAME && isRedemptionOrderType(orderType);
 }
 // True if this specific product ROW already has at least one Redemption
 // Form on file. Guarded on values.length since these are optional/additive
@@ -4841,7 +4846,7 @@ function renderHistoryTable(el, groups, opts){
     const rowSourceTable = g.sourceTable || (g.rows[0] && g.rows[0]._sourceTable) || STANDARD_LOG_TABLE_NAME;
     const sourceAttr = ' data-logtable="'+escapeHtml(rowSourceTable)+'"';
     // Redemption Form upload step — Approved, Order Type "Stock-Out (R)"
-    // REC deals only (see dealNeedsRedemption). Purely additive to the
+    // or "Stock-In (R)" REC deals only (see dealNeedsRedemption). Purely additive to the
     // Approved status: a small badge next to it, plus a button that opens
     // openRedemptionModal, gated the same "owner or admin" way as every
     // other post-approval action on this row.
@@ -5768,8 +5773,8 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
 });
 /* ---- Redemption Documents modal ----
    Opened from the "Upload Redemption Docs"/"Redemption Documents" button
-   renderHistoryTable adds to an Approved, Order Type "Stock-Out (R)" REC
-   deal (see dealNeedsRedemption). One file-picker + Upload/Replace button
+   renderHistoryTable adds to an Approved, Order Type "Stock-Out (R)" or
+   "Stock-In (R)" REC deal (see dealNeedsRedemption). One file-picker + Upload/Replace button
    per product row — each upload happens immediately (same "pick a file,
    it uploads right away" pattern as the rest of this app's file inputs),
    and the modal just re-renders itself from the freshly-saved row afterward
@@ -6317,7 +6322,7 @@ function parseVolumeForTotals(volume){
   }
   return 0;
 }
-const ORDER_TYPES = ["Stock-In (T)","Stock-Out (T)","Stock-Out (R)"];
+const ORDER_TYPES = ["Stock-In (T)","Stock-Out (T)","Stock-Out (R)","Stock-In (R)"];
 const CURRENCIES = ["USD","SGD","MYR"];
 const MATCHING = ["Partially Matched","Open Position","Matched","V-Matched"];
 // Display-only label overrides for the Matching dropdown — the option's
@@ -6788,6 +6793,17 @@ function updateBuyerSellerFieldLabel(){
 }
 function isStockOutR(orderType){
   return String(orderType || '').trim() === 'Stock-Out (R)';
+}
+// True for either of the two Order Types that carry the Redemption Form
+// requirement (see dealNeedsRedemption) — "Stock-Out (R)" and "Stock-In
+// (R)". Deliberately separate from isStockOutR, which only ever means the
+// original "Stock-Out (R)" type and still solely governs the Buyer
+// Receiving Account field being hidden/blanked (transferAccountValue/
+// updateTransferAccountLabels/saveConfirmation) — Stock-In (R) deals keep
+// that field like any normal Stock-In (T) deal.
+function isRedemptionOrderType(orderType){
+  const v = String(orderType || '').trim();
+  return v === 'Stock-Out (R)' || v === 'Stock-In (R)';
 }
 function transferAccountLabel(role){
   return role === 'Buyer' ? 'Buyer Receiving Account' : 'Seller Transfer Account';
