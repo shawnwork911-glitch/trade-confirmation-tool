@@ -862,7 +862,7 @@
 <div id="redemption-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
   <div style="width:100%;max-width:560px;max-height:85vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:12px;">
     <h2 style="margin:0;font-size:16px;">Redemption Documents — Deal ID <span id="redemption-modal-dealid"></span></h2>
-    <p style="margin:0;font-size:13px;color:var(--text-secondary);">This is a Stock-Out (R) deal — it isn't fully complete until each product below has at least one signed Redemption Form uploaded. You can upload more than one file per product (e.g. multiple signed pages). PDF/Word files only, max 4 MB each. Files are saved to the "Redemption Documents" folder on SharePoint, renamed to "Deal ID_Product n_1", "Deal ID_Product n_2", etc.</p>
+    <p style="margin:0;font-size:13px;color:var(--text-secondary);">This is a Stock-Out (R) deal — it isn't fully complete until each product below has at least one signed Redemption Form uploaded. You can upload more than one file per product (e.g. multiple signed pages). PDF/Word files only, max 10 MB each. Files are saved to the "Redemption Documents" folder on SharePoint, renamed to "Deal ID_Product n_1", "Deal ID_Product n_2", etc.</p>
     <div id="redemption-modal-fields" style="display:flex;flex-direction:column;gap:12px;"></div>
     <div id="redemption-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
@@ -2772,43 +2772,95 @@ async function uploadAgreementFile(dealId, file){
 }
 
 /* ---- Redemption Form upload (RECs, Order Type "Stock-Out (R)" only) ----
-   Same simple (non-resumable, 4 MB-limited) upload endpoint as
-   uploadAgreementFile above, into a "Redemption Documents" folder in the
-   SAME SharePoint drive that hosts the workbook (`driveId` — the
-   "Process Improvement" library on the Operations site, per resolveWorkbook)
-   — a sibling of "Agreement Files", NOT the separate default-library
-   drive the Redemption Form *templates* list (see REDEMPTION_FOLDER_PATH/
-   getRedemptionDriveId further down) reads from. One OR MORE files per
-   product/row — productIndex is the 1-based "Product N" position within the
-   deal, same numbering used everywhere else in this app; docIndex is the
-   1-based position of this particular file among all the files already
-   uploaded for that same product (see saveRedemptionUpload, which works
-   this out from the row's existing redemptionDocName list). The filename is
-   always "<Deal ID>_Product <n>_<docIndex>" plus the uploaded file's own
-   extension, so uploading a second/third file for the same product gets its
-   own SharePoint file instead of overwriting the previous one. */
+   Uploads into a "Redemption Documents" folder in the SAME SharePoint drive
+   that hosts the workbook (`driveId` — the "Process Improvement" library on
+   the Operations site, per resolveWorkbook) — a sibling of "Agreement
+   Files", NOT the separate default-library drive the Redemption Form
+   *templates* list (see REDEMPTION_FOLDER_PATH/getRedemptionDriveId further
+   down) reads from. One OR MORE files per product/row — productIndex is the
+   1-based "Product N" position within the deal, same numbering used
+   everywhere else in this app; docIndex is the 1-based position of this
+   particular file among all the files already uploaded for that same
+   product (see saveRedemptionUpload, which works this out from the row's
+   existing redemptionDocName list). The filename is always "<Deal
+   ID>_Product <n>_<docIndex>" plus the uploaded file's own extension, so
+   uploading a second/third file for the same product gets its own
+   SharePoint file instead of overwriting the previous one.
+   Graph's simple "PUT .../content" upload (used for Level 2 agreement
+   files, see uploadAgreementFile above) is hard-limited by Graph itself to
+   4 MB — that's not this app's choice, so raising REDEMPTION_DOC_UPLOAD_MAX_
+   BYTES past 4 MB requires Graph's resumable upload session API instead:
+   POST .../createUploadSession gets back a one-time uploadUrl, then the
+   file is PUT to that url in sequential Content-Range chunks (a plain
+   Authorization header is neither required nor accepted on those chunk
+   PUTs — the uploadUrl itself is already scoped/authenticated). Files that
+   fit under Graph's 4 MB simple-upload ceiling still go through one PUT, to
+   keep the common case a single round trip. */
 const REDEMPTION_DOC_FOLDER_PATH = 'Redemption Documents';
-const REDEMPTION_DOC_UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
+const REDEMPTION_DOC_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
+const REDEMPTION_DOC_SIMPLE_UPLOAD_MAX_BYTES = 4 * 1024 * 1024; // Graph's own ceiling for PUT .../content
+const REDEMPTION_DOC_UPLOAD_CHUNK_BYTES = 5 * 1024 * 1024; // must be a multiple of 320 KiB per Graph's docs
 async function uploadRedemptionDocument(dealId, productIndex, docIndex, file){
   if(!driveId) throw new Error('Not connected to the SharePoint workbook yet — try refreshing the page.');
   if(file.size > REDEMPTION_DOC_UPLOAD_MAX_BYTES){
-    throw new Error('That file is larger than 4 MB — please compress it or upload a smaller file.');
+    throw new Error('That file is larger than 10 MB — please compress it or upload a smaller file.');
   }
-  const token = await getAccessToken(GRAPH_SCOPES);
   const extMatch = /\.[^.\\\/]+$/.exec(file.name || '');
   const ext = extMatch ? extMatch[0] : '';
   const safeName = (dealId + '_Product ' + productIndex + '_' + docIndex + ext).replace(/[\\\/:*?"<>|]/g, '-');
-  const path = '/drives/' + driveId + '/root:/' + REDEMPTION_DOC_FOLDER_PATH.split('/').map(encodeURIComponent).join('/') + '/' + encodeURIComponent(safeName) + ':/content';
-  const res = await fetch('https://graph.microsoft.com/v1.0' + path, {
-    method: 'PUT',
-    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': file.type || 'application/octet-stream' },
-    body: file
-  });
-  if(!res.ok){
-    const text = await res.text().catch(()=> '');
-    throw new Error('Redemption Form upload failed (' + res.status + '): ' + text.slice(0, 300));
+  const itemPath = '/drives/' + driveId + '/root:/' + REDEMPTION_DOC_FOLDER_PATH.split('/').map(encodeURIComponent).join('/') + '/' + encodeURIComponent(safeName) + ':';
+  if(file.size <= REDEMPTION_DOC_SIMPLE_UPLOAD_MAX_BYTES){
+    const token = await getAccessToken(GRAPH_SCOPES);
+    const res = await fetch('https://graph.microsoft.com/v1.0' + itemPath + '/content', {
+      method: 'PUT',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': file.type || 'application/octet-stream' },
+      body: file
+    });
+    if(!res.ok){
+      const text = await res.text().catch(()=> '');
+      throw new Error('Redemption Form upload failed (' + res.status + '): ' + text.slice(0, 300));
+    }
+    const item = await res.json();
+    return { name: item.name, webUrl: item.webUrl };
   }
-  const item = await res.json();
+  // Larger files (up to REDEMPTION_DOC_UPLOAD_MAX_BYTES): resumable upload
+  // session, chunked. conflictBehavior 'replace' mirrors the simple PUT's
+  // overwrite-in-place behavior above.
+  const sessionToken = await getAccessToken(GRAPH_SCOPES);
+  const sessionRes = await fetch('https://graph.microsoft.com/v1.0' + itemPath + '/createUploadSession', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + sessionToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ item: { '@microsoft.graph.conflictBehavior': 'replace' } })
+  });
+  if(!sessionRes.ok){
+    const text = await sessionRes.text().catch(()=> '');
+    throw new Error('Redemption Form upload failed to start (' + sessionRes.status + '): ' + text.slice(0, 300));
+  }
+  const session = await sessionRes.json();
+  const uploadUrl = session.uploadUrl;
+  let start = 0;
+  let item = null;
+  while(start < file.size){
+    const end = Math.min(start + REDEMPTION_DOC_UPLOAD_CHUNK_BYTES, file.size);
+    const chunk = file.slice(start, end);
+    const chunkRes = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Length': String(end - start),
+        'Content-Range': 'bytes ' + start + '-' + (end - 1) + '/' + file.size
+      },
+      body: chunk
+    });
+    if(!chunkRes.ok){
+      const text = await chunkRes.text().catch(()=> '');
+      throw new Error('Redemption Form upload failed partway through (' + chunkRes.status + '): ' + text.slice(0, 300));
+    }
+    if(end === file.size){
+      item = await chunkRes.json();
+    }
+    start = end;
+  }
+  if(!item) throw new Error('Redemption Form upload did not complete — please try again.');
   return { name: item.name, webUrl: item.webUrl };
 }
 // True once a deal's Status/Order Type mean it needs the extra Redemption
@@ -5739,6 +5791,22 @@ function isRedemptionDueSoon(deliveryEndRaw){
   const weekFromNowUtc = todayUtc + 7 * 24 * 60 * 60 * 1000;
   return d.getTime() <= weekFromNowUtc;
 }
+// Redemption Documents are REC-only (see saveRedemptionUpload/
+// dealNeedsRedemption), so a row's Vintage is always a plain start/end
+// YEAR pair (MC.vFromYY/vToYY — e.g. "2026"), never the month+year or
+// Carbon-Credit-style vintage used elsewhere. Renders that pair as the
+// short "V26" tag for the modal's product titles, or "V25/26" when the
+// start and end years differ. Returns '' if neither year is set, so the
+// title falls back to just Registry — Delivery Date as before.
+function redemptionVintageTag(fromYY, toYY){
+  const shortYear = (y) => /^\d{4}$/.test(y) ? y.slice(-2) : y;
+  const from = String(fromYY || '').trim();
+  const to = String(toYY || '').trim();
+  if(!from && !to) return '';
+  if(!to || from === to) return 'V' + shortYear(from || to);
+  if(!from) return 'V' + shortYear(to);
+  return 'V' + shortYear(from) + '/' + shortYear(to);
+}
 function redemptionModalFieldsHtml(rows){
   return rows.map((r, idx)=>{
     const rv = r.values[0];
@@ -5748,8 +5816,9 @@ function redemptionModalFieldsHtml(rows){
     const rowUid = rv[MC.rowUid] || '';
     const registryLabel = registryDisplayName(rv[MC.registry]) || '(no registry)';
     const deliveryLabel = formatStoredDate(rv[MC.deliveryEnd]) || '(no delivery date)';
+    const vintageTag = redemptionVintageTag(rv[MC.vFromYY], rv[MC.vToYY]);
     const dueSoon = isRedemptionDueSoon(rv[MC.deliveryEnd]);
-    const titleText = 'Product '+n+' — '+registryLabel+' — '+deliveryLabel;
+    const titleText = 'Product '+n+' — '+registryLabel+(vintageTag ? ' — '+vintageTag : '')+' — '+deliveryLabel;
     const titleStyle = 'font-size:13px;margin-bottom:4px;' + (has ? 'font-weight:600;' : (dueSoon ? 'font-weight:700;color:#c1493a;' : 'font-weight:600;'));
     // A product can carry more than one signed Redemption Form on file (see
     // parseRedemptionDocs) — list every one of them, each with its own
