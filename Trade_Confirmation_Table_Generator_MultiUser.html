@@ -726,7 +726,12 @@
 
   <div id="tab-panel-analysis" class="tab-panel" style="display:none;">
 
-  <div class="card">
+  <div class="confirmation-section-selector" id="analysis-section-selector">
+    <button type="button" id="analysis-section-analysis" data-analysis-section="analysis">Confirmations analysis</button>
+    <button type="button" id="analysis-section-timeline" data-analysis-section="timeline">Deal Timeline</button>
+  </div>
+
+  <div class="card" id="analysis-section-analysis-card">
     <p class="card-title">Confirmations analysis</p>
     <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Breaks down every saved confirmation (one entry per deal, matching "All confirmations") by status, filterable by type (RECs or Carbon Credit), BD in-charge, Deal Date, and the date the agreement was created (submitted) by the user. "Export to Excel" downloads exactly the rows shown below.</p>
     <div class="confirmation-filter-bar">
@@ -767,7 +772,7 @@
     <div id="analysis-table-wrap"><p style="font-size:13px;color:var(--text-secondary);">Loading…</p></div>
   </div>
 
-  <div class="card">
+  <div class="card" id="analysis-section-timeline-card">
     <p class="card-title">Deal Timeline</p>
     <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">For each deal in the filtered set above, when it was submitted and when it moved through each approval stage (or was rejected/returned).</p>
     <div id="analysis-timeline-wrap"><p style="font-size:13px;color:var(--text-secondary);">Loading…</p></div>
@@ -1369,7 +1374,7 @@ function setActiveTab(tab){
       ? 'Create a Carbon Credit confirmation. Technology is fixed to Carbon Credit for every product.'
       : 'Fill in the details below, generate the Customer version table, then copy and send to your customer.';
   }
-  if(isAnalysis) renderAnalysisTab();
+  if(isAnalysis){ setAnalysisSection(activeAnalysisSection); renderAnalysisTab(); }
   if(isUserMgmt) renderUserMgmtList();
   if(isDealId) renderDealIdSettings();
   if(isRedemption) renderRedemptionTab();
@@ -1545,6 +1550,30 @@ document.addEventListener('click', e => {
   const btn = e.target.closest('[data-confirmation-section]');
   if(!btn) return;
   setConfirmationSection(btn.getAttribute('data-confirmation-section'));
+});
+
+// ---- Analysis tab's own small sub-tabs (Confirmations analysis / Deal
+// Timeline) — same look/pattern as the Confirmations tab's My Saved/
+// Approval Queue/All selector above, just without any role gating since
+// both sections are visible to everyone who can see the Analysis tab at
+// all. Kept as simple show/hide of the two cards rather than re-rendering,
+// since renderAnalysisTab() already renders both in one pass.
+let activeAnalysisSection = 'analysis';
+function setAnalysisSection(section){
+  if(section !== 'analysis' && section !== 'timeline') section = 'analysis';
+  activeAnalysisSection = section;
+  const analysisCard = document.getElementById('analysis-section-analysis-card');
+  const timelineCard = document.getElementById('analysis-section-timeline-card');
+  if(analysisCard) analysisCard.style.display = section === 'analysis' ? 'block' : 'none';
+  if(timelineCard) timelineCard.style.display = section === 'timeline' ? 'block' : 'none';
+  document.querySelectorAll('[data-analysis-section]').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-analysis-section') === section);
+  });
+}
+document.addEventListener('click', e => {
+  const btn = e.target.closest('[data-analysis-section]');
+  if(!btn) return;
+  setAnalysisSection(btn.getAttribute('data-analysis-section'));
 });
 
 function applyRoleUi(){
