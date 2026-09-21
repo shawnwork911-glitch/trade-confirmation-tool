@@ -502,6 +502,28 @@
   #analysis-table-wrap table{width:100%;border-collapse:collapse;}
   #analysis-table-wrap th{font-size:12px;color:var(--text-secondary);border-bottom:1px solid var(--border);text-align:left;padding:6px;}
   #analysis-table-wrap td{padding:6px;font-size:13px;border-top:1px solid var(--border);}
+  /* ---- Deal Timeline (see renderAnalysisTimeline) — one card per filtered
+     deal, each showing a horizontal row of stage "dots" (Submitted -> Level
+     1/2/3 Approved, or Rejected/Returned) connected by a line, with the date
+     each stage happened. Reuses the same filtered groups as the data table
+     above, so it always matches whatever the analysis filter bar selects. */
+  #analysis-timeline-wrap{display:flex;flex-direction:column;gap:10px;}
+  .analysis-timeline-item{border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;background:var(--surface-2);}
+  .analysis-timeline-item-head{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;}
+  .analysis-timeline-dealid{font-weight:700;font-size:13px;}
+  .analysis-timeline-counterparty{font-size:12px;color:var(--text-secondary);}
+  .analysis-timeline-steps{display:flex;align-items:flex-start;overflow-x:auto;padding-bottom:2px;}
+  .analysis-timeline-step{display:flex;flex-direction:column;align-items:center;min-width:118px;max-width:150px;text-align:center;flex:none;}
+  .analysis-timeline-dot{width:12px;height:12px;border-radius:50%;background:#9a958d;border:2px solid transparent;margin-bottom:6px;}
+  .analysis-timeline-step.done .analysis-timeline-dot{background:#1f7a4d;}
+  .analysis-timeline-step.rejected .analysis-timeline-dot{background:#8a2d1f;}
+  .analysis-timeline-step.reverted .analysis-timeline-dot{background:#8a6d1f;}
+  .analysis-timeline-label{font-size:11px;font-weight:600;line-height:1.3;}
+  .analysis-timeline-step.rejected .analysis-timeline-label{color:#8a2d1f;}
+  .analysis-timeline-step.reverted .analysis-timeline-label{color:#8a6d1f;}
+  .analysis-timeline-date{font-size:10px;color:var(--text-secondary);margin-top:3px;white-space:nowrap;}
+  .analysis-timeline-by{font-size:10px;color:var(--text-secondary);}
+  .analysis-timeline-connector{flex:1 1 24px;min-width:20px;height:2px;background:var(--border);margin-top:5px;}
   /* Hover-only tooltip for the Analysis tab's "unconfirmed Volume range"
      warning icon (see renderAnalysisTab) — the actual, un-averaged range
      text only appears while hovering the ⚠ icon, instead of always taking
@@ -743,6 +765,12 @@
     </div>
 
     <div id="analysis-table-wrap"><p style="font-size:13px;color:var(--text-secondary);">Loading…</p></div>
+  </div>
+
+  <div class="card">
+    <p class="card-title">Deal Timeline</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">For each deal in the filtered set above, when it was submitted and when it moved through each approval stage (or was rejected/returned).</p>
+    <div id="analysis-timeline-wrap"><p style="font-size:13px;color:var(--text-secondary);">Loading…</p></div>
   </div>
 
   </div><!-- /tab-panel-analysis -->
@@ -4647,6 +4675,74 @@ function renderAnalysisTab(){
     const allTotal = (historyGroupsCache.admin || []).length;
     countEl.textContent = total === allTotal ? '' : ('Showing ' + total + ' of ' + allTotal);
   }
+
+  renderAnalysisTimeline(groups);
+}
+// Builds the ordered list of stage "dots" for one deal's Deal Timeline entry
+// (see renderAnalysisTimeline), from the same submittedDate/approvedDate1/2/3/
+// rejectedDate columns the approval queue and history already read. Only
+// stages that actually have a date get a dot, so a deal still sitting at
+// Pending Level 1 just shows "Submitted" — the rest simply hasn't happened
+// yet, rather than showing empty/greyed-out placeholders for every future
+// level. Rejected/Returned (see REVERT_STATUS_INFO — a "Revert" reuses the
+// same rejectedBy/rejectedDate/rejectReason columns as an outright Reject,
+// just with a different meaning at STATUS_REVERTED_1/2/3, exactly as
+// renderHistoryTable already reads them) is always the last dot since it's
+// only ever written once whatever stage the deal was up to.
+function buildDealTimelineSteps(v, status){
+  const steps = [];
+  const pushIfDate = (label, dateVal, byVal) => {
+    if(dateVal) steps.push({label, date: dateVal, by: byVal, state: 'done'});
+  };
+  pushIfDate('Submitted', v[MC.submittedDate], v[MC.submittedBy]);
+  pushIfDate('Level 1 Approved', v[MC.approvedDate1], v[MC.approvedBy1]);
+  pushIfDate('Level 2 Approved', v[MC.approvedDate2], v[MC.approvedBy2]);
+  pushIfDate('Level 3 Approved', v[MC.approvedDate3], v[MC.approvedBy3]);
+  if(v[MC.rejectedDate]){
+    if(status === STATUS_REJECTED){
+      steps.push({label:'Rejected', date:v[MC.rejectedDate], by:v[MC.rejectedBy], state:'rejected', reason:v[MC.rejectReason]});
+    } else {
+      const revertInfo = REVERT_STATUS_INFO[status];
+      const levelLabel = revertInfo ? ('Returned by Level '+revertInfo.level) : 'Returned to submitter';
+      steps.push({label:levelLabel, date:v[MC.rejectedDate], by:v[MC.rejectedBy], state:'reverted', reason:v[MC.rejectReason]});
+    }
+  }
+  return steps;
+}
+// Renders the Deal Timeline card (#analysis-timeline-wrap) — one entry per
+// deal in `groups` (the same filtered set the data table above shows), each
+// a horizontal row of stage dots connected by a line. Kept as its own pass
+// over `groups` (rather than folded into the data table's row loop above)
+// since it's a visually distinct block per deal, not another table row.
+function renderAnalysisTimeline(groups){
+  const wrap = document.getElementById('analysis-timeline-wrap');
+  if(!wrap) return;
+  if(!groups.length){
+    wrap.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No confirmations match this filter.</p>';
+    return;
+  }
+  wrap.innerHTML = groups.map(g=>{
+    const v = g.rows[0].values[0];
+    const status = dealGroupStatus(g.rows);
+    const steps = buildDealTimelineSteps(v, status);
+    const stepsHtml = steps.map((s, idx)=>{
+      const connector = idx < steps.length - 1 ? '<div class="analysis-timeline-connector"></div>' : '';
+      const titleAttr = s.reason ? ' title="'+escapeHtml((s.by ? s.by+': ' : '')+s.reason)+'"' : (s.by ? ' title="'+escapeHtml(s.by)+'"' : '');
+      return '<div class="analysis-timeline-step '+s.state+'"'+titleAttr+'>'+
+          '<div class="analysis-timeline-dot"></div>'+
+          '<div class="analysis-timeline-label">'+escapeHtml(s.label)+'</div>'+
+          '<div class="analysis-timeline-date">'+escapeHtml(formatStoredDateTime(s.date))+'</div>'+
+        '</div>'+connector;
+    }).join('');
+    return '<div class="analysis-timeline-item">'+
+        '<div class="analysis-timeline-item-head">'+
+          '<span class="analysis-timeline-dealid">'+(isPendingDealId(v[MC.dealId]) ? 'Pending Deal ID' : escapeHtml(friendlyDealId(v[MC.dealId])))+'</span>'+
+          '<span class="analysis-timeline-counterparty">'+escapeHtml(v[MC.company]||'')+'</span>'+
+          statusBadge(status)+
+        '</div>'+
+        '<div class="analysis-timeline-steps">'+(stepsHtml || '<p style="font-size:12px;color:var(--text-secondary);margin:0;">No stage dates recorded yet.</p>')+'</div>'+
+      '</div>';
+  }).join('');
 }
 function exportAnalysisToExcel(){
   if(typeof XLSX === 'undefined'){
@@ -7692,6 +7788,28 @@ function formatStoredDate(v){
   }
   return str;
 }
+// Same value shapes as formatStoredDate above, but keeps the time-of-day
+// for columns that are written as a full ISO timestamp (submittedDate,
+// approvedDate1/2/3, rejectedDate — see saveConfirmationToHistory/
+// approveDeal/rejectDeal, all of which write new Date().toISOString()).
+// Used by the Analysis tab's Deal Timeline (renderAnalysisTimeline) where
+// same-day approvals need to be told apart. An Excel-serial-number value
+// (no time component ever survives that round trip) just falls back to
+// formatStoredDate's date-only display.
+function formatStoredDateTime(v){
+  if(v === '' || v === null || v === undefined) return '';
+  const str = String(v).trim();
+  if(!str) return '';
+  if(/^-?\d+(\.\d+)?$/.test(str)) return formatStoredDate(str);
+  const d = new Date(str);
+  if(isNaN(d.getTime())) return formatStoredDate(str);
+  const dd = String(d.getDate()).padStart(2,'0');
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const yyyy = d.getFullYear();
+  const hh = String(d.getHours()).padStart(2,'0');
+  const mi = String(d.getMinutes()).padStart(2,'0');
+  return dd+'/'+mm+'/'+yyyy+' '+hh+':'+mi;
+}
 // Same "Excel serial number OR ISO-ish string" handling as formatStoredDate
 // above, but returns an actual Date (UTC midnight) instead of a display
 // string — for comparing/measuring a stored date against "today". Not
@@ -8069,6 +8187,10 @@ function buildPointFormat(){
   // opposite of the agreement's Buyer/Seller above. Kept directly beside the
   // counterparty line above so Buyer/Seller always read together.
   addField(currentRole() === 'Seller' ? 'Buyer' : 'Seller', saxonEntityName(val('h-entity')));
+  // Order Type — internal-only (see the addField comment above): visible in
+  // the Preview card and to Level 1/2/3 approvers via "View", but stripped
+  // before Copy table / Copy since the counterparty doesn't need to see it.
+  addField('Order Type', val('h-order'), true);
   if(currentProductMode === 'carboncredit') addField('Project Name', val('h-project-name'));
   if(currentProductMode === 'carboncredit') addField('Project ID', val('h-project-id'));
   if(currentProductMode === 'carboncredit') addField('Project type', val('h-project-type'));
@@ -8300,6 +8422,10 @@ function buildRecapLinesFromRows(dealId, sortedGroup){
   // Kept directly beside the counterparty line above so Buyer/Seller always
   // read together — see the matching comment in buildPointFormat().
   addField(role === 'Seller' ? 'Buyer' : 'Seller', saxonEntityName(head[MC.entity]));
+  // Order Type — internal-only, same as Broker below (see addField's `bd`
+  // flag comment in buildPointFormat): shown when viewing a saved deal, but
+  // stripped out by stripBdMatchingHtml() before it ever reaches Copy table.
+  addField('Order Type', head[MC.supplyDemand], true);
   if(isCC){ addField('Project Name', head[MC.projectName]); addField('Project ID', head[MC.projectId]); addField('Project type', head[MC.vFromMM]); addField('Methodology', head[MC.vToMM]); }
 
   if(head[MC.broker]){
