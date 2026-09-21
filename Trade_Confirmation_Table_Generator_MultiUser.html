@@ -502,28 +502,28 @@
   #analysis-table-wrap table{width:100%;border-collapse:collapse;}
   #analysis-table-wrap th{font-size:12px;color:var(--text-secondary);border-bottom:1px solid var(--border);text-align:left;padding:6px;}
   #analysis-table-wrap td{padding:6px;font-size:13px;border-top:1px solid var(--border);}
-  /* ---- Deal Timeline (see renderAnalysisTimeline) — one card per filtered
-     deal, each showing a horizontal row of stage "dots" (Submitted -> Level
-     1/2/3 Approved, or Rejected/Returned) connected by a line, with the date
-     each stage happened. Reuses the same filtered groups as the data table
-     above, so it always matches whatever the analysis filter bar selects. */
-  #analysis-timeline-wrap{display:flex;flex-direction:column;gap:10px;}
-  .analysis-timeline-item{border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;background:var(--surface-2);}
-  .analysis-timeline-item-head{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;}
-  .analysis-timeline-dealid{font-weight:700;font-size:13px;}
-  .analysis-timeline-counterparty{font-size:12px;color:var(--text-secondary);}
-  .analysis-timeline-steps{display:flex;align-items:flex-start;overflow-x:auto;padding-bottom:2px;}
-  .analysis-timeline-step{display:flex;flex-direction:column;align-items:center;min-width:118px;max-width:150px;text-align:center;flex:none;}
-  .analysis-timeline-dot{width:12px;height:12px;border-radius:50%;background:#9a958d;border:2px solid transparent;margin-bottom:6px;}
-  .analysis-timeline-step.done .analysis-timeline-dot{background:#1f7a4d;}
-  .analysis-timeline-step.rejected .analysis-timeline-dot{background:#8a2d1f;}
-  .analysis-timeline-step.reverted .analysis-timeline-dot{background:#8a6d1f;}
-  .analysis-timeline-label{font-size:11px;font-weight:600;line-height:1.3;}
-  .analysis-timeline-step.rejected .analysis-timeline-label{color:#8a2d1f;}
-  .analysis-timeline-step.reverted .analysis-timeline-label{color:#8a6d1f;}
-  .analysis-timeline-date{font-size:10px;color:var(--text-secondary);margin-top:3px;white-space:nowrap;}
-  .analysis-timeline-by{font-size:10px;color:var(--text-secondary);}
-  .analysis-timeline-connector{flex:1 1 24px;min-width:20px;height:2px;background:var(--border);margin-top:5px;}
+  /* ---- Deal Timeline panel (see renderDealTimelinePanelHtml) — the vertical
+     list of stage "dots" (Submitted -> Level 1/2/3 Approved, or Rejected/
+     Returned) shown beside the recap table in the View modal (#view-modal-
+     timeline) and the main Preview card (#preview-timeline), each with the
+     date that stage happened. */
+  .view-modal-body{display:flex;gap:22px;overflow:auto;align-items:flex-start;flex-wrap:wrap;}
+  .deal-timeline-panel{flex:none;min-width:180px;max-width:230px;}
+  .deal-timeline-panel .card-title,
+  .deal-timeline-title{font-size:12px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.03em;margin:0 0 12px;}
+  .deal-timeline-v-step{display:flex;gap:10px;position:relative;}
+  .deal-timeline-v-dot-col{display:flex;flex-direction:column;align-items:center;width:10px;flex:none;}
+  .deal-timeline-v-dot{width:10px;height:10px;border-radius:50%;background:#9a958d;flex:none;}
+  .deal-timeline-v-step.done .deal-timeline-v-dot{background:#1f7a4d;}
+  .deal-timeline-v-step.rejected .deal-timeline-v-dot{background:#8a2d1f;}
+  .deal-timeline-v-step.reverted .deal-timeline-v-dot{background:#8a6d1f;}
+  .deal-timeline-v-line{width:2px;flex:1;min-height:20px;background:var(--border);margin-top:2px;}
+  .deal-timeline-v-body{padding-bottom:16px;}
+  .deal-timeline-v-step.last .deal-timeline-v-body{padding-bottom:0;}
+  .deal-timeline-v-label{font-size:12px;font-weight:600;line-height:1.3;}
+  .deal-timeline-v-step.rejected .deal-timeline-v-label{color:#8a2d1f;}
+  .deal-timeline-v-step.reverted .deal-timeline-v-label{color:#8a6d1f;}
+  .deal-timeline-v-date{font-size:11px;color:var(--text-secondary);margin-top:2px;white-space:nowrap;}
   /* Hover-only tooltip for the Analysis tab's "unconfirmed Volume range"
      warning icon (see renderAnalysisTab) — the actual, un-averaged range
      text only appears while hovering the ⚠ icon, instead of always taking
@@ -726,12 +726,7 @@
 
   <div id="tab-panel-analysis" class="tab-panel" style="display:none;">
 
-  <div class="confirmation-section-selector" id="analysis-section-selector">
-    <button type="button" id="analysis-section-analysis" data-analysis-section="analysis">Confirmations analysis</button>
-    <button type="button" id="analysis-section-timeline" data-analysis-section="timeline">Deal Timeline</button>
-  </div>
-
-  <div class="card" id="analysis-section-analysis-card">
+  <div class="card">
     <p class="card-title">Confirmations analysis</p>
     <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Breaks down every saved confirmation (one entry per deal, matching "All confirmations") by status, filterable by type (RECs or Carbon Credit), BD in-charge, Deal Date, and the date the agreement was created (submitted) by the user. "Export to Excel" downloads exactly the rows shown below.</p>
     <div class="confirmation-filter-bar">
@@ -770,12 +765,6 @@
     </div>
 
     <div id="analysis-table-wrap"><p style="font-size:13px;color:var(--text-secondary);">Loading…</p></div>
-  </div>
-
-  <div class="card" id="analysis-section-timeline-card">
-    <p class="card-title">Deal Timeline</p>
-    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">For each deal in the filtered set above, when it was submitted and when it moved through each approval stage (or was rejected/returned).</p>
-    <div id="analysis-timeline-wrap"><p style="font-size:13px;color:var(--text-secondary);">Loading…</p></div>
   </div>
 
   </div><!-- /tab-panel-analysis -->
@@ -825,7 +814,7 @@
 </div>
 
 <div id="view-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
-  <div style="width:100%;max-width:900px;max-height:85vh;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px 24px;display:flex;flex-direction:column;gap:10px;">
+  <div style="width:100%;max-width:1050px;max-height:85vh;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px 24px;display:flex;flex-direction:column;gap:10px;">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
       <p class="card-title" style="margin:0;">Deal ID <span id="view-modal-dealid"></span></p>
       <div style="display:flex;align-items:center;gap:14px;">
@@ -836,7 +825,13 @@
       </div>
     </div>
     <p id="view-modal-copy-status" style="display:none;font-size:12px;color:var(--text-secondary);margin:0;">Copied — paste directly into your email.</p>
-    <div id="view-modal-table" style="overflow:auto;"></div>
+    <div class="view-modal-body">
+      <div id="view-modal-table" style="overflow:auto;"></div>
+      <div class="deal-timeline-panel" id="view-modal-timeline">
+        <p class="deal-timeline-title">Deal Timeline</p>
+        <div id="view-modal-timeline-steps"></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1374,7 +1369,7 @@ function setActiveTab(tab){
       ? 'Create a Carbon Credit confirmation. Technology is fixed to Carbon Credit for every product.'
       : 'Fill in the details below, generate the Customer version table, then copy and send to your customer.';
   }
-  if(isAnalysis){ setAnalysisSection(activeAnalysisSection); renderAnalysisTab(); }
+  if(isAnalysis) renderAnalysisTab();
   if(isUserMgmt) renderUserMgmtList();
   if(isDealId) renderDealIdSettings();
   if(isRedemption) renderRedemptionTab();
@@ -1550,30 +1545,6 @@ document.addEventListener('click', e => {
   const btn = e.target.closest('[data-confirmation-section]');
   if(!btn) return;
   setConfirmationSection(btn.getAttribute('data-confirmation-section'));
-});
-
-// ---- Analysis tab's own small sub-tabs (Confirmations analysis / Deal
-// Timeline) — same look/pattern as the Confirmations tab's My Saved/
-// Approval Queue/All selector above, just without any role gating since
-// both sections are visible to everyone who can see the Analysis tab at
-// all. Kept as simple show/hide of the two cards rather than re-rendering,
-// since renderAnalysisTab() already renders both in one pass.
-let activeAnalysisSection = 'analysis';
-function setAnalysisSection(section){
-  if(section !== 'analysis' && section !== 'timeline') section = 'analysis';
-  activeAnalysisSection = section;
-  const analysisCard = document.getElementById('analysis-section-analysis-card');
-  const timelineCard = document.getElementById('analysis-section-timeline-card');
-  if(analysisCard) analysisCard.style.display = section === 'analysis' ? 'block' : 'none';
-  if(timelineCard) timelineCard.style.display = section === 'timeline' ? 'block' : 'none';
-  document.querySelectorAll('[data-analysis-section]').forEach(btn => {
-    btn.classList.toggle('active', btn.getAttribute('data-analysis-section') === section);
-  });
-}
-document.addEventListener('click', e => {
-  const btn = e.target.closest('[data-analysis-section]');
-  if(!btn) return;
-  setAnalysisSection(btn.getAttribute('data-analysis-section'));
 });
 
 function applyRoleUi(){
@@ -4704,18 +4675,17 @@ function renderAnalysisTab(){
     const allTotal = (historyGroupsCache.admin || []).length;
     countEl.textContent = total === allTotal ? '' : ('Showing ' + total + ' of ' + allTotal);
   }
-
-  renderAnalysisTimeline(groups);
 }
-// Builds the ordered list of stage "dots" for one deal's Deal Timeline entry
-// (see renderAnalysisTimeline), from the same submittedDate/approvedDate1/2/3/
-// rejectedDate columns the approval queue and history already read. Only
-// stages that actually have a date get a dot, so a deal still sitting at
-// Pending Level 1 just shows "Submitted" — the rest simply hasn't happened
-// yet, rather than showing empty/greyed-out placeholders for every future
-// level. Rejected/Returned (see REVERT_STATUS_INFO — a "Revert" reuses the
-// same rejectedBy/rejectedDate/rejectReason columns as an outright Reject,
-// just with a different meaning at STATUS_REVERTED_1/2/3, exactly as
+// Builds the ordered list of stage "dots" for one deal's timeline (see
+// renderDealTimelinePanelHtml, used in the View modal beside the recap
+// table), from the same submittedDate/approvedDate1/2/3/rejectedDate
+// columns the approval queue and history already read. Only stages that
+// actually have a date get a dot, so a deal still sitting at Pending Level 1
+// just shows "Submitted" — the rest simply hasn't happened yet, rather than
+// showing empty/greyed-out placeholders for every future level.
+// Rejected/Returned (see REVERT_STATUS_INFO — a "Revert" reuses the same
+// rejectedBy/rejectedDate/rejectReason columns as an outright Reject, just
+// with a different meaning at STATUS_REVERTED_1/2/3, exactly as
 // renderHistoryTable already reads them) is always the last dot since it's
 // only ever written once whatever stage the deal was up to.
 function buildDealTimelineSteps(v, status){
@@ -4738,38 +4708,23 @@ function buildDealTimelineSteps(v, status){
   }
   return steps;
 }
-// Renders the Deal Timeline card (#analysis-timeline-wrap) — one entry per
-// deal in `groups` (the same filtered set the data table above shows), each
-// a horizontal row of stage dots connected by a line. Kept as its own pass
-// over `groups` (rather than folded into the data table's row loop above)
-// since it's a visually distinct block per deal, not another table row.
-function renderAnalysisTimeline(groups){
-  const wrap = document.getElementById('analysis-timeline-wrap');
-  if(!wrap) return;
-  if(!groups.length){
-    wrap.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No confirmations match this filter.</p>';
-    return;
-  }
-  wrap.innerHTML = groups.map(g=>{
-    const v = g.rows[0].values[0];
-    const status = dealGroupStatus(g.rows);
-    const steps = buildDealTimelineSteps(v, status);
-    const stepsHtml = steps.map((s, idx)=>{
-      const connector = idx < steps.length - 1 ? '<div class="analysis-timeline-connector"></div>' : '';
-      const titleAttr = s.reason ? ' title="'+escapeHtml((s.by ? s.by+': ' : '')+s.reason)+'"' : (s.by ? ' title="'+escapeHtml(s.by)+'"' : '');
-      return '<div class="analysis-timeline-step '+s.state+'"'+titleAttr+'>'+
-          '<div class="analysis-timeline-dot"></div>'+
-          '<div class="analysis-timeline-label">'+escapeHtml(s.label)+'</div>'+
-          '<div class="analysis-timeline-date">'+escapeHtml(formatStoredDateTime(s.date))+'</div>'+
-        '</div>'+connector;
-    }).join('');
-    return '<div class="analysis-timeline-item">'+
-        '<div class="analysis-timeline-item-head">'+
-          '<span class="analysis-timeline-dealid">'+(isPendingDealId(v[MC.dealId]) ? 'Pending Deal ID' : escapeHtml(friendlyDealId(v[MC.dealId])))+'</span>'+
-          '<span class="analysis-timeline-counterparty">'+escapeHtml(v[MC.company]||'')+'</span>'+
-          statusBadge(status)+
+// Renders that deal's timeline as a compact vertical list (dot + connecting
+// line down the left, label + date to the right) — sized to sit in the
+// spare column beside the recap table in the View modal (see
+// #view-modal-timeline / openViewModal), rather than the wide horizontal
+// strip a full-width card would use.
+function renderDealTimelinePanelHtml(v, status){
+  const steps = buildDealTimelineSteps(v, status);
+  if(!steps.length) return '<p style="font-size:12px;color:var(--text-secondary);margin:0;">No stage dates recorded yet.</p>';
+  return steps.map((s, idx)=>{
+    const isLast = idx === steps.length - 1;
+    const titleAttr = s.reason ? ' title="'+escapeHtml((s.by ? s.by+': ' : '')+s.reason)+'"' : (s.by ? ' title="'+escapeHtml(s.by)+'"' : '');
+    return '<div class="deal-timeline-v-step '+s.state+(isLast?' last':'')+'"'+titleAttr+'>'+
+        '<div class="deal-timeline-v-dot-col"><div class="deal-timeline-v-dot"></div>'+(isLast?'':'<div class="deal-timeline-v-line"></div>')+'</div>'+
+        '<div class="deal-timeline-v-body">'+
+          '<div class="deal-timeline-v-label">'+escapeHtml(s.label)+'</div>'+
+          '<div class="deal-timeline-v-date">'+escapeHtml(formatStoredDateTime(s.date))+'</div>'+
         '</div>'+
-        '<div class="analysis-timeline-steps">'+(stepsHtml || '<p style="font-size:12px;color:var(--text-secondary);margin:0;">No stage dates recorded yet.</p>')+'</div>'+
       '</div>';
   }).join('');
 }
@@ -5232,6 +5187,17 @@ function openViewModal(dealId, html, agreementUrl, group, deliveryFilter){
   viewModalGroup = (group || []).slice().sort((a,b)=> a.index - b.index);
   document.getElementById('view-modal-copy').style.display = isPendingDealId(dealId) ? 'none' : 'inline-block';
   document.getElementById('view-modal-copy-status').style.display = 'none';
+  // Deal Timeline panel (see renderDealTimelinePanelHtml) — this deal's own
+  // Submitted/Level 1/2/3/Rejected-Returned dates, sourced from the same
+  // rows used for everything else in this modal. All rows of a deal share
+  // the same Status/approval-date columns (see dealGroupStatus's comment),
+  // so the first row is enough here too.
+  const timelineStepsEl = document.getElementById('view-modal-timeline-steps');
+  if(timelineStepsEl){
+    timelineStepsEl.innerHTML = viewModalGroup.length
+      ? renderDealTimelinePanelHtml(viewModalGroup[0].values[0], dealGroupStatus(viewModalGroup))
+      : '<p style="font-size:12px;color:var(--text-secondary);margin:0;">No timeline available.</p>';
+  }
   // Superadmin-only, and allowed at any stage (including pre-Level-1, while
   // the deal is still keyed under its pending placeholder ID) — the row(s)
   // already exist and get looked up by whatever ID is currently stored.
@@ -7821,7 +7787,7 @@ function formatStoredDate(v){
 // for columns that are written as a full ISO timestamp (submittedDate,
 // approvedDate1/2/3, rejectedDate — see saveConfirmationToHistory/
 // approveDeal/rejectDeal, all of which write new Date().toISOString()).
-// Used by the Analysis tab's Deal Timeline (renderAnalysisTimeline) where
+// Used by the View modal's Deal Timeline panel (renderDealTimelinePanelHtml) where
 // same-day approvals need to be told apart. An Excel-serial-number value
 // (no time component ever survives that round trip) just falls back to
 // formatStoredDate's date-only display.
