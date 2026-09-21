@@ -48,7 +48,7 @@
     position:fixed;
     inset:0;
     background:url('assets/logo.png') no-repeat center center;
-    background-size:min(55vw,460px);
+    background-size:cover;
     opacity:.06;
     z-index:-1;
     pointer-events:none;
@@ -7335,6 +7335,37 @@ function formatStoredDateMulti(v){
   if(parts.length <= 1) return formatStoredDate(v);
   return parts.map(formatStoredDate).join('; ');
 }
+// BD Matching Vintage Start/End are saved as a "MMM YYYY" string (see
+// joinBdSourceField/collectBdSources), but Excel silently reinterprets a
+// string like "Jan 2025" as a date the moment it's written into the
+// workbook table, so what comes back from Graph on the next read is the
+// underlying serial date number (e.g. 45658) rather than the original
+// text - same gotcha documented on formatStoredDate() above, just not
+// caught for this pair of columns yet. This converts either shape back to
+// "MMM YYYY"; MONTH_ABBR is declared further down the file but by the time
+// this runs (on data display, not at parse time) it's already initialized.
+function formatStoredVintage(v){
+  if(v === '' || v === null || v === undefined) return '';
+  const str = String(v).trim();
+  if(!str) return '';
+  if(/^-?\d+(\.\d+)?$/.test(str)){
+    const ms = Math.round((Number(str) - 25569) * 86400 * 1000); // Excel serial date epoch -> Unix epoch
+    const d = new Date(ms);
+    if(isNaN(d.getTime())) return str;
+    return MONTH_ABBR[d.getUTCMonth()]+' '+d.getUTCFullYear();
+  }
+  if(/^\d{4}-\d{2}(-\d{2})?$/.test(str)){
+    const [y,m] = str.split('-');
+    return MONTH_ABBR[Number(m)-1]+' '+y;
+  }
+  return str; // already "MMM YYYY" text
+}
+// Multi-source aware wrapper - see formatStoredDateMulti above.
+function formatStoredVintageMulti(v){
+  const parts = splitBdSourceValue(v).filter(s=>s!=='');
+  if(parts.length <= 1) return formatStoredVintage(v);
+  return parts.map(formatStoredVintage).join('; ');
+}
 function dealLabelForStoredValueMulti(v){
   const parts = splitBdSourceValue(v).filter(s=>s!=='');
   if(parts.length <= 1) return dealLabelForStoredValue(v);
@@ -8480,8 +8511,8 @@ function buildRecapLinesFromRows(dealId, sortedGroup){
     // Credit now, and only present on rows saved after these optional
     // columns existed (see the sourceVintageStart/sourceVintageEnd/
     // sourceMatchNote comment on MC/CC).
-    addBdField(i, 'vintagestart', 'BD Matching \u2014 Vintage Start', (v[MC.sourceVintageStart] || '') || '-');
-    addBdField(i, 'vintageend', 'BD Matching \u2014 Vintage End', (v[MC.sourceVintageEnd] || '') || '-');
+    addBdField(i, 'vintagestart', 'BD Matching \u2014 Vintage Start', formatStoredVintageMulti(v[MC.sourceVintageStart]) || '-');
+    addBdField(i, 'vintageend', 'BD Matching \u2014 Vintage End', formatStoredVintageMulti(v[MC.sourceVintageEnd]) || '-');
     addBdField(i, 'matchnote', 'BD Matching \u2014 Matching Note', (v[MC.sourceMatchNote] || '') || '-');
   });
   return lines;
