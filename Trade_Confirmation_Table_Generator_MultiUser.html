@@ -526,6 +526,18 @@
      timeline) and the main Preview card (#preview-timeline), each with the
      date that stage happened. */
   .view-modal-body{display:flex;gap:22px;overflow:auto;align-items:flex-start;flex-wrap:wrap;}
+  /* #view-modal-table has no CSS class (see the View modal markup) and its
+     recap <table class="point-format-table"> is deliberately width:auto/
+     table-layout:auto (see renderPointFormatHtml) so the label column hugs
+     its content. With no cap, a long free-text value (most often Special
+     Remark) makes that auto-layout table stretch to fill nearly the whole
+     modal rather than wrap, which pushes .deal-timeline-panel below it via
+     flex-wrap — on a deal with several rows that can scroll the timeline out
+     of view entirely, making it look like that deal simply has no timeline.
+     Capping the table's width forces long values to wrap inside their cell
+     instead, so the timeline panel reliably has room to sit beside it. */
+  #view-modal-table{max-width:calc(100% - 252px);}
+  #view-modal-table td{word-break:break-word;}
   .deal-timeline-panel{flex:none;min-width:180px;max-width:230px;}
   .deal-timeline-panel .card-title,
   .deal-timeline-title{font-size:12px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.03em;margin:0 0 12px;}
