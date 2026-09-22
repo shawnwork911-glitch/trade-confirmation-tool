@@ -925,7 +925,8 @@
 <div id="redemption-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
   <div style="width:100%;max-width:560px;max-height:85vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:12px;">
     <h2 style="margin:0;font-size:16px;">Redemption Documents — Deal ID <span id="redemption-modal-dealid"></span></h2>
-    <p style="margin:0;font-size:13px;color:var(--text-secondary);">This is a Stock-Out (R)/Stock-In (R) deal — it isn't fully complete until each product below has at least one signed Redemption Form uploaded. You can upload more than one file per product (e.g. multiple signed pages). PDF/Word files only, max 10 MB each. Files are saved to the "Redemption Documents" folder on SharePoint, renamed to "Deal ID_Product n_1", "Deal ID_Product n_2", etc.</p>
+    <p style="margin:0;font-size:13px;color:var(--text-secondary);">A Superadmin/Admin has requested the Redemption Form(s) for this Stock-Out (R)/Stock-In (R) deal — it isn't fully complete until each product below has at least one signed Redemption Form uploaded. You can upload more than one file per product (e.g. multiple signed pages). PDF/Word files only, max 10 MB each. Files are saved to the "Redemption Documents" folder on SharePoint, renamed to "Deal ID_Product n_1", "Deal ID_Product n_2", etc.</p>
+    <p id="redemption-modal-requested-by" style="margin:0;font-size:12px;color:var(--text-secondary);"></p>
     <div id="redemption-modal-fields" style="display:flex;flex-direction:column;gap:12px;"></div>
     <div id="redemption-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
@@ -999,6 +1000,11 @@ const CC_LOG_TABLE_NAME = "TradeDealLog7"; // Excel Table on the workbook's CCDe
 // redemptionDocName comment on the MC object below); not required for
 // anything else in this app to work: Redemption Document Name, Redemption
 // Document URL, Redemption Uploaded By, Redemption Uploaded Date.
+// OPTIONAL 72nd-73rd columns, only needed to track whether a Superadmin/
+// Admin has actually asked for those Redemption Form(s) yet (see the
+// redemptionRequestedBy comment on the MC object below); not required for
+// anything else in this app to work: Redemption Requested By, Redemption
+// Requested Date.
 // NOTE: if you're adding this to an existing workbook, add any new column
 // ("Broker Fee Type"/"Broker Fee Currency"/"Broker Fee Price" included, the
 // 7 "Pending ..."/"Change Requested ..." columns used for post-approval BD
@@ -1011,10 +1017,13 @@ const CC_LOG_TABLE_NAME = "TradeDealLog7"; // Excel Table on the workbook's CCDe
 // Summary" (what a post-Level-1 "Edit & resend" changed — see the
 // editChangeSummary comment on the MC object below), and now "Pending
 // Volume" (a post-approval Volume (RECs) correction — see the pendingVolume
-// comment on the MC object below), and now "Redemption Document Name",
+// comment on the MC object below), "Redemption Document Name",
 // "Redemption Document URL", "Redemption Uploaded By" and "Redemption
 // Uploaded Date" (the Redemption Form upload step — see the
-// redemptionDocName comment on the MC object below)) at the END of the live
+// redemptionDocName comment on the MC object below), and now "Redemption
+// Requested By" and "Redemption Requested Date" (the Superadmin/Admin
+// "Request Redemption Docs" step — see the redemptionRequestedBy comment on
+// the MC object below)) at the END of the live
 // TradeDealLog Excel Table — don't insert them in the middle, or every
 // existing column index below will point at the wrong data.
 // "Row Uid": a permanent, per-TRADE-ROW random ID, stamped once at Save
@@ -1141,17 +1150,23 @@ const MC = {
   sourceVintageStart:65, sourceVintageEnd:66, sourceMatchNote:67,
   // ---- Redemption Form upload (RECs, Order Type "Stock-Out (R)" or
   // "Stock-In (R)" only) ----
-  // Optional 68th-71st columns. Once a REC deal reaches STATUS_APPROVED
-  // (Level 3 sign-off) and its Order Type (MC.supplyDemand) is "Stock-Out
-  // (R)" or "Stock-In (R)" — see isRedemptionOrderType — the deal isn't
-  // treated as fully complete until EVERY product row on it has AT LEAST
-  // ONE signed Redemption Form uploaded (see dealNeedsRedemption/
-  // dealRedemptionSummary/openRedemptionModal/uploadRedemptionDocument). A
-  // product row can have more than one Redemption Form on file (e.g.
-  // several signed pages) — each of these four columns holds a "; "-joined
-  // list, one entry per uploaded document, in upload order, same
-  // convention as the per-BD-source fields (see joinBdSourceField) and
-  // parsed back apart by parseRedemptionDocs.
+  // Optional 68th-71st columns. A REC deal (never Carbon Credit) whose
+  // Order Type (MC.supplyDemand) is "Stock-Out (R)" or "Stock-In (R)" — see
+  // isRedemptionOrderType — is ELIGIBLE for the Redemption Form workflow
+  // once it reaches STATUS_APPROVED (Level 3 sign-off), but — unlike the
+  // old behaviour — is not automatically treated as needing one. A
+  // Superadmin/Admin has to explicitly press "Request Redemption Docs" on
+  // the deal first (see requestRedemptionDocuments/redemptionRequestedBy/
+  // redemptionRequestedDate below); only once that's happened is the deal
+  // treated as incomplete until EVERY product row on it has AT LEAST ONE
+  // signed Redemption Form uploaded by the BD user (see
+  // dealRedemptionEligible/rowHasRedemptionRequest/dealRedemptionSummary/
+  // openRedemptionModal/uploadRedemptionDocument). A product row can have
+  // more than one Redemption Form on file (e.g. several signed pages) —
+  // each of these four columns holds a "; "-joined list, one entry per
+  // uploaded document, in upload order, same convention as the per-BD-
+  // source fields (see joinBdSourceField) and parsed back apart by
+  // parseRedemptionDocs.
   // Nothing here changes Status or the 3-level approval chain itself — a
   // Stock-Out (R)/Stock-In (R) REC deal is still "Approved" the instant
   // Level 3 signs
@@ -1175,7 +1190,21 @@ const MC = {
   // renamed one) so they can visually confirm they picked the right
   // document — see sanitizeRedemptionDocDisplayName/
   // uploadRedemptionDocument/saveRedemptionUpload.
-  redemptionDocName:68, redemptionDocUrl:69, redemptionUploadedBy:70, redemptionUploadedDate:71
+  redemptionDocName:68, redemptionDocUrl:69, redemptionUploadedBy:70, redemptionUploadedDate:71,
+  // Optional 72nd-73rd columns. Deal-level flag (stamped onto EVERY row of
+  // the deal, same convention as Status/approvedBy1-3) recording that a
+  // Superadmin/Admin pressed "Request Redemption Docs" on this deal — see
+  // requestRedemptionDocuments/rowHasRedemptionRequest. Blank means nobody
+  // has asked for the Redemption Form(s) yet, even if the deal is otherwise
+  // eligible (see dealRedemptionEligible) — that's the whole point of this
+  // change: not every Stock-Out (R)/Stock-In (R) REC deal needs one, so the
+  // BD user is only emailed and shown the upload button once a Superadmin/
+  // Admin has actually asked. Optional/additive, same reasoning as the
+  // other columns on this row — guard on values.length before reading/
+  // writing it. To start capturing it, add "Redemption Requested By" and
+  // "Redemption Requested Date" at the END of the live TradeDealLog Excel
+  // Table.
+  redemptionRequestedBy:72, redemptionRequestedDate:73
 };
 const COL_COUNT = 59;
 const STANDARD_DRAFT_TABLE_NAME = "TradeDealDrafts";   // Excel Table on the TradeDealDrafts sheet
@@ -1981,6 +2010,33 @@ async function notifyDealIdAssigned(dealId, submitterEmail){
     await sendMailGraph([email], 'Deal ID created — ' + dealId, html);
   }catch(err){
     console.error('Deal ID notification email failed', err);
+  }
+}
+
+// Emails the deal's BD user(s) — the submitter and/or BD in-charge, the
+// same "owner" identities canManageRedemption/isDealOwnerEmail already
+// treat as this deal's owners (see dealOwnerEmails) — the moment a
+// Superadmin/Admin presses "Request Redemption Docs" on an Approved, Order
+// Type "Stock-Out (R)"/"Stock-In (R)" REC deal (see
+// requestRedemptionDocuments). This is the ONLY thing that tells the BD
+// user a Redemption Form upload is actually needed now — under the new
+// on-request flow, nothing is sent (or expected of them) just because a
+// deal happens to be that Order Type; see dealRedemptionEligible.
+async function notifyRedemptionRequested(dealId, submitterEmail, salesPic, requestedByEmail){
+  const toEmails = dealOwnerEmails(salesPic, submitterEmail);
+  if(!toEmails.length){
+    console.warn('No submitter/BD-in-charge email on file — skipping Redemption Documents request notification for Deal ID ' + dealId);
+    return;
+  }
+  const link = dealDeepLink(dealId);
+  const displayId = friendlyDealId(dealId);
+  const html = '<p><strong>' + escapeHtml(requestedByEmail || 'An admin') + '</strong> has requested the signed Redemption Form(s) for Deal ID <strong>' + escapeHtml(displayId) + '</strong>.</p>' +
+    '<p>Please upload the signed Redemption Form for each product on this deal as soon as it is available.</p>' +
+    '<p><a href="' + link + '">Open it in the Trade Confirmation app</a></p>';
+  try{
+    await sendMailGraph(toEmails, 'Redemption Documents requested — ' + displayId, html);
+  }catch(err){
+    console.error('Redemption Documents request notification email failed', err);
   }
 }
 
@@ -2944,13 +3000,28 @@ async function uploadRedemptionDocument(dealId, productIndex, docIndex, file){
   if(!item) throw new Error('Redemption Form upload did not complete — please try again.');
   return { name: sanitizeRedemptionDocDisplayName(file.name), webUrl: item.webUrl };
 }
-// True once a deal's Status/Order Type mean it needs the extra Redemption
-// Form step at all — a REC (never Carbon Credit) deal that has reached
-// STATUS_APPROVED with Order Type "Stock-Out (R)" or "Stock-In (R)" — see
-// isRedemptionOrderType. Doesn't say anything about whether the documents
-// have actually been uploaded yet — see dealRedemptionSummary for that.
-function dealNeedsRedemption(status, sourceTable, orderType){
+// True once a deal's Status/Order Type mean it's ELIGIBLE for the
+// Redemption Form workflow at all — a REC (never Carbon Credit) deal that
+// has reached STATUS_APPROVED with Order Type "Stock-Out (R)" or "Stock-In
+// (R)" — see isRedemptionOrderType. Eligible no longer means "needed" —
+// not every eligible deal actually requires a Redemption Form upload; a
+// Superadmin/Admin has to explicitly request it first (see
+// rowHasRedemptionRequest/requestRedemptionDocuments) before the BD user
+// is asked for one. Doesn't say anything about whether that request has
+// been made, or the documents actually uploaded yet — see
+// rowHasRedemptionRequest/dealRedemptionSummary for that.
+function dealRedemptionEligible(status, sourceTable, orderType){
   return status === STATUS_APPROVED && sourceTable !== CC_LOG_TABLE_NAME && isRedemptionOrderType(orderType);
+}
+// True once a Superadmin/Admin has pressed "Request Redemption Docs" on
+// this deal (see requestRedemptionDocuments) — a deal-level flag stamped
+// onto EVERY row of the deal (same convention as Status/approvedBy1-3), so
+// any one row's values (normally the deal's first row) answers it for the
+// whole deal. Guarded on values.length since these are optional/additive
+// columns — a workbook that hasn't added them yet just reads as "not
+// requested" everywhere rather than erroring.
+function rowHasRedemptionRequest(rv){
+  return !!(rv && rv.length > MC.redemptionRequestedBy && rv[MC.redemptionRequestedBy]);
 }
 // True if this specific product ROW already has at least one Redemption
 // Form on file. Guarded on values.length since these are optional/additive
@@ -3032,6 +3103,50 @@ async function saveRedemptionUpload(dealId, tableName, rowUid, productIndex, fil
   values[MC.redemptionUploadedBy] = appendJoined(values[MC.redemptionUploadedBy], currentAccount.username);
   values[MC.redemptionUploadedDate] = appendJoined(values[MC.redemptionUploadedDate], new Date().toISOString());
   await updateCanonicalTableRow(tableName, row.index, values);
+  await loadHistory();
+}
+// Superadmin/Admin-only action: flags an eligible, Approved, Order Type
+// "Stock-Out (R)"/"Stock-In (R)" REC deal (see dealRedemptionEligible) as
+// actually NEEDING its Redemption Form(s), then emails the deal's BD user
+// (see dealOwnerEmails/notifyRedemptionRequested) so they know to upload
+// them. Nothing here uploads a file itself — that stays the BD user's own
+// job via the "Upload Redemption Docs" button/modal (see
+// saveRedemptionUpload), which only appears, and only then, once this has
+// been requested (see rowHasRedemptionRequest in renderHistoryTable).
+// Stamped onto EVERY row of the deal — deal-level, like Status/
+// approvedBy1-3 — so it never depends on which product row happens to be
+// read first elsewhere. Re-reads the live rows first (same pattern as
+// approveDeal/saveRedemptionUpload) so this never overwrites a row that's
+// moved on since the button was clicked, and refuses to re-request a deal
+// that's already been asked for (see rowHasRedemptionRequest) so the BD
+// user isn't emailed twice for the same ask.
+async function requestRedemptionDocuments(dealId, tableName){
+  if(!dealId) return;
+  tableName = tableName === CC_LOG_TABLE_NAME ? CC_LOG_TABLE_NAME : STANDARD_LOG_TABLE_NAME;
+  if(tableName === CC_LOG_TABLE_NAME) throw new Error('Redemption Documents only apply to RECs.');
+  if(!isAdmin) throw new Error('Only Superadmin/Admin can request Redemption Documents.');
+  await ensureFreshWorkbookSession();
+  const rows = await getCanonicalTableRows(tableName);
+  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
+  if(!matching.length) throw new Error('Could not find this deal anymore — please refresh and try again.');
+  const v0 = matching[0].values[0];
+  if(!dealRedemptionEligible(v0[MC.status], tableName, v0[MC.supplyDemand])){
+    throw new Error('This deal is not eligible for Redemption Documents — it must be Approved, RECs, and Order Type "Stock-Out (R)" or "Stock-In (R)".');
+  }
+  if(rowHasRedemptionRequest(v0)) throw new Error('Redemption Documents have already been requested for this deal.');
+  const liveColumnCount = await getTableColumnCount(tableName);
+  if(liveColumnCount <= MC.redemptionRequestedDate){
+    throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing the "Redemption Requested By" and "Redemption Requested Date" columns. Ask an admin to add those two columns at the end of the table, then try again.');
+  }
+  const nowIso = new Date().toISOString();
+  for(const r of matching){
+    const values = r.values[0].slice();
+    while(values.length <= MC.redemptionRequestedDate) values.push('');
+    values[MC.redemptionRequestedBy] = currentAccount.username;
+    values[MC.redemptionRequestedDate] = nowIso;
+    await updateCanonicalTableRow(tableName, r.index, values);
+  }
+  await notifyRedemptionRequested(dealId, v0[MC.submittedBy], v0[MC.salesPic], currentAccount.username);
   await loadHistory();
 }
 
@@ -4974,18 +5089,35 @@ function renderHistoryTable(el, groups, opts){
     const rowSourceTable = g.sourceTable || (g.rows[0] && g.rows[0]._sourceTable) || STANDARD_LOG_TABLE_NAME;
     const sourceAttr = ' data-logtable="'+escapeHtml(rowSourceTable)+'"';
     // Redemption Form upload step — Approved, Order Type "Stock-Out (R)"
-    // or "Stock-In (R)" REC deals only (see dealNeedsRedemption). Purely additive to the
-    // Approved status: a small badge next to it, plus a button that opens
-    // openRedemptionModal, gated the same "owner or admin" way as every
-    // other post-approval action on this row.
-    const redemptionApplies = dealNeedsRedemption(status, rowSourceTable, v[MC.supplyDemand]);
-    const redemptionInfo = redemptionApplies ? dealRedemptionSummary(g.rows) : null;
+    // or "Stock-In (R)" REC deals only (see dealRedemptionEligible). No
+    // longer automatic: a Superadmin/Admin has to press "Request Redemption
+    // Docs" on the deal first (see requestRedemptionDocuments/
+    // rowHasRedemptionRequest) — that's what emails the BD user and turns
+    // on the badge/upload button below for them. Purely additive to the
+    // Approved status either way: a small badge next to it, plus buttons
+    // that open openRedemptionModal (BD user/admin, once requested) or fire
+    // the request itself (Superadmin/Admin, before it's been requested),
+    // gated the same "owner or admin" way as every other post-approval
+    // action on this row.
+    const redemptionEligible = dealRedemptionEligible(status, rowSourceTable, v[MC.supplyDemand]);
+    // A deal counts as "requested" either because the flag was actually set
+    // (see rowHasRedemptionRequest/requestRedemptionDocuments) or, for
+    // backward compatibility with deals saved under the OLD automatic
+    // behaviour, because it already has at least one Redemption Form on
+    // file — so pre-existing uploads from before this change stay visible
+    // instead of silently disappearing just because nobody ever pressed the
+    // new "Request Redemption Docs" button for them.
+    const redemptionSummaryRaw = redemptionEligible ? dealRedemptionSummary(g.rows) : null;
+    const redemptionRequested = redemptionEligible &&
+      (rowHasRedemptionRequest(v) || (redemptionSummaryRaw && redemptionSummaryRaw.uploaded > 0));
+    const redemptionInfo = redemptionRequested ? redemptionSummaryRaw : null;
     const redemptionBadge = redemptionInfo
       ? (redemptionInfo.complete
           ? '<div style="font-size:11px;color:#1f7a4d;margin-top:2px;">✓ Redemption Documents complete</div>'
           : '<div style="font-size:11px;color:#8a6d1f;margin-top:2px;">⏳ Redemption Documents: '+redemptionInfo.uploaded+' of '+redemptionInfo.total+' uploaded</div>')
       : '';
-    const canManageRedemption = isOwnerOrAdmin && redemptionApplies;
+    const canManageRedemption = isOwnerOrAdmin && redemptionRequested;
+    const canRequestRedemption = isAdmin && redemptionEligible && !redemptionRequested;
     html += '<tr style="border-top:1px solid var(--border);">' +
       (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[MC.salesPic]||'')+'</td>' : '') +
       '<td style="padding:6px;">'+(isPendingDealId(v[MC.dealId]) ? '-' : escapeHtml(friendlyDealId(v[MC.dealId])))+'</td>' +
@@ -5007,6 +5139,7 @@ function renderHistoryTable(el, groups, opts){
         (canRequestEdit ? ' <button type="button" class="secondary history-request-edit-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;">Request edit</button>' : '') +
         (canFullEdit ? ' <button type="button" class="secondary history-full-edit-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;" title="'+escapeHtml(fullEditTitle)+'">Edit &amp; resend</button>' : '') +
         (canManageRedemption ? ' <button type="button" class="secondary history-redemption-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;'+(redemptionInfo.complete?'':'color:#8a6d1f;border-color:#e8c99a;')+'" title="Upload the signed Redemption Form for each product on this deal.">'+(redemptionInfo.complete?'Redemption Documents':'Upload Redemption Docs')+'</button>' : '') +
+        (canRequestRedemption ? ' <button type="button" class="secondary history-request-redemption-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;" title="Ask the BD user to upload the signed Redemption Form(s) for this deal — emails them a notification.">Request Redemption Docs</button>' : '') +
       '</td>' +
     '</tr>';
     if(status === STATUS_REJECTED && v[MC.rejectReason]){
@@ -5913,7 +6046,9 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
 /* ---- Redemption Documents modal ----
    Opened from the "Upload Redemption Docs"/"Redemption Documents" button
    renderHistoryTable adds to an Approved, Order Type "Stock-Out (R)" or
-   "Stock-In (R)" REC deal (see dealNeedsRedemption). One file-picker + Upload/Replace button
+   "Stock-In (R)" REC deal once a Superadmin/Admin has requested it (see
+   dealRedemptionEligible/rowHasRedemptionRequest/requestRedemptionDocuments).
+   One file-picker + Upload/Replace button
    per product row — each upload happens immediately (same "pick a file,
    it uploads right away" pattern as the rest of this app's file inputs),
    and the modal just re-renders itself from the freshly-saved row afterward
@@ -5936,7 +6071,7 @@ function isRedemptionDueSoon(deliveryEndRaw){
   return d.getTime() <= weekFromNowUtc;
 }
 // Redemption Documents are REC-only (see saveRedemptionUpload/
-// dealNeedsRedemption), so a row's Vintage is always a plain start/end
+// dealRedemptionEligible), so a row's Vintage is always a plain start/end
 // YEAR pair (MC.vFromYY/vToYY — e.g. "2026"), never the month+year or
 // Carbon-Credit-style vintage used elsewhere. Renders that pair as the
 // short "V26" tag for the modal's product titles, or "V25/26" when the
@@ -5996,6 +6131,11 @@ function openRedemptionModal(dealId, tableName){
   const rows = logRowsCache
     .filter(r => String(r.values[0][MC.dealId] || '').trim() === String(dealId).trim() && (r._sourceTable||STANDARD_LOG_TABLE_NAME) === redemptionModalTableName)
     .sort((a,b)=> a.index - b.index);
+  const requestedByEl = document.getElementById('redemption-modal-requested-by');
+  const rv0 = rows.length ? rows[0].values[0] : null;
+  requestedByEl.textContent = (rv0 && rowHasRedemptionRequest(rv0))
+    ? 'Requested by ' + rv0[MC.redemptionRequestedBy] + (rv0[MC.redemptionRequestedDate] ? ' on ' + formatStoredDate(rv0[MC.redemptionRequestedDate]) : '')
+    : '';
   document.getElementById('redemption-modal-fields').innerHTML = redemptionModalFieldsHtml(rows);
   document.getElementById('redemption-modal-overlay').style.display = 'flex';
 }
@@ -6124,6 +6264,19 @@ document.addEventListener('click', (e)=>{
     const tableName = redemptionBtn.getAttribute('data-logtable');
     setActiveDealLogTable(tableName);
     openRedemptionModal(redemptionBtn.getAttribute('data-dealid'), tableName);
+    return;
+  }
+  const requestRedemptionBtn = e.target.closest('.history-request-redemption-btn');
+  if(requestRedemptionBtn){
+    const dealId = requestRedemptionBtn.getAttribute('data-dealid');
+    const tableName = requestRedemptionBtn.getAttribute('data-logtable');
+    setActiveDealLogTable(tableName);
+    if(confirm('Request Redemption Documents for Deal ID ' + friendlyDealId(dealId) + '? This emails the BD user to upload the signed Redemption Form(s) for each product on this deal.')){
+      requestRedemptionBtn.disabled = true;
+      requestRedemptionDocuments(dealId, tableName)
+        .catch(err=>{ console.error('Request Redemption Documents failed', err); alert('Request failed: ' + err.message); })
+        .finally(()=>{ requestRedemptionBtn.disabled = false; });
+    }
   }
 });
 
@@ -6535,6 +6688,22 @@ function isDealOwnerEmail(email, salesPic, submittedBy){
   if(!email) return false;
   if(String(submittedBy || '').toLowerCase() === email) return true;
   return bdInChargeEmail(salesPic) === email;
+}
+// The deal-owner email addresses isDealOwnerEmail checks against — the
+// submitter and the BD in-charge (see bdInChargeEmail) — deduped and
+// lowercased, for notifications (e.g. notifyRedemptionRequested) that
+// should reach the BD user regardless of which of the two identities is on
+// file, without emailing the same person twice when they're the same
+// address.
+function dealOwnerEmails(salesPic, submittedBy){
+  const emails = [];
+  const seen = new Set();
+  [String(submittedBy || '').trim().toLowerCase(), bdInChargeEmail(salesPic)].forEach(e=>{
+    if(!e || seen.has(e)) return;
+    seen.add(e);
+    emails.push(e);
+  });
+  return emails;
 }
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const YEARS = ["2025","2026","2027","2028","2029","2030"];
@@ -6956,7 +7125,7 @@ function isStockOutR(orderType){
   return String(orderType || '').trim() === 'Stock-Out (R)';
 }
 // True for either of the two Order Types that carry the Redemption Form
-// requirement (see dealNeedsRedemption) — "Stock-Out (R)" and "Stock-In
+// eligibility (see dealRedemptionEligible) — "Stock-Out (R)" and "Stock-In
 // (R)". Deliberately separate from isStockOutR, which only ever means the
 // original "Stock-Out (R)" type and still solely governs the Buyer
 // Receiving Account field being hidden/blanked (transferAccountValue/
