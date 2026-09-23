@@ -1182,8 +1182,8 @@ const MC = {
   // renamed one) so they can visually confirm they picked the right
   // document — see sanitizeRedemptionDocDisplayName/
   // uploadRedemptionDocument/saveRedemptionUpload.
-  redemptionDocName:68, redemptionDocUrl:69, redemptionUploadedBy:70, redemptionUploadedDate:71,
-  // ---- Level 2 waiting reason (optional 73rd-76th columns) ----
+  redemptionDocName:68, redemptionDocUrl:69, redemptionUploadedBy:70, redemptionUploadedDate:71
+  // ---- Level 2 waiting reason ----
   // Once a deal has sat at Pending Level 2 for more than
   // L2_DELAY_THRESHOLD_DAYS since Level 1 approved it, a Level 2 admin (or
   // superadmin) picks a reason from L2_DELAY_REASONS in the Approval queue
@@ -1195,12 +1195,18 @@ const MC = {
   // (Level 1's own stamp is wiped then too). Optional/additive: to start
   // capturing it, add "L2 Delay Reason", "L2 Delay Remark", "L2 Delay Set
   // By" and "L2 Delay Set Date" at the END of the live TradeDealLog Excel
-  // Table (after the four Redemption columns).
-  l2DelayReason:72, l2DelayRemark:73, l2DelayBy:74, l2DelayDate:75
+  // Table. These four are located by their HEADER NAME (see
+  // L2_DELAY_COLUMN_NAMES / l2ColumnIndexes), not by position, so they work
+  // wherever they sit in the table and aren't listed in MC.
 };
 const COL_COUNT = 59;
 const L2_DELAY_THRESHOLD_DAYS = 3;
 const L2_DELAY_REASONS = ['Under Negotiation', 'Pending Counterpart Signature', 'Other'];
+// Header names of the four Level 2 waiting reason columns, identical in
+// TradeDealLog and CCDealLog. Matched case-insensitively, ignoring extra spaces.
+const L2_DELAY_COLUMN_NAMES = { reason:'L2 Delay Reason', remark:'L2 Delay Remark', by:'L2 Delay Set By', date:'L2 Delay Set Date' };
+// Passed to updateCanonicalTableRow to blank the four L2 columns.
+const L2_CLEAR = { reason:'', remark:'', by:'', date:'' };
 const STANDARD_DRAFT_TABLE_NAME = "TradeDealDrafts";   // Excel Table on the TradeDealDrafts sheet
 const CC_DRAFT_TABLE_NAME = "TradeDealDrafts9";           // Excel Table on the CCDealDrafts sheet
 // Small generic key/value settings table. Currently holds one row:
@@ -2556,7 +2562,36 @@ async function getTableColumnCount(tableName, forceRefresh){
   const data = await graphFetch(workbookTablePath(tableName) + '/columns?$select=name');
   const count = (data.value || []).length;
   tableColumnCountCache[tableName] = count;
+  tableColumnNamesCache[tableName] = (data.value || []).map(c => String(c.name || ''));
   return count;
+}
+// Header names of a table, in column order (filled by getTableColumnCount).
+const tableColumnNamesCache = {};
+function normalizeHeaderName(n){ return String(n || '').replace(/\s+/g, ' ').trim().toLowerCase(); }
+// Actual 0-based positions of the four L2 delay columns in this table, or
+// null if any of them is missing. Needs getTableColumnCount to have run.
+function l2ColumnIndexes(tableName){
+  const names = tableColumnNamesCache[tableName];
+  if(!names) return null;
+  const norm = names.map(normalizeHeaderName);
+  const out = {};
+  for(const key of Object.keys(L2_DELAY_COLUMN_NAMES)){
+    const i = norm.indexOf(normalizeHeaderName(L2_DELAY_COLUMN_NAMES[key]));
+    if(i === -1) return null;
+    out[key] = i;
+  }
+  return out;
+}
+function missingL2ColumnNames(tableName){
+  const norm = (tableColumnNamesCache[tableName] || []).map(normalizeHeaderName);
+  return Object.values(L2_DELAY_COLUMN_NAMES).filter(n => norm.indexOf(normalizeHeaderName(n)) === -1);
+}
+// Last raw (as-stored) values read for each row, per table, keyed by row
+// index — so writes can put the L2 columns back exactly as they were.
+const rawLogRowCache = {};
+function readL2FromRaw(raw, idx){
+  if(!idx || !raw) return null;
+  return { reason: raw[idx.reason] ?? '', remark: raw[idx.remark] ?? '', by: raw[idx.by] ?? '', date: raw[idx.date] ?? '' };
 }
 function fitRowToColumnCount(values, count){
   if(values.length === count) return values;
@@ -2635,11 +2670,9 @@ const CC = {
   // To start capturing it, add "Source Vintage Start", "Source Vintage End"
   // and "Source Matching Note" at the END of the live CCDealLog Excel Table.
   sourceVintageStart:63, sourceVintageEnd:64, sourceMatchNote:65,
-  // Level 2 waiting reason — see the l2DelayReason comment on MC. To start
-  // capturing it for Carbon Credit deals, add "L2 Delay Reason", "L2 Delay
-  // Remark", "L2 Delay Set By" and "L2 Delay Set Date" at the END of the
-  // live CCDealLog Excel Table (after "Source Matching Note").
-  l2DelayReason:66, l2DelayRemark:67, l2DelayBy:68, l2DelayDate:69
+  // Level 2 waiting reason columns are found by header name — see
+  // L2_DELAY_COLUMN_NAMES. Add "L2 Delay Reason", "L2 Delay Remark", "L2
+  // Delay Set By" and "L2 Delay Set Date" anywhere in CCDealLog.
 };
 const CC_COL_COUNT = 63;
 // Registry and Closing account are now two independent fields — a product
@@ -2684,7 +2717,7 @@ function ccRegistryClearingDisplay(registry, clearingAccount){
   return r && c ? r + ' / ' + c : (r || c);
 }
 function ccRawToCanonical(raw){
-  const out = new Array(76).fill('');
+  const out = new Array(68).fill('');
   out[MC.salesPic]=raw[CC.salesPic]??''; out[MC.entity]=raw[CC.entity]??'';
   out[MC.agreementDate]=raw[CC.agreementDate]??''; out[MC.dealId]=raw[CC.dealId]??'';
   out[MC.supplyDemand]=raw[CC.supplyDemand]??''; out[MC.company]=raw[CC.company]??'';
@@ -2737,8 +2770,6 @@ function ccRawToCanonical(raw){
   // added these yet, same as every other optional column here.
   out[MC.sourceVintageStart]=raw[CC.sourceVintageStart]??''; out[MC.sourceVintageEnd]=raw[CC.sourceVintageEnd]??'';
   out[MC.sourceMatchNote]=raw[CC.sourceMatchNote]??'';
-  out[MC.l2DelayReason]=raw[CC.l2DelayReason]??''; out[MC.l2DelayRemark]=raw[CC.l2DelayRemark]??'';
-  out[MC.l2DelayBy]=raw[CC.l2DelayBy]??''; out[MC.l2DelayDate]=raw[CC.l2DelayDate]??'';
   return out;
 }
 function canonicalToCcRaw(values){
@@ -2783,8 +2814,6 @@ function canonicalToCcRaw(values){
   // erroring.
   raw[CC.sourceVintageStart]=values[MC.sourceVintageStart]??''; raw[CC.sourceVintageEnd]=values[MC.sourceVintageEnd]??'';
   raw[CC.sourceMatchNote]=values[MC.sourceMatchNote]??'';
-  raw[CC.l2DelayReason]=values[MC.l2DelayReason]??''; raw[CC.l2DelayRemark]=values[MC.l2DelayRemark]??'';
-  raw[CC.l2DelayBy]=values[MC.l2DelayBy]??''; raw[CC.l2DelayDate]=values[MC.l2DelayDate]??'';
   return raw;
 }
 function canonicalizeLogRow(row, tableName){
@@ -2792,14 +2821,39 @@ function canonicalizeLogRow(row, tableName){
   return Object.assign({}, row, {values:[ccRawToCanonical(row.values[0] || [])], _sourceTable:CC_LOG_TABLE_NAME});
 }
 async function getCanonicalTableRows(tableName){
-  const rows = await getTableRows(tableName);
-  return rows.map(r => canonicalizeLogRow(r, tableName));
+  const [rows] = await Promise.all([getTableRows(tableName), tableColumnNamesCache[tableName] ? null : getTableColumnCount(tableName, true)]);
+  const idx = l2ColumnIndexes(tableName);
+  const cache = rawLogRowCache[tableName] = {};
+  return rows.map(r => {
+    const raw = (r.values && r.values[0]) || [];
+    cache[r.index] = raw.slice();
+    const out = canonicalizeLogRow(r, tableName);
+    // Level 2 waiting reason, read by header name (see l2ColumnIndexes) and
+    // attached to the canonical values array itself — read via l2DelayInfo.
+    if(out.values && out.values[0]) out.values[0].__l2 = readL2FromRaw(raw, idx);
+    return out;
+  });
 }
 async function addCanonicalTableRows(tableName, rowsArray){
   return addTableRows(tableName, tableName === CC_LOG_TABLE_NAME ? rowsArray.map(canonicalToCcRaw) : rowsArray);
 }
-async function updateCanonicalTableRow(tableName, rowIndex, values){
-  return updateTableRow(tableName, rowIndex, tableName === CC_LOG_TABLE_NAME ? canonicalToCcRaw(values) : values);
+// l2Override (optional): {reason,remark,by,date} to write into the four L2
+// delay columns. When omitted, those columns are written back exactly as
+// last read (rawLogRowCache), so no other write can ever wipe them.
+async function updateCanonicalTableRow(tableName, rowIndex, values, l2Override){
+  const raw = (tableName === CC_LOG_TABLE_NAME ? canonicalToCcRaw(values) : values).slice();
+  const idx = l2ColumnIndexes(tableName);
+  if(idx){
+    const cached = (rawLogRowCache[tableName] || {})[rowIndex];
+    const src = l2Override || readL2FromRaw(cached, idx);
+    if(src){
+      const maxIdx = Math.max(idx.reason, idx.remark, idx.by, idx.date);
+      while(raw.length <= maxIdx) raw.push('');
+      raw[idx.reason] = src.reason; raw[idx.remark] = src.remark;
+      raw[idx.by] = src.by; raw[idx.date] = src.date;
+    }
+  }
+  return updateTableRow(tableName, rowIndex, raw);
 }
 async function getAllCanonicalDealRows(){
   const [standardRows, ccRows] = await Promise.all([
@@ -3068,7 +3122,7 @@ async function saveRedemptionUpload(dealId, tableName, rowUid, productIndex, fil
 }
 
 /* ---- Level 2 waiting reason ----
-   See the l2DelayReason comment on MC. */
+   See L2_DELAY_COLUMN_NAMES / l2ColumnIndexes (columns found by header name). */
 function storedDateToMs(v){
   if(v === '' || v === null || v === undefined) return NaN;
   const str = String(v).trim();
@@ -3089,13 +3143,14 @@ function isL2Overdue(v, status){
   return !isNaN(ms) && (Date.now() - ms) > L2_DELAY_THRESHOLD_DAYS * 86400000;
 }
 function l2DelayInfo(v){
-  const reason = v ? String(v[MC.l2DelayReason] || '').trim() : '';
+  const l2 = v && v.__l2;
+  const reason = l2 ? String(l2.reason || '').trim() : '';
   if(!reason) return null;
   return {
     reason,
-    remark: String(v[MC.l2DelayRemark] || '').trim(),
-    by: String(v[MC.l2DelayBy] || '').trim(),
-    date: v[MC.l2DelayDate] || ''
+    remark: String(l2.remark || '').trim(),
+    by: String(l2.by || '').trim(),
+    date: l2.date || ''
   };
 }
 function l2DelayReasonText(info){
@@ -3117,20 +3172,14 @@ async function saveL2DelayReason(dealId, tableName, reason, remark){
   const status = matching[0].values[0][MC.status];
   if(status !== STATUS_PENDING_2) throw new Error('This deal is no longer Pending Level 2 (it is now: ' + (status || 'unknown') + ') — please refresh.');
   if(!canActOnStatus(status)) throw new Error('Only a Level 2 admin can set this reason.');
-  const liveColumnCount = await getTableColumnCount(tableName);
-  const neededIndex = tableName === CC_LOG_TABLE_NAME ? CC.l2DelayDate : MC.l2DelayDate;
-  if(liveColumnCount <= neededIndex){
-    throw new Error('The ' + (tableName === CC_LOG_TABLE_NAME ? 'CCDealLog' : 'TradeDealLog') + ' table in SharePoint hasn\'t been updated yet — it\'s missing the "L2 Delay Reason", "L2 Delay Remark", "L2 Delay Set By" and "L2 Delay Set Date" columns. Ask an admin to add those four columns at the end of the table, then try again.');
+  await getTableColumnCount(tableName, true); // fresh header names
+  if(!l2ColumnIndexes(tableName)){
+    throw new Error('The ' + (tableName === CC_LOG_TABLE_NAME ? 'CCDealLog' : 'TradeDealLog') + ' table in SharePoint is missing these column(s): ' + missingL2ColumnNames(tableName).map(n => '"' + n + '"').join(', ') + '. Check the header spelling matches exactly and that the columns are inside the table, then try again.');
   }
   const nowIso = new Date().toISOString();
+  const l2 = { reason, remark, by: currentAccount.username, date: nowIso };
   for(const r of matching){
-    const values = r.values[0].slice();
-    while(values.length <= MC.l2DelayDate) values.push('');
-    values[MC.l2DelayReason] = reason;
-    values[MC.l2DelayRemark] = remark;
-    values[MC.l2DelayBy] = currentAccount.username;
-    values[MC.l2DelayDate] = nowIso;
-    await updateCanonicalTableRow(tableName, r.index, values);
+    await updateCanonicalTableRow(tableName, r.index, r.values[0].slice(), l2);
   }
   await loadHistory();
 }
@@ -9664,12 +9713,8 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
       if(finalStatus === STATUS_PENDING_1){
         values[MC.approvedBy1] = ''; values[MC.approvedDate1] = '';
         values[MC.agreementFileName] = ''; values[MC.agreementFileUrl] = '';
-        // Level 2 waiting reason relates to the pre-edit Level 1 approval,
-        // so it's cleared along with it (only if those columns exist).
-        if(values.length > MC.l2DelayDate){
-          values[MC.l2DelayReason] = ''; values[MC.l2DelayRemark] = '';
-          values[MC.l2DelayBy] = ''; values[MC.l2DelayDate] = '';
-        }
+        // The Level 2 waiting reason relates to the pre-edit Level 1
+        // approval, so it's cleared along with it (see the write below).
       }
       if(finalStatus === STATUS_PENDING_1 || finalStatus === STATUS_PENDING_2){
         values[MC.approvedBy2] = ''; values[MC.approvedDate2] = '';
@@ -9721,7 +9766,7 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
 
     // Write every row using the live row indexes.
     for(const r of updatedRows){
-      await updateCanonicalTableRow(activeTable, r.index, r.values[0]);
+      await updateCanonicalTableRow(activeTable, r.index, r.values[0], finalStatus === STATUS_PENDING_1 ? L2_CLEAR : undefined);
     }
 
     // Verify the actual saved workbook state. This makes sure the approval queue
