@@ -554,6 +554,13 @@
   .deal-timeline-v-step.rejected .deal-timeline-v-label{color:#8a2d1f;}
   .deal-timeline-v-step.reverted .deal-timeline-v-label{color:#8a6d1f;}
   .deal-timeline-v-date{font-size:11px;color:var(--text-secondary);margin-top:2px;white-space:nowrap;}
+  .deal-timeline-v-step.onhold .deal-timeline-v-dot{background:#c98a12;}
+  .deal-timeline-v-step.onhold .deal-timeline-v-label{color:#8a5d0a;}
+  .deal-timeline-v-note{font-size:11px;color:var(--text);margin-top:2px;white-space:normal;word-break:break-word;font-style:italic;}
+  .l2-delay-box{background:#fff6e5;border:1px solid #e8c99a;color:#6b4a0a;border-radius:6px;padding:8px 10px;font-size:12px;}
+  .l2-delay-box select,.l2-delay-box input{font-size:12px;padding:4px 6px;}
+  .l2-delay-box select{width:auto;min-width:220px;flex:none;}
+  .l2-delay-controls{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px;}
   /* Hover-only tooltip for the Analysis tab's "unconfirmed Volume range"
      warning icon (see renderAnalysisTab) — the actual, un-averaged range
      text only appears while hovering the ⚠ icon, instead of always taking
@@ -925,8 +932,7 @@
 <div id="redemption-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
   <div style="width:100%;max-width:560px;max-height:85vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:12px;">
     <h2 style="margin:0;font-size:16px;">Redemption Documents — Deal ID <span id="redemption-modal-dealid"></span></h2>
-    <p style="margin:0;font-size:13px;color:var(--text-secondary);">A Superadmin/Admin has requested the Redemption Form(s) for this Stock-Out (R)/Stock-In (R) deal — it isn't fully complete until each product below has at least one signed Redemption Form uploaded. You can upload more than one file per product (e.g. multiple signed pages). PDF/Word files only, max 10 MB each. Files are saved to the "Redemption Documents" folder on SharePoint, renamed to "Deal ID_Product n_1", "Deal ID_Product n_2", etc.</p>
-    <p id="redemption-modal-requested-by" style="margin:0;font-size:12px;color:var(--text-secondary);"></p>
+    <p style="margin:0;font-size:13px;color:var(--text-secondary);">This is a Stock-Out (R)/Stock-In (R) deal — it isn't fully complete until each product below has at least one signed Redemption Form uploaded. You can upload more than one file per product (e.g. multiple signed pages). PDF/Word files only, max 10 MB each. Files are saved to the "Redemption Documents" folder on SharePoint, renamed to "Deal ID_Product n_1", "Deal ID_Product n_2", etc.</p>
     <div id="redemption-modal-fields" style="display:flex;flex-direction:column;gap:12px;"></div>
     <div id="redemption-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
@@ -1000,11 +1006,6 @@ const CC_LOG_TABLE_NAME = "TradeDealLog7"; // Excel Table on the workbook's CCDe
 // redemptionDocName comment on the MC object below); not required for
 // anything else in this app to work: Redemption Document Name, Redemption
 // Document URL, Redemption Uploaded By, Redemption Uploaded Date.
-// OPTIONAL 72nd-73rd columns, only needed to track whether a Superadmin/
-// Admin has actually asked for those Redemption Form(s) yet (see the
-// redemptionRequestedBy comment on the MC object below); not required for
-// anything else in this app to work: Redemption Requested By, Redemption
-// Requested Date.
 // NOTE: if you're adding this to an existing workbook, add any new column
 // ("Broker Fee Type"/"Broker Fee Currency"/"Broker Fee Price" included, the
 // 7 "Pending ..."/"Change Requested ..." columns used for post-approval BD
@@ -1017,13 +1018,10 @@ const CC_LOG_TABLE_NAME = "TradeDealLog7"; // Excel Table on the workbook's CCDe
 // Summary" (what a post-Level-1 "Edit & resend" changed — see the
 // editChangeSummary comment on the MC object below), and now "Pending
 // Volume" (a post-approval Volume (RECs) correction — see the pendingVolume
-// comment on the MC object below), "Redemption Document Name",
+// comment on the MC object below), and now "Redemption Document Name",
 // "Redemption Document URL", "Redemption Uploaded By" and "Redemption
 // Uploaded Date" (the Redemption Form upload step — see the
-// redemptionDocName comment on the MC object below), and now "Redemption
-// Requested By" and "Redemption Requested Date" (the Superadmin/Admin
-// "Request Redemption Docs" step — see the redemptionRequestedBy comment on
-// the MC object below)) at the END of the live
+// redemptionDocName comment on the MC object below)) at the END of the live
 // TradeDealLog Excel Table — don't insert them in the middle, or every
 // existing column index below will point at the wrong data.
 // "Row Uid": a permanent, per-TRADE-ROW random ID, stamped once at Save
@@ -1150,23 +1148,17 @@ const MC = {
   sourceVintageStart:65, sourceVintageEnd:66, sourceMatchNote:67,
   // ---- Redemption Form upload (RECs, Order Type "Stock-Out (R)" or
   // "Stock-In (R)" only) ----
-  // Optional 68th-71st columns. A REC deal (never Carbon Credit) whose
-  // Order Type (MC.supplyDemand) is "Stock-Out (R)" or "Stock-In (R)" — see
-  // isRedemptionOrderType — is ELIGIBLE for the Redemption Form workflow
-  // once it reaches STATUS_APPROVED (Level 3 sign-off), but — unlike the
-  // old behaviour — is not automatically treated as needing one. A
-  // Superadmin/Admin has to explicitly press "Request Redemption Docs" on
-  // the deal first (see requestRedemptionDocuments/redemptionRequestedBy/
-  // redemptionRequestedDate below); only once that's happened is the deal
-  // treated as incomplete until EVERY product row on it has AT LEAST ONE
-  // signed Redemption Form uploaded by the BD user (see
-  // dealRedemptionEligible/rowHasRedemptionRequest/dealRedemptionSummary/
-  // openRedemptionModal/uploadRedemptionDocument). A product row can have
-  // more than one Redemption Form on file (e.g. several signed pages) —
-  // each of these four columns holds a "; "-joined list, one entry per
-  // uploaded document, in upload order, same convention as the per-BD-
-  // source fields (see joinBdSourceField) and parsed back apart by
-  // parseRedemptionDocs.
+  // Optional 68th-71st columns. Once a REC deal reaches STATUS_APPROVED
+  // (Level 3 sign-off) and its Order Type (MC.supplyDemand) is "Stock-Out
+  // (R)" or "Stock-In (R)" — see isRedemptionOrderType — the deal isn't
+  // treated as fully complete until EVERY product row on it has AT LEAST
+  // ONE signed Redemption Form uploaded (see dealNeedsRedemption/
+  // dealRedemptionSummary/openRedemptionModal/uploadRedemptionDocument). A
+  // product row can have more than one Redemption Form on file (e.g.
+  // several signed pages) — each of these four columns holds a "; "-joined
+  // list, one entry per uploaded document, in upload order, same
+  // convention as the per-BD-source fields (see joinBdSourceField) and
+  // parsed back apart by parseRedemptionDocs.
   // Nothing here changes Status or the 3-level approval chain itself — a
   // Stock-Out (R)/Stock-In (R) REC deal is still "Approved" the instant
   // Level 3 signs
@@ -1191,22 +1183,24 @@ const MC = {
   // document — see sanitizeRedemptionDocDisplayName/
   // uploadRedemptionDocument/saveRedemptionUpload.
   redemptionDocName:68, redemptionDocUrl:69, redemptionUploadedBy:70, redemptionUploadedDate:71,
-  // Optional 72nd-73rd columns. Deal-level flag (stamped onto EVERY row of
-  // the deal, same convention as Status/approvedBy1-3) recording that a
-  // Superadmin/Admin pressed "Request Redemption Docs" on this deal — see
-  // requestRedemptionDocuments/rowHasRedemptionRequest. Blank means nobody
-  // has asked for the Redemption Form(s) yet, even if the deal is otherwise
-  // eligible (see dealRedemptionEligible) — that's the whole point of this
-  // change: not every Stock-Out (R)/Stock-In (R) REC deal needs one, so the
-  // BD user is only emailed and shown the upload button once a Superadmin/
-  // Admin has actually asked. Optional/additive, same reasoning as the
-  // other columns on this row — guard on values.length before reading/
-  // writing it. To start capturing it, add "Redemption Requested By" and
-  // "Redemption Requested Date" at the END of the live TradeDealLog Excel
-  // Table.
-  redemptionRequestedBy:72, redemptionRequestedDate:73
+  // ---- Level 2 waiting reason (optional 73rd-76th columns) ----
+  // Once a deal has sat at Pending Level 2 for more than
+  // L2_DELAY_THRESHOLD_DAYS since Level 1 approved it, a Level 2 admin (or
+  // superadmin) picks a reason from L2_DELAY_REASONS in the Approval queue
+  // (plus a free-text remark when "Other"). Stored on EVERY row of the deal
+  // (same as Status/approval stamps) and never cleared by Level 2/3
+  // approval, so it stays in the Deal Timeline between "Level 1 Approved"
+  // and "Level 2 Approved" as a permanent reference. Only cleared if an
+  // "Edit & resend" sends the deal all the way back to Pending Level 1
+  // (Level 1's own stamp is wiped then too). Optional/additive: to start
+  // capturing it, add "L2 Delay Reason", "L2 Delay Remark", "L2 Delay Set
+  // By" and "L2 Delay Set Date" at the END of the live TradeDealLog Excel
+  // Table (after the four Redemption columns).
+  l2DelayReason:72, l2DelayRemark:73, l2DelayBy:74, l2DelayDate:75
 };
 const COL_COUNT = 59;
+const L2_DELAY_THRESHOLD_DAYS = 3;
+const L2_DELAY_REASONS = ['Under Negotiation', 'Pending Counterpart Signature', 'Other'];
 const STANDARD_DRAFT_TABLE_NAME = "TradeDealDrafts";   // Excel Table on the TradeDealDrafts sheet
 const CC_DRAFT_TABLE_NAME = "TradeDealDrafts9";           // Excel Table on the CCDealDrafts sheet
 // Small generic key/value settings table. Currently holds one row:
@@ -2013,33 +2007,6 @@ async function notifyDealIdAssigned(dealId, submitterEmail){
   }
 }
 
-// Emails the deal's BD user(s) — the submitter and/or BD in-charge, the
-// same "owner" identities canManageRedemption/isDealOwnerEmail already
-// treat as this deal's owners (see dealOwnerEmails) — the moment a
-// Superadmin/Admin presses "Request Redemption Docs" on an Approved, Order
-// Type "Stock-Out (R)"/"Stock-In (R)" REC deal (see
-// requestRedemptionDocuments). This is the ONLY thing that tells the BD
-// user a Redemption Form upload is actually needed now — under the new
-// on-request flow, nothing is sent (or expected of them) just because a
-// deal happens to be that Order Type; see dealRedemptionEligible.
-async function notifyRedemptionRequested(dealId, submitterEmail, salesPic, requestedByEmail){
-  const toEmails = dealOwnerEmails(salesPic, submitterEmail);
-  if(!toEmails.length){
-    console.warn('No submitter/BD-in-charge email on file — skipping Redemption Documents request notification for Deal ID ' + dealId);
-    return;
-  }
-  const link = dealDeepLink(dealId);
-  const displayId = friendlyDealId(dealId);
-  const html = '<p><strong>' + escapeHtml(requestedByEmail || 'An admin') + '</strong> has requested the signed Redemption Form(s) for Deal ID <strong>' + escapeHtml(displayId) + '</strong>.</p>' +
-    '<p>Please upload the signed Redemption Form for each product on this deal as soon as it is available.</p>' +
-    '<p><a href="' + link + '">Open it in the Trade Confirmation app</a></p>';
-  try{
-    await sendMailGraph(toEmails, 'Redemption Documents requested — ' + displayId, html);
-  }catch(err){
-    console.error('Redemption Documents request notification email failed', err);
-  }
-}
-
 // a notification email's "?deal=XXXXX" link, once logRowsCache has data.
 let urlDealOpened = false;
 function tryOpenDealFromUrl(){
@@ -2667,7 +2634,12 @@ const CC = {
   // added these three columns yet can still save, just without this data.
   // To start capturing it, add "Source Vintage Start", "Source Vintage End"
   // and "Source Matching Note" at the END of the live CCDealLog Excel Table.
-  sourceVintageStart:63, sourceVintageEnd:64, sourceMatchNote:65
+  sourceVintageStart:63, sourceVintageEnd:64, sourceMatchNote:65,
+  // Level 2 waiting reason — see the l2DelayReason comment on MC. To start
+  // capturing it for Carbon Credit deals, add "L2 Delay Reason", "L2 Delay
+  // Remark", "L2 Delay Set By" and "L2 Delay Set Date" at the END of the
+  // live CCDealLog Excel Table (after "Source Matching Note").
+  l2DelayReason:66, l2DelayRemark:67, l2DelayBy:68, l2DelayDate:69
 };
 const CC_COL_COUNT = 63;
 // Registry and Closing account are now two independent fields — a product
@@ -2712,7 +2684,7 @@ function ccRegistryClearingDisplay(registry, clearingAccount){
   return r && c ? r + ' / ' + c : (r || c);
 }
 function ccRawToCanonical(raw){
-  const out = new Array(68).fill('');
+  const out = new Array(76).fill('');
   out[MC.salesPic]=raw[CC.salesPic]??''; out[MC.entity]=raw[CC.entity]??'';
   out[MC.agreementDate]=raw[CC.agreementDate]??''; out[MC.dealId]=raw[CC.dealId]??'';
   out[MC.supplyDemand]=raw[CC.supplyDemand]??''; out[MC.company]=raw[CC.company]??'';
@@ -2765,6 +2737,8 @@ function ccRawToCanonical(raw){
   // added these yet, same as every other optional column here.
   out[MC.sourceVintageStart]=raw[CC.sourceVintageStart]??''; out[MC.sourceVintageEnd]=raw[CC.sourceVintageEnd]??'';
   out[MC.sourceMatchNote]=raw[CC.sourceMatchNote]??'';
+  out[MC.l2DelayReason]=raw[CC.l2DelayReason]??''; out[MC.l2DelayRemark]=raw[CC.l2DelayRemark]??'';
+  out[MC.l2DelayBy]=raw[CC.l2DelayBy]??''; out[MC.l2DelayDate]=raw[CC.l2DelayDate]??'';
   return out;
 }
 function canonicalToCcRaw(values){
@@ -2809,6 +2783,8 @@ function canonicalToCcRaw(values){
   // erroring.
   raw[CC.sourceVintageStart]=values[MC.sourceVintageStart]??''; raw[CC.sourceVintageEnd]=values[MC.sourceVintageEnd]??'';
   raw[CC.sourceMatchNote]=values[MC.sourceMatchNote]??'';
+  raw[CC.l2DelayReason]=values[MC.l2DelayReason]??''; raw[CC.l2DelayRemark]=values[MC.l2DelayRemark]??'';
+  raw[CC.l2DelayBy]=values[MC.l2DelayBy]??''; raw[CC.l2DelayDate]=values[MC.l2DelayDate]??'';
   return raw;
 }
 function canonicalizeLogRow(row, tableName){
@@ -3000,28 +2976,13 @@ async function uploadRedemptionDocument(dealId, productIndex, docIndex, file){
   if(!item) throw new Error('Redemption Form upload did not complete — please try again.');
   return { name: sanitizeRedemptionDocDisplayName(file.name), webUrl: item.webUrl };
 }
-// True once a deal's Status/Order Type mean it's ELIGIBLE for the
-// Redemption Form workflow at all — a REC (never Carbon Credit) deal that
-// has reached STATUS_APPROVED with Order Type "Stock-Out (R)" or "Stock-In
-// (R)" — see isRedemptionOrderType. Eligible no longer means "needed" —
-// not every eligible deal actually requires a Redemption Form upload; a
-// Superadmin/Admin has to explicitly request it first (see
-// rowHasRedemptionRequest/requestRedemptionDocuments) before the BD user
-// is asked for one. Doesn't say anything about whether that request has
-// been made, or the documents actually uploaded yet — see
-// rowHasRedemptionRequest/dealRedemptionSummary for that.
-function dealRedemptionEligible(status, sourceTable, orderType){
+// True once a deal's Status/Order Type mean it needs the extra Redemption
+// Form step at all — a REC (never Carbon Credit) deal that has reached
+// STATUS_APPROVED with Order Type "Stock-Out (R)" or "Stock-In (R)" — see
+// isRedemptionOrderType. Doesn't say anything about whether the documents
+// have actually been uploaded yet — see dealRedemptionSummary for that.
+function dealNeedsRedemption(status, sourceTable, orderType){
   return status === STATUS_APPROVED && sourceTable !== CC_LOG_TABLE_NAME && isRedemptionOrderType(orderType);
-}
-// True once a Superadmin/Admin has pressed "Request Redemption Docs" on
-// this deal (see requestRedemptionDocuments) — a deal-level flag stamped
-// onto EVERY row of the deal (same convention as Status/approvedBy1-3), so
-// any one row's values (normally the deal's first row) answers it for the
-// whole deal. Guarded on values.length since these are optional/additive
-// columns — a workbook that hasn't added them yet just reads as "not
-// requested" everywhere rather than erroring.
-function rowHasRedemptionRequest(rv){
-  return !!(rv && rv.length > MC.redemptionRequestedBy && rv[MC.redemptionRequestedBy]);
 }
 // True if this specific product ROW already has at least one Redemption
 // Form on file. Guarded on values.length since these are optional/additive
@@ -3105,48 +3066,72 @@ async function saveRedemptionUpload(dealId, tableName, rowUid, productIndex, fil
   await updateCanonicalTableRow(tableName, row.index, values);
   await loadHistory();
 }
-// Superadmin/Admin-only action: flags an eligible, Approved, Order Type
-// "Stock-Out (R)"/"Stock-In (R)" REC deal (see dealRedemptionEligible) as
-// actually NEEDING its Redemption Form(s), then emails the deal's BD user
-// (see dealOwnerEmails/notifyRedemptionRequested) so they know to upload
-// them. Nothing here uploads a file itself — that stays the BD user's own
-// job via the "Upload Redemption Docs" button/modal (see
-// saveRedemptionUpload), which only appears, and only then, once this has
-// been requested (see rowHasRedemptionRequest in renderHistoryTable).
-// Stamped onto EVERY row of the deal — deal-level, like Status/
-// approvedBy1-3 — so it never depends on which product row happens to be
-// read first elsewhere. Re-reads the live rows first (same pattern as
-// approveDeal/saveRedemptionUpload) so this never overwrites a row that's
-// moved on since the button was clicked, and refuses to re-request a deal
-// that's already been asked for (see rowHasRedemptionRequest) so the BD
-// user isn't emailed twice for the same ask.
-async function requestRedemptionDocuments(dealId, tableName){
+
+/* ---- Level 2 waiting reason ----
+   See the l2DelayReason comment on MC. */
+function storedDateToMs(v){
+  if(v === '' || v === null || v === undefined) return NaN;
+  const str = String(v).trim();
+  if(!str) return NaN;
+  if(/^-?\d+(\.\d+)?$/.test(str)) return Math.round((Number(str) - 25569) * 86400 * 1000);
+  return new Date(str).getTime();
+}
+// Whole days a Pending Level 2 deal has been waiting since Level 1
+// approved it (NaN if there's no usable Level 1 date).
+function l2WaitingDays(v){
+  const ms = storedDateToMs(v && v[MC.approvedDate1]);
+  if(isNaN(ms)) return NaN;
+  return Math.floor((Date.now() - ms) / 86400000);
+}
+function isL2Overdue(v, status){
+  if(status !== STATUS_PENDING_2) return false;
+  const ms = storedDateToMs(v && v[MC.approvedDate1]);
+  return !isNaN(ms) && (Date.now() - ms) > L2_DELAY_THRESHOLD_DAYS * 86400000;
+}
+function l2DelayInfo(v){
+  const reason = v ? String(v[MC.l2DelayReason] || '').trim() : '';
+  if(!reason) return null;
+  return {
+    reason,
+    remark: String(v[MC.l2DelayRemark] || '').trim(),
+    by: String(v[MC.l2DelayBy] || '').trim(),
+    date: v[MC.l2DelayDate] || ''
+  };
+}
+function l2DelayReasonText(info){
+  if(!info) return '';
+  return info.reason === 'Other' ? ('Other' + (info.remark ? ' — ' + info.remark : '')) : info.reason;
+}
+async function saveL2DelayReason(dealId, tableName, reason, remark){
   if(!dealId) return;
   tableName = tableName === CC_LOG_TABLE_NAME ? CC_LOG_TABLE_NAME : STANDARD_LOG_TABLE_NAME;
-  if(tableName === CC_LOG_TABLE_NAME) throw new Error('Redemption Documents only apply to RECs.');
-  if(!isAdmin) throw new Error('Only Superadmin/Admin can request Redemption Documents.');
+  reason = String(reason || '').trim();
+  remark = String(remark || '').trim();
+  if(L2_DELAY_REASONS.indexOf(reason) === -1) throw new Error('Please select a reason.');
+  if(reason === 'Other' && !remark) throw new Error('Please write a remark for "Other".');
+  if(reason !== 'Other') remark = '';
   await ensureFreshWorkbookSession();
   const rows = await getCanonicalTableRows(tableName);
   const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
   if(!matching.length) throw new Error('Could not find this deal anymore — please refresh and try again.');
-  const v0 = matching[0].values[0];
-  if(!dealRedemptionEligible(v0[MC.status], tableName, v0[MC.supplyDemand])){
-    throw new Error('This deal is not eligible for Redemption Documents — it must be Approved, RECs, and Order Type "Stock-Out (R)" or "Stock-In (R)".');
-  }
-  if(rowHasRedemptionRequest(v0)) throw new Error('Redemption Documents have already been requested for this deal.');
+  const status = matching[0].values[0][MC.status];
+  if(status !== STATUS_PENDING_2) throw new Error('This deal is no longer Pending Level 2 (it is now: ' + (status || 'unknown') + ') — please refresh.');
+  if(!canActOnStatus(status)) throw new Error('Only a Level 2 admin can set this reason.');
   const liveColumnCount = await getTableColumnCount(tableName);
-  if(liveColumnCount <= MC.redemptionRequestedDate){
-    throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing the "Redemption Requested By" and "Redemption Requested Date" columns. Ask an admin to add those two columns at the end of the table, then try again.');
+  const neededIndex = tableName === CC_LOG_TABLE_NAME ? CC.l2DelayDate : MC.l2DelayDate;
+  if(liveColumnCount <= neededIndex){
+    throw new Error('The ' + (tableName === CC_LOG_TABLE_NAME ? 'CCDealLog' : 'TradeDealLog') + ' table in SharePoint hasn\'t been updated yet — it\'s missing the "L2 Delay Reason", "L2 Delay Remark", "L2 Delay Set By" and "L2 Delay Set Date" columns. Ask an admin to add those four columns at the end of the table, then try again.');
   }
   const nowIso = new Date().toISOString();
   for(const r of matching){
     const values = r.values[0].slice();
-    while(values.length <= MC.redemptionRequestedDate) values.push('');
-    values[MC.redemptionRequestedBy] = currentAccount.username;
-    values[MC.redemptionRequestedDate] = nowIso;
+    while(values.length <= MC.l2DelayDate) values.push('');
+    values[MC.l2DelayReason] = reason;
+    values[MC.l2DelayRemark] = remark;
+    values[MC.l2DelayBy] = currentAccount.username;
+    values[MC.l2DelayDate] = nowIso;
     await updateCanonicalTableRow(tableName, r.index, values);
   }
-  await notifyRedemptionRequested(dealId, v0[MC.submittedBy], v0[MC.salesPic], currentAccount.username);
   await loadHistory();
 }
 
@@ -3630,6 +3615,12 @@ async function approveDeal(dealId, file, transferOverrides){
   let nextStatus, byCol, dateCol;
   if(currentStatus === STATUS_PENDING_1){ nextStatus = STATUS_PENDING_2; byCol = MC.approvedBy1; dateCol = MC.approvedDate1; }
   else if(currentStatus === STATUS_PENDING_2){
+    // Overdue (> L2_DELAY_THRESHOLD_DAYS since Level 1) deals need a Level 2
+    // waiting reason on file before they can be approved — see
+    // saveL2DelayReason. Checked against the freshly re-read row.
+    if(isL2Overdue(matching[0].values[0], currentStatus) && !l2DelayInfo(matching[0].values[0])){
+      throw new Error('This deal has been waiting more than ' + L2_DELAY_THRESHOLD_DAYS + ' days since Level 1 approval. Please select and save a Level 2 delay reason in the Approval queue before approving.');
+    }
     if(!file) throw new Error('Please attach the signed agreement before approving at Level 2.');
     // Apply whatever was typed into the modal's Receiving Account inputs
     // before checking for gaps — this is the only place left to fill that
@@ -4841,6 +4832,18 @@ function buildDealTimelineSteps(v, status){
   };
   pushIfDate('Submitted', v[MC.submittedDate], v[MC.submittedBy]);
   pushIfDate('Level 1 Approved', v[MC.approvedDate1], v[MC.approvedBy1]);
+  // Level 2 waiting reason (see l2DelayInfo) — kept here between Level 1
+  // and Level 2 permanently, even after Level 2/3 approve, as a reference.
+  // While still Pending Level 2 and past the threshold with no reason yet,
+  // an "overdue" placeholder shows instead so the wait is visible.
+  const delay = l2DelayInfo(v);
+  if(delay){
+    steps.push({label:'Level 2 on hold: ' + delay.reason, date: delay.date, by: delay.by, state:'onhold',
+      note: delay.reason === 'Other' ? delay.remark : '', reason: l2DelayReasonText(delay)});
+  } else if(isL2Overdue(v, status)){
+    steps.push({label:'Awaiting Level 2 — ' + l2WaitingDays(v) + ' days', date:'', by:'', state:'onhold',
+      note:'No reason selected yet'});
+  }
   pushIfDate('Level 2 Approved', v[MC.approvedDate2], v[MC.approvedBy2]);
   pushIfDate('Level 3 Approved', v[MC.approvedDate3], v[MC.approvedBy3]);
   if(v[MC.rejectedDate]){
@@ -4869,7 +4872,8 @@ function renderDealTimelinePanelHtml(v, status){
         '<div class="deal-timeline-v-dot-col"><div class="deal-timeline-v-dot"></div>'+(isLast?'':'<div class="deal-timeline-v-line"></div>')+'</div>'+
         '<div class="deal-timeline-v-body">'+
           '<div class="deal-timeline-v-label">'+escapeHtml(s.label)+'</div>'+
-          '<div class="deal-timeline-v-date">'+escapeHtml(formatStoredDateTime(s.date))+'</div>'+
+          (s.note ? '<div class="deal-timeline-v-note">'+escapeHtml(s.note)+'</div>' : '')+
+          (s.date ? '<div class="deal-timeline-v-date">'+escapeHtml(formatStoredDateTime(s.date))+(s.state==='onhold' && s.by ? ' · '+escapeHtml(s.by) : '')+'</div>' : '')+
         '</div>'+
       '</div>';
   }).join('');
@@ -5089,35 +5093,18 @@ function renderHistoryTable(el, groups, opts){
     const rowSourceTable = g.sourceTable || (g.rows[0] && g.rows[0]._sourceTable) || STANDARD_LOG_TABLE_NAME;
     const sourceAttr = ' data-logtable="'+escapeHtml(rowSourceTable)+'"';
     // Redemption Form upload step — Approved, Order Type "Stock-Out (R)"
-    // or "Stock-In (R)" REC deals only (see dealRedemptionEligible). No
-    // longer automatic: a Superadmin/Admin has to press "Request Redemption
-    // Docs" on the deal first (see requestRedemptionDocuments/
-    // rowHasRedemptionRequest) — that's what emails the BD user and turns
-    // on the badge/upload button below for them. Purely additive to the
-    // Approved status either way: a small badge next to it, plus buttons
-    // that open openRedemptionModal (BD user/admin, once requested) or fire
-    // the request itself (Superadmin/Admin, before it's been requested),
-    // gated the same "owner or admin" way as every other post-approval
-    // action on this row.
-    const redemptionEligible = dealRedemptionEligible(status, rowSourceTable, v[MC.supplyDemand]);
-    // A deal counts as "requested" either because the flag was actually set
-    // (see rowHasRedemptionRequest/requestRedemptionDocuments) or, for
-    // backward compatibility with deals saved under the OLD automatic
-    // behaviour, because it already has at least one Redemption Form on
-    // file — so pre-existing uploads from before this change stay visible
-    // instead of silently disappearing just because nobody ever pressed the
-    // new "Request Redemption Docs" button for them.
-    const redemptionSummaryRaw = redemptionEligible ? dealRedemptionSummary(g.rows) : null;
-    const redemptionRequested = redemptionEligible &&
-      (rowHasRedemptionRequest(v) || (redemptionSummaryRaw && redemptionSummaryRaw.uploaded > 0));
-    const redemptionInfo = redemptionRequested ? redemptionSummaryRaw : null;
+    // or "Stock-In (R)" REC deals only (see dealNeedsRedemption). Purely additive to the
+    // Approved status: a small badge next to it, plus a button that opens
+    // openRedemptionModal, gated the same "owner or admin" way as every
+    // other post-approval action on this row.
+    const redemptionApplies = dealNeedsRedemption(status, rowSourceTable, v[MC.supplyDemand]);
+    const redemptionInfo = redemptionApplies ? dealRedemptionSummary(g.rows) : null;
     const redemptionBadge = redemptionInfo
       ? (redemptionInfo.complete
           ? '<div style="font-size:11px;color:#1f7a4d;margin-top:2px;">✓ Redemption Documents complete</div>'
           : '<div style="font-size:11px;color:#8a6d1f;margin-top:2px;">⏳ Redemption Documents: '+redemptionInfo.uploaded+' of '+redemptionInfo.total+' uploaded</div>')
       : '';
-    const canManageRedemption = isOwnerOrAdmin && redemptionRequested;
-    const canRequestRedemption = isAdmin && redemptionEligible && !redemptionRequested;
+    const canManageRedemption = isOwnerOrAdmin && redemptionApplies;
     html += '<tr style="border-top:1px solid var(--border);">' +
       (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[MC.salesPic]||'')+'</td>' : '') +
       '<td style="padding:6px;">'+(isPendingDealId(v[MC.dealId]) ? '-' : escapeHtml(friendlyDealId(v[MC.dealId])))+'</td>' +
@@ -5139,7 +5126,6 @@ function renderHistoryTable(el, groups, opts){
         (canRequestEdit ? ' <button type="button" class="secondary history-request-edit-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;">Request edit</button>' : '') +
         (canFullEdit ? ' <button type="button" class="secondary history-full-edit-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;" title="'+escapeHtml(fullEditTitle)+'">Edit &amp; resend</button>' : '') +
         (canManageRedemption ? ' <button type="button" class="secondary history-redemption-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;'+(redemptionInfo.complete?'':'color:#8a6d1f;border-color:#e8c99a;')+'" title="Upload the signed Redemption Form for each product on this deal.">'+(redemptionInfo.complete?'Redemption Documents':'Upload Redemption Docs')+'</button>' : '') +
-        (canRequestRedemption ? ' <button type="button" class="secondary history-request-redemption-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;" title="Ask the BD user to upload the signed Redemption Form(s) for this deal — emails them a notification.">Request Redemption Docs</button>' : '') +
       '</td>' +
     '</tr>';
     if(status === STATUS_REJECTED && v[MC.rejectReason]){
@@ -5215,6 +5201,38 @@ function renderHistoryTable(el, groups, opts){
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
         '<div style="background:#f2ecf7;border:1px solid #d3bfe6;color:#4a2d63;border-radius:6px;padding:8px 10px;font-size:12px;">' +
         '<strong>BD source matching change requested'+requestedBy+':</strong>' + rows + noteHtml +
+        '</div></td></tr>';
+    }
+    // Level 2 waiting reason (see l2DelayInfo/saveL2DelayReason). Shown once
+    // a Pending Level 2 deal has waited more than L2_DELAY_THRESHOLD_DAYS
+    // since Level 1 approval (or whenever a reason is already on file while
+    // still Pending Level 2). Editable only by whoever can act at Level 2
+    // (canAct — admin2/superadmin in the Approval queue); read-only for
+    // everyone else. After Level 2 approves it lives on in the Deal Timeline.
+    const l2Delay = l2DelayInfo(v);
+    if(status === STATUS_PENDING_2 && (l2Delay || isL2Overdue(v, status))){
+      const waitDays = l2WaitingDays(v);
+      const waitText = isNaN(waitDays) ? '' : (' — waiting ' + waitDays + ' day' + (waitDays === 1 ? '' : 's') + ' since Level 1 approval');
+      const currentLine = l2Delay
+        ? '<div style="margin-top:4px;"><strong>Reason:</strong> '+escapeHtml(l2DelayReasonText(l2Delay))+
+            '<span style="color:var(--text-secondary);"> ('+escapeHtml(l2Delay.by||'')+(l2Delay.date?', '+escapeHtml(formatStoredDateTime(l2Delay.date)):'')+')</span></div>'
+        : '<div style="margin-top:4px;">'+(canAct ? '<strong style="color:#8a2d1f;">A reason is required before this deal can be approved.</strong> Please select a reason for the Level 2 delay.' : 'No reason selected yet by Level 2.')+'</div>';
+      let controls = '';
+      if(canAct){
+        const selId = 'l2-delay-sel-' + escapeHtml(v[MC.dealId]||'') + '-' + (rowSourceTable === CC_LOG_TABLE_NAME ? 'cc' : 'rec');
+        const selReason = l2Delay ? l2Delay.reason : '';
+        controls = '<div class="l2-delay-controls" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+'>' +
+          '<select class="l2-delay-select" id="'+selId+'">' +
+            '<option value="">— Select reason —</option>' +
+            L2_DELAY_REASONS.map(r => '<option value="'+escapeHtml(r)+'"'+(r===selReason?' selected':'')+'>'+escapeHtml(r)+'</option>').join('') +
+          '</select>' +
+          '<input type="text" class="l2-delay-remark" placeholder="Write remark" maxlength="500" value="'+escapeHtml(l2Delay && l2Delay.reason==='Other' ? l2Delay.remark : '')+'" style="min-width:220px;flex:1;'+(selReason==='Other'?'':'display:none;')+'"/>' +
+          '<button type="button" class="secondary l2-delay-save-btn" style="padding:4px 10px;font-size:12px;">'+(l2Delay?'Update reason':'Save reason')+'</button>' +
+        '</div>';
+      }
+      html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
+        '<div class="l2-delay-box"><strong>⏳ Level 2 approval pending'+escapeHtml(waitText)+'</strong>' +
+        currentLine + controls +
         '</div></td></tr>';
     }
     if(v[MC.description] && (status === STATUS_PENDING_1 || status === STATUS_REVERTED_1)){
@@ -6046,9 +6064,7 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
 /* ---- Redemption Documents modal ----
    Opened from the "Upload Redemption Docs"/"Redemption Documents" button
    renderHistoryTable adds to an Approved, Order Type "Stock-Out (R)" or
-   "Stock-In (R)" REC deal once a Superadmin/Admin has requested it (see
-   dealRedemptionEligible/rowHasRedemptionRequest/requestRedemptionDocuments).
-   One file-picker + Upload/Replace button
+   "Stock-In (R)" REC deal (see dealNeedsRedemption). One file-picker + Upload/Replace button
    per product row — each upload happens immediately (same "pick a file,
    it uploads right away" pattern as the rest of this app's file inputs),
    and the modal just re-renders itself from the freshly-saved row afterward
@@ -6071,7 +6087,7 @@ function isRedemptionDueSoon(deliveryEndRaw){
   return d.getTime() <= weekFromNowUtc;
 }
 // Redemption Documents are REC-only (see saveRedemptionUpload/
-// dealRedemptionEligible), so a row's Vintage is always a plain start/end
+// dealNeedsRedemption), so a row's Vintage is always a plain start/end
 // YEAR pair (MC.vFromYY/vToYY — e.g. "2026"), never the month+year or
 // Carbon-Credit-style vintage used elsewhere. Renders that pair as the
 // short "V26" tag for the modal's product titles, or "V25/26" when the
@@ -6131,11 +6147,6 @@ function openRedemptionModal(dealId, tableName){
   const rows = logRowsCache
     .filter(r => String(r.values[0][MC.dealId] || '').trim() === String(dealId).trim() && (r._sourceTable||STANDARD_LOG_TABLE_NAME) === redemptionModalTableName)
     .sort((a,b)=> a.index - b.index);
-  const requestedByEl = document.getElementById('redemption-modal-requested-by');
-  const rv0 = rows.length ? rows[0].values[0] : null;
-  requestedByEl.textContent = (rv0 && rowHasRedemptionRequest(rv0))
-    ? 'Requested by ' + rv0[MC.redemptionRequestedBy] + (rv0[MC.redemptionRequestedDate] ? ' on ' + formatStoredDate(rv0[MC.redemptionRequestedDate]) : '')
-    : '';
   document.getElementById('redemption-modal-fields').innerHTML = redemptionModalFieldsHtml(rows);
   document.getElementById('redemption-modal-overlay').style.display = 'flex';
 }
@@ -6197,7 +6208,33 @@ document.getElementById('redemption-modal-fields').addEventListener('click', asy
   }
 });
 
+document.addEventListener('change', (e)=>{
+  const sel = e.target.closest && e.target.closest('.l2-delay-select');
+  if(!sel) return;
+  const wrap = sel.closest('.l2-delay-controls');
+  const remark = wrap && wrap.querySelector('.l2-delay-remark');
+  if(remark){
+    remark.style.display = sel.value === 'Other' ? '' : 'none';
+    if(sel.value === 'Other') remark.focus();
+  }
+});
 document.addEventListener('click', (e)=>{
+  const l2SaveBtn = e.target.closest('.l2-delay-save-btn');
+  if(l2SaveBtn){
+    const wrap = l2SaveBtn.closest('.l2-delay-controls');
+    const dealId = wrap.getAttribute('data-dealid');
+    const tableName = wrap.getAttribute('data-logtable');
+    const reason = wrap.querySelector('.l2-delay-select').value;
+    const remark = wrap.querySelector('.l2-delay-remark').value;
+    if(!reason){ alert('Please select a reason.'); return; }
+    if(reason === 'Other' && !remark.trim()){ alert('Please write a remark for "Other".'); wrap.querySelector('.l2-delay-remark').focus(); return; }
+    l2SaveBtn.disabled = true;
+    const oldLabel = l2SaveBtn.textContent;
+    l2SaveBtn.textContent = 'Saving…';
+    saveL2DelayReason(dealId, tableName, reason, remark)
+      .catch(err=>{ console.error('Save L2 reason failed', err); alert('Could not save reason: ' + err.message); l2SaveBtn.disabled = false; l2SaveBtn.textContent = oldLabel; });
+    return;
+  }
   const viewBtn = e.target.closest('.history-view-btn');
   if(viewBtn){
     const dealId = viewBtn.getAttribute('data-dealid');
@@ -6216,6 +6253,13 @@ document.addEventListener('click', (e)=>{
     setActiveDealLogTable(approveBtn.getAttribute('data-logtable'));
     const dealStatus = submittedDealStatus(dealId);
     if(dealStatus === STATUS_PENDING_2){
+      const firstRow = logRowsCache.find(r => String(r.values[0][MC.dealId] || '').trim() === dealId && (r._sourceTable||STANDARD_LOG_TABLE_NAME) === dealLogTableName());
+      if(firstRow && isL2Overdue(firstRow.values[0], STATUS_PENDING_2) && !l2DelayInfo(firstRow.values[0])){
+        alert('This deal has been waiting more than ' + L2_DELAY_THRESHOLD_DAYS + ' days since Level 1 approval. Please select and save a reason in the "Level 2 approval pending" box below this deal before approving.');
+        const sel = document.querySelector('.l2-delay-controls[data-dealid="'+dealId.replace(/"/g,'\\"')+'"] .l2-delay-select');
+        if(sel){ sel.scrollIntoView({block:'center'}); sel.focus(); }
+        return;
+      }
       openApproveModal(dealId);
       return;
     }
@@ -6264,19 +6308,6 @@ document.addEventListener('click', (e)=>{
     const tableName = redemptionBtn.getAttribute('data-logtable');
     setActiveDealLogTable(tableName);
     openRedemptionModal(redemptionBtn.getAttribute('data-dealid'), tableName);
-    return;
-  }
-  const requestRedemptionBtn = e.target.closest('.history-request-redemption-btn');
-  if(requestRedemptionBtn){
-    const dealId = requestRedemptionBtn.getAttribute('data-dealid');
-    const tableName = requestRedemptionBtn.getAttribute('data-logtable');
-    setActiveDealLogTable(tableName);
-    if(confirm('Request Redemption Documents for Deal ID ' + friendlyDealId(dealId) + '? This emails the BD user to upload the signed Redemption Form(s) for each product on this deal.')){
-      requestRedemptionBtn.disabled = true;
-      requestRedemptionDocuments(dealId, tableName)
-        .catch(err=>{ console.error('Request Redemption Documents failed', err); alert('Request failed: ' + err.message); })
-        .finally(()=>{ requestRedemptionBtn.disabled = false; });
-    }
   }
 });
 
@@ -6688,22 +6719,6 @@ function isDealOwnerEmail(email, salesPic, submittedBy){
   if(!email) return false;
   if(String(submittedBy || '').toLowerCase() === email) return true;
   return bdInChargeEmail(salesPic) === email;
-}
-// The deal-owner email addresses isDealOwnerEmail checks against — the
-// submitter and the BD in-charge (see bdInChargeEmail) — deduped and
-// lowercased, for notifications (e.g. notifyRedemptionRequested) that
-// should reach the BD user regardless of which of the two identities is on
-// file, without emailing the same person twice when they're the same
-// address.
-function dealOwnerEmails(salesPic, submittedBy){
-  const emails = [];
-  const seen = new Set();
-  [String(submittedBy || '').trim().toLowerCase(), bdInChargeEmail(salesPic)].forEach(e=>{
-    if(!e || seen.has(e)) return;
-    seen.add(e);
-    emails.push(e);
-  });
-  return emails;
 }
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const YEARS = ["2025","2026","2027","2028","2029","2030"];
@@ -7125,7 +7140,7 @@ function isStockOutR(orderType){
   return String(orderType || '').trim() === 'Stock-Out (R)';
 }
 // True for either of the two Order Types that carry the Redemption Form
-// eligibility (see dealRedemptionEligible) — "Stock-Out (R)" and "Stock-In
+// requirement (see dealNeedsRedemption) — "Stock-Out (R)" and "Stock-In
 // (R)". Deliberately separate from isStockOutR, which only ever means the
 // original "Stock-Out (R)" type and still solely governs the Buyer
 // Receiving Account field being hidden/blanked (transferAccountValue/
@@ -9603,6 +9618,12 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
       if(finalStatus === STATUS_PENDING_1){
         values[MC.approvedBy1] = ''; values[MC.approvedDate1] = '';
         values[MC.agreementFileName] = ''; values[MC.agreementFileUrl] = '';
+        // Level 2 waiting reason relates to the pre-edit Level 1 approval,
+        // so it's cleared along with it (only if those columns exist).
+        if(values.length > MC.l2DelayDate){
+          values[MC.l2DelayReason] = ''; values[MC.l2DelayRemark] = '';
+          values[MC.l2DelayBy] = ''; values[MC.l2DelayDate] = '';
+        }
       }
       if(finalStatus === STATUS_PENDING_1 || finalStatus === STATUS_PENDING_2){
         values[MC.approvedBy2] = ''; values[MC.approvedDate2] = '';
