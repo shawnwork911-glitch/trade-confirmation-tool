@@ -4403,6 +4403,43 @@ function confirmationGroupDeliveryDates(g, fromDate, toDate){
   if(!seen.size && (fromDate || toDate)) return confirmationGroupDeliveryDates(g, null, null);
   return [...seen.entries()].sort((a,b)=>a[0]-b[0]).map(pair=>pair[1]);
 }
+// Sort order for My saved confirmations / Approval queue / All
+// confirmations: deals NOT yet through Level 3 approval first, earliest
+// Delivery End Date at the top (dates already
+// passed included, oldest first). A multi-product deal is placed by its
+// EARLIEST product Delivery End Date. Deals with no readable Delivery End
+// Date go to the bottom. Ties fall back to newest-submitted first.
+function groupEarliestDeliveryEndMs(g){
+  let min = Infinity;
+  (g && g.rows || []).forEach(r=>{
+    const d = parseStoredDateToDate(r.values[0][MC.deliveryEnd]);
+    if(d && d.getTime() < min) min = d.getTime();
+  });
+  return min;
+}
+// A deal that has completed Level 3 approval (Approved, or an Approved deal
+// with a post-approval change request pending — approvedDate3 is stamped
+// either way) is "done": it drops below every deal still in the approval
+// chain, and those done deals keep the old newest-submitted-first order.
+function groupHasPassedLevel3(g){
+  const status = dealGroupStatus(g.rows);
+  return status === STATUS_APPROVED || status === STATUS_PENDING_CHANGE_3;
+}
+function compareGroupsBySubmittedDesc(a, b){
+  return String(b.rows[0].values[0][MC.submittedDate]||'').localeCompare(String(a.rows[0].values[0][MC.submittedDate]||''));
+}
+function compareGroupsByDeliveryEnd(a, b){
+  const doneA = groupHasPassedLevel3(a), doneB = groupHasPassedLevel3(b);
+  if(doneA !== doneB) return doneA ? 1 : -1;
+  if(doneA) return compareGroupsBySubmittedDesc(a, b);
+  const da = groupEarliestDeliveryEndMs(a), db = groupEarliestDeliveryEndMs(b);
+  if(da !== db){
+    if(da === Infinity) return 1;
+    if(db === Infinity) return -1;
+    return da - db;
+  }
+  return String(b.rows[0].values[0][MC.submittedDate]||'').localeCompare(String(a.rows[0].values[0][MC.submittedDate]||''));
+}
 function confirmationGroupMatchesFilter(g, searchLower, statusFilter, typeFilter, orderTypeFilter, deliveryFromFilter, deliveryToFilter){
   if(typeFilter && confirmationGroupType(g) !== typeFilter) return false;
   if(orderTypeFilter && String((g.rows[0].values[0]||[])[MC.supplyDemand] || '').trim() !== orderTypeFilter) return false;
@@ -4495,11 +4532,13 @@ async function loadHistory(){
     // since a deal is often filled in by ops on a BD's behalf.
     const mineGroups = groupByDealId(
       rows.filter(r => isDealOwnerEmail(myEmail, r.values[0][MC.salesPic], r.values[0][MC.submittedBy]))
-    ).sort((a,b)=> String(b.rows[0].values[0][MC.submittedDate]||'').localeCompare(String(a.rows[0].values[0][MC.submittedDate]||'')));
+    ).sort(compareGroupsByDeliveryEnd);
     historyGroupsCache.mine = mineGroups;
 
-    const allGroups = groupByDealId(rows)
-      .sort((a,b)=> String(b.rows[0].values[0][MC.submittedDate]||'').localeCompare(String(a.rows[0].values[0][MC.submittedDate]||'')));
+    // Earliest Delivery End Date first (see compareGroupsByDeliveryEnd).
+    // The Approval queue is filtered out of this list below, so it keeps
+    // the same order.
+    const allGroups = groupByDealId(rows).sort(compareGroupsByDeliveryEnd);
     historyGroupsCache.admin = allGroups;
 
     // "All confirmations" is now visible to every signed-in user, not just
