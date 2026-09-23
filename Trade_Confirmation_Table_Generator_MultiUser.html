@@ -4428,10 +4428,17 @@ function groupHasPassedLevel3(g){
 function compareGroupsBySubmittedDesc(a, b){
   return String(b.rows[0].values[0][MC.submittedDate]||'').localeCompare(String(a.rows[0].values[0][MC.submittedDate]||''));
 }
+// Three tiers, top to bottom: 0 = still in the approval chain (sorted by
+// earliest Delivery End Date), 1 = through Level 3, 2 = Rejected (always
+// at the very bottom). Tiers 1 and 2 are newest-submitted first.
+function groupSortTier(g){
+  if(dealGroupStatus(g.rows) === STATUS_REJECTED) return 2;
+  return groupHasPassedLevel3(g) ? 1 : 0;
+}
 function compareGroupsByDeliveryEnd(a, b){
-  const doneA = groupHasPassedLevel3(a), doneB = groupHasPassedLevel3(b);
-  if(doneA !== doneB) return doneA ? 1 : -1;
-  if(doneA) return compareGroupsBySubmittedDesc(a, b);
+  const tierA = groupSortTier(a), tierB = groupSortTier(b);
+  if(tierA !== tierB) return tierA - tierB;
+  if(tierA > 0) return compareGroupsBySubmittedDesc(a, b);
   const da = groupEarliestDeliveryEndMs(a), db = groupEarliestDeliveryEndMs(b);
   if(da !== db){
     if(da === Infinity) return 1;
