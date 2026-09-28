@@ -7513,12 +7513,27 @@ function tagBdChecklistHtml(id, currentValue, bdSelectId){
   const current = parseTagBdList(currentValue);
   const extra = current.filter(n => !BD_NAMES.includes(n)); // legacy names kept
   const names = extra.concat(BD_NAMES);
-  return '<div class="tag-bd-checklist" data-target="'+escapeHtml(id)+'" data-bd="'+escapeHtml(bdSelectId || '')+'" style="display:flex;flex-wrap:wrap;gap:4px 14px;border:1px solid var(--border);border-radius:8px;padding:8px 10px;max-height:150px;overflow:auto;">' +
+  // A tickbox on top shows/hides the name list: unticked = nobody tagged
+  // (list hidden and cleared); ticked = list pops out.
+  const on = current.length > 0;
+  return '<div class="tag-bd-checklist" data-target="'+escapeHtml(id)+'" data-bd="'+escapeHtml(bdSelectId || '')+'" style="display:flex;flex-direction:column;gap:6px;">' +
     '<input type="hidden" id="'+escapeHtml(id)+'" value="'+escapeHtml(current.join('; '))+'"/>' +
+    '<label class="tag-bd-toggle-label" style="display:inline-flex;align-items:center;gap:6px;margin:0;font-size:13px;font-weight:normal;text-transform:none;letter-spacing:normal;cursor:pointer;">' +
+      '<input type="checkbox" class="tag-bd-toggle"'+(on?' checked':'')+' style="width:auto;margin:0;"/>' +
+      '<span>Tag other BD(s) to view this deal</span></label>' +
+    '<div class="tag-bd-list" style="display:'+(on?'flex':'none')+';flex-wrap:wrap;gap:4px 14px;border:1px solid var(--border);border-radius:8px;padding:8px 10px;max-height:150px;overflow:auto;">' +
     names.map(n => '<label class="tag-bd-option" style="display:inline-flex;align-items:center;gap:5px;margin:0;font-size:13px;font-weight:normal;text-transform:none;letter-spacing:normal;cursor:pointer;">' +
       '<input type="checkbox" class="tag-bd-cb" data-name="'+escapeHtml(n)+'"'+(current.includes(n)?' checked':'')+' style="width:auto;margin:0;"/>' +
       '<span>'+escapeHtml(n)+'</span></label>').join('') +
+    '</div>' +
   '</div>';
+}
+// Shows/hides the name list to match the tickbox.
+function setTagBdListVisible(box, visible){
+  const toggle = box.querySelector('.tag-bd-toggle');
+  const list = box.querySelector('.tag-bd-list');
+  if(toggle) toggle.checked = !!visible;
+  if(list) list.style.display = visible ? 'flex' : 'none';
 }
 // Re-derives every checkbox from the hidden value, greying out (and
 // dropping) the current BD in-charge. Called after anything that sets the
@@ -7543,11 +7558,32 @@ function syncTagBdChecklist(box){
     }
   });
   hidden.value = list.join('; ');
+  const toggle = box.querySelector('.tag-bd-toggle');
+  if(toggle) toggle.disabled = locked;
+  // Anyone tagged → tickbox on and list shown. Nobody tagged → leave the
+  // tickbox as the user set it (they may have just ticked it to pick).
+  if(list.length) setTagBdListVisible(box, true);
 }
 function syncAllTagBdChecklists(root){
   (root || document).querySelectorAll('.tag-bd-checklist').forEach(syncTagBdChecklist);
 }
 document.addEventListener('change', (e)=>{
+  const toggle = e.target.closest && e.target.closest('.tag-bd-toggle');
+  if(toggle){
+    const box = toggle.closest('.tag-bd-checklist');
+    if(!box) return;
+    setTagBdListVisible(box, toggle.checked);
+    if(!toggle.checked){
+      // Unticked = nobody tagged: clear every name.
+      box.querySelectorAll('.tag-bd-cb').forEach(x => { x.checked = false; });
+      const hidden = document.getElementById(box.getAttribute('data-target'));
+      if(hidden && hidden.value){
+        hidden.value = '';
+        hidden.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    }
+    return;
+  }
   const cb = e.target.closest && e.target.closest('.tag-bd-cb');
   if(cb){
     const box = cb.closest('.tag-bd-checklist');
@@ -7946,7 +7982,7 @@ document.getElementById('header-fields').innerHTML =
   headerField('Deal Date', dateHtml('h-date'),'h-date') +
   headerField('Entity', selectHtml('h-entity',['MY','SG'],'MY'),'h-entity') +
   headerField('BD in-charge', selectHtml('h-bd',BD_NAMES,BD_NAMES[0]),'h-bd') +
-  '<div style="grid-column:1 / -1;">'+headerField('Tag BD in-charge (optional — view only, tick any number)', tagBdChecklistHtml('h-tag-bd','','h-bd'),'h-tag-bd')+'</div>' +
+  '<div style="grid-column:1 / -1;">'+headerField('Tag BD in-charge (optional — view only)', tagBdChecklistHtml('h-tag-bd','','h-bd'),'h-tag-bd')+'</div>' +
   headerField('Order type', selectHtml('h-order',ORDER_TYPES,'Stock-In (T)'),'h-order') +
   '<div id="h-role-wrap"><label for="h-role">Buyer or Seller</label>'+
   '<input type="text" id="h-role" value="Seller" readonly/></div>' +
@@ -9631,7 +9667,7 @@ function recapEditFormHtml(dealId, sortedGroup){
       recapEditFieldHtml('Deal Date', '<input type="date" id="re-h-date" value="'+escapeHtml(toDateInputValue(head[MC.agreementDate]))+'"/>')+
       recapEditFieldHtml('Entity', '<input type="text" id="re-h-entity" value="'+escapeHtml(head[MC.entity]||'')+'"/>')+
       recapEditFieldHtml('BD in-charge', bdInChargeSelectHtml('re-h-bd', head[MC.salesPic]))+
-      '<div style="grid-column:1 / -1;">'+recapEditFieldHtml('Tag BD in-charge (optional — view only, tick any number)', tagBdChecklistHtml('re-h-tag-bd', dealTaggedBd(sortedGroup), 're-h-bd'))+'</div>'+
+      '<div style="grid-column:1 / -1;">'+recapEditFieldHtml('Tag BD in-charge (optional — view only)', tagBdChecklistHtml('re-h-tag-bd', dealTaggedBd(sortedGroup), 're-h-bd'))+'</div>'+
       recapEditFieldHtml(role+' Full Name', '<input type="text" id="re-h-company" value="'+escapeHtml(head[MC.company]||'')+'"/>')+
       (isCC ? recapEditFieldHtml('Project Name', '<input type="text" id="re-h-project-name" value="'+escapeHtml(head[MC.projectName]||'')+'"/>')+
               recapEditFieldHtml('Project ID', '<input type="text" id="re-h-project-id" value="'+escapeHtml(head[MC.projectId]||'')+'"/>')+
@@ -10149,7 +10185,7 @@ function fullEditFormHtml(dealId, sortedGroup){
       recapEditFieldHtml('Deal Date', '<input type="date" id="fe-h-date" value="'+escapeHtml(toDateInputValue(head[MC.agreementDate]))+'"/>')+
       recapEditFieldHtml('Entity', '<input type="text" id="fe-h-entity" value="'+escapeHtml(head[MC.entity]||'')+'"/>')+
       recapEditFieldHtml('BD in-charge', bdInChargeSelectHtml('fe-h-bd', head[MC.salesPic]))+
-      '<div style="grid-column:1 / -1;">'+recapEditFieldHtml('Tag BD in-charge (optional — view only, tick any number)', tagBdChecklistHtml('fe-h-tag-bd', dealTaggedBd(sortedGroup), 'fe-h-bd'))+'</div>'+
+      '<div style="grid-column:1 / -1;">'+recapEditFieldHtml('Tag BD in-charge (optional — view only)', tagBdChecklistHtml('fe-h-tag-bd', dealTaggedBd(sortedGroup), 'fe-h-bd'))+'</div>'+
       recapEditFieldHtml(role+' Full Name', '<input type="text" id="fe-h-company" value="'+escapeHtml(head[MC.company]||'')+'"/>')+
       (isCC ? recapEditFieldHtml('Project Name', '<input type="text" id="fe-h-project-name" value="'+escapeHtml(head[MC.projectName]||'')+'"/>')+recapEditFieldHtml('Project ID', '<input type="text" id="fe-h-project-id" value="'+escapeHtml(head[MC.projectId]||'')+'"/>')+recapEditFieldHtml('Project Type', '<input type="text" id="fe-h-project-type" value="'+escapeHtml(head[MC.vFromMM]||'')+'"/>')+recapEditFieldHtml('Methodology', '<input type="text" id="fe-h-methodology" value="'+escapeHtml(head[MC.vToMM]||'')+'"/>') : '')+
     '</div>';
