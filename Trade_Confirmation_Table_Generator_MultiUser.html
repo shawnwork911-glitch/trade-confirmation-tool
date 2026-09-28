@@ -3808,6 +3808,7 @@ function applyDraftData(data){
     if(currentProductMode !== 'carboncredit') syncCodUiFromHidden(i); // REC-only COD UI
   }
   refreshRoleDependentUi();
+  syncAllTagBdChecklists();
   currentDealDocId = data.dealId || val('h-dealid-num') || null;
   currentSubmittedDate = data.submittedDate || null;
   suppressAutosave = false;
@@ -4009,7 +4010,7 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
   const tradeCount = parseInt(document.getElementById('trade-count').value, 10) || 1;
   // Tag BD in-charge (optional, RECs and Carbon Credit). Only needs the
   // column when someone is actually tagged.
-  const tagBdValue = val('h-tag-bd').trim();
+  const tagBdValue = normalizeTagBdValue(val('h-tag-bd'), val('h-bd'));
   await getTableColumnCount(dealLogTableName(), true); // fresh header names
   if(tagBdValue && tagBdColumnIndex(dealLogTableName()) < 0){
     throw new Error('The ' + (currentProductMode === 'carboncredit' ? 'CCDealLog' : 'TradeDealLog') + ' table in SharePoint is missing the "' + TAG_BD_COLUMN_NAME + '" column needed for "Tag BD in-charge". Ask an admin to add it at the end of the table, or clear "Tag BD in-charge" and try again.');
@@ -5067,7 +5068,7 @@ async function loadHistory(){
     // them the View button only, never any edit/action buttons.
     const mineGroups = groupByDealId(
       rows.filter(r => isDealOwnerEmail(myEmail, r.values[0][MC.salesPic], r.values[0][MC.submittedBy]) ||
-                       (r.values[0].__tagBd && bdInChargeEmail(r.values[0].__tagBd) === myEmail))
+                       isTaggedBdEmail(myEmail, r.values[0].__tagBd))
     ).sort(compareGroupsByDeliveryEnd);
     historyGroupsCache.mine = mineGroups;
 
@@ -5577,7 +5578,7 @@ function renderHistoryTable(el, groups, opts){
     const isOwnerOrAdmin = isAdmin || isDealOwner;
     // Tagged BD in-charge: may open the deal (View) but nothing else.
     const isTaggedViewer = !isOwnerOrAdmin && isTaggedBdViewer(myEmailLower, g.rows);
-    const taggedBdName = dealTaggedBd(g.rows);
+    const taggedBdName = dealTaggedBdList(g.rows).join(', ');
     const deliveryDatesText = confirmationGroupDeliveryDates(g, deliveryFrom, deliveryTo).join(', ');
     if(restrictOthers && !isOwnerOrAdmin && !isTaggedViewer){
       html += '<tr class="confirmation-row-restricted" style="border-top:1px solid var(--border);">' +
@@ -5739,10 +5740,14 @@ function renderHistoryTable(el, groups, opts){
         (canReject ? ' <button type="button" class="secondary history-reject-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#8a2d1f;border-color:#c1493a;" title="Discards this requested BD source matching correction — the deal\'s already-Approved details are left untouched.">Reject change</button>' : '') +
         (canRequestEdit ? ' <button type="button" class="secondary history-request-edit-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;">Request edit</button>' : '') +
         (canFullEdit ? ' <button type="button" class="secondary history-full-edit-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;" title="'+escapeHtml(fullEditTitle)+'">Edit &amp; resend</button>' : '') +
-        (canManageRedemption ? ' <button type="button" class="secondary history-redemption-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;'+((redemptionUploadNeeded||redemptionRet)?'color:#8a6d1f;border-color:#e8c99a;':'')+'" title="'+escapeHtml(redemptionBtnTitle)+'">'+redemptionBtnLabel+'</button>' : '') +
-        (canConfirmRedemption ? ' <button type="button" class="secondary history-redemption-confirm-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#1f7a4d;border-color:#9ccfb3;" title="Every product has its Redemption Form — confirm the Redemption step is complete. Files are locked after this.">Confirm Redemption Complete</button>' : '') +
-        (canReturnRedemption ? ' <button type="button" class="secondary history-redemption-return-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#8a6d1f;border-color:#e8c99a;" title="Send the Redemption Documents back to the user with a comment on what to fix.">Return to User</button>' : '') +
-        (canRequestRedemption ? ' <button type="button" class="secondary history-redemption-request-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' data-requested="'+(redemptionReq?'1':'')+'" style="padding:4px 10px;font-size:12px;" title="'+(redemptionReq?'Re-send the Redemption Documents request email to the submitter and BD in-charge.':'Ask the submitter and BD in-charge to upload the signed Redemption Forms for this deal (sends them an email).')+'">'+(redemptionReq?'Resend Redemption Request':'Request Redemption Docs')+'</button>' : '') +
+        ((canManageRedemption || canRequestRedemption || canConfirmRedemption || canReturnRedemption)
+          ? ' <span class="history-redemption-stack" style="display:inline-flex;flex-direction:column;align-items:stretch;gap:4px;vertical-align:middle;">' +
+            (canManageRedemption ? '<button type="button" class="secondary history-redemption-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;'+((redemptionUploadNeeded||redemptionRet)?'color:#8a6d1f;border-color:#e8c99a;':'')+'" title="'+escapeHtml(redemptionBtnTitle)+'">'+redemptionBtnLabel+'</button>' : '') +
+            (canRequestRedemption ? '<button type="button" class="secondary history-redemption-request-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' data-requested="'+(redemptionReq?'1':'')+'" style="padding:4px 10px;font-size:12px;" title="'+(redemptionReq?'Re-send the Redemption Documents request email to the submitter and BD in-charge.':'Ask the submitter and BD in-charge to upload the signed Redemption Forms for this deal (sends them an email).')+'">'+(redemptionReq?'Resend Redemption Request':'Request Redemption Docs')+'</button>' : '') +
+            (canConfirmRedemption ? '<button type="button" class="secondary history-redemption-confirm-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#1f7a4d;border-color:#9ccfb3;" title="Every product has its Redemption Form — confirm the Redemption step is complete. Files are locked after this.">Confirm Redemption Complete</button>' : '') +
+            (canReturnRedemption ? '<button type="button" class="secondary history-redemption-return-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#8a6d1f;border-color:#e8c99a;" title="Send the Redemption Documents back to the user with a comment on what to fix.">Return to User</button>' : '') +
+            '</span>'
+          : '') +
       '</td>' +
     '</tr>';
     if(status === STATUS_REJECTED && v[MC.rejectReason]){
@@ -7463,7 +7468,24 @@ function isDealOwnerEmail(email, salesPic, submittedBy){
   if(String(submittedBy || '').toLowerCase() === email) return true;
   return bdInChargeEmail(salesPic) === email;
 }
-// The deal's "Tag BD in-charge" name, or '' if none.
+// "Tag BD in-charge" can hold SEVERAL people: stored in the one "Tagged BD
+// In-charge" cell as a "; "-joined list of BD_NAMES (same convention as
+// the per-BD-source fields). A single legacy name reads as a list of one.
+function parseTagBdList(value){
+  const seen = new Set();
+  return String(value || '').split(/;\s*/).map(n => n.trim()).filter(n => {
+    if(!n || seen.has(n.toLowerCase())) return false;
+    seen.add(n.toLowerCase());
+    return true;
+  });
+}
+// Normalised "; "-joined value to store — drops the deal's own BD in-charge
+// (they already have full access, so tagging them is redundant).
+function normalizeTagBdValue(value, bdInChargeName){
+  const bd = String(bdInChargeName || '').trim().toLowerCase();
+  return parseTagBdList(value).filter(n => n.toLowerCase() !== bd).join('; ');
+}
+// The deal's tagged BD list, as stored ("; "-joined), or '' if none.
 function dealTaggedBd(rows){
   for(const r of (rows || [])){
     const t = r && r.values && r.values[0] && r.values[0].__tagBd;
@@ -7471,29 +7493,82 @@ function dealTaggedBd(rows){
   }
   return '';
 }
-// True if `email` (lowercased) is the deal's tagged BD — VIEW-ONLY access:
-// they can open the whole deal but get no edit/action buttons. Deliberately
-// separate from isDealOwnerEmail, which grants owner (self-service) rights.
-function isTaggedBdViewer(email, rows){
+function dealTaggedBdList(rows){ return parseTagBdList(dealTaggedBd(rows)); }
+// True if `email` (lowercased) is ANY of the deal's tagged BDs — VIEW-ONLY
+// access: they can open the whole deal but get no edit/action buttons.
+// Deliberately separate from isDealOwnerEmail (owner rights).
+function isTaggedBdEmail(email, tagValue){
   if(!email) return false;
-  const tagged = dealTaggedBd(rows);
-  return !!tagged && bdInChargeEmail(tagged) === email;
+  return parseTagBdList(tagValue).some(n => bdInChargeEmail(n) === email);
 }
-// Dropdown for "Tag BD in-charge": optional ("— None —"), same BD_NAMES list
-// as BD in-charge, keeping a legacy saved value as an extra option.
-function tagBdSelectHtml(id, currentValue){
-  const current = String(currentValue || '').trim();
-  const names = (current && !BD_NAMES.includes(current)) ? [current].concat(BD_NAMES) : BD_NAMES;
-  const opts = '<option value=""'+(current?'':' selected')+'>— None —</option>' +
-    names.map(n => '<option value="'+escapeHtml(n)+'"'+(n===current?' selected':'')+'>'+escapeHtml(n)+'</option>').join('');
-  return '<select id="'+id+'">'+opts+'</select>';
+function isTaggedBdViewer(email, rows){
+  return isTaggedBdEmail(email, dealTaggedBd(rows));
 }
+// Checklist for "Tag BD in-charge": tick any number of people (or none).
+// The real value lives in a hidden input `id` ("; "-joined), so drafts, field
+// locks and val()/rv() all keep working exactly like a normal field; the
+// checkboxes just mirror it (see syncTagBdChecklist). bdSelectId is the BD
+// in-charge dropdown on the same form — that person is greyed out here.
+function tagBdChecklistHtml(id, currentValue, bdSelectId){
+  const current = parseTagBdList(currentValue);
+  const extra = current.filter(n => !BD_NAMES.includes(n)); // legacy names kept
+  const names = extra.concat(BD_NAMES);
+  return '<div class="tag-bd-checklist" data-target="'+escapeHtml(id)+'" data-bd="'+escapeHtml(bdSelectId || '')+'" style="display:flex;flex-wrap:wrap;gap:4px 14px;border:1px solid var(--border);border-radius:8px;padding:8px 10px;max-height:150px;overflow:auto;">' +
+    '<input type="hidden" id="'+escapeHtml(id)+'" value="'+escapeHtml(current.join('; '))+'"/>' +
+    names.map(n => '<label class="tag-bd-option" style="display:inline-flex;align-items:center;gap:5px;margin:0;font-size:13px;font-weight:normal;text-transform:none;letter-spacing:normal;cursor:pointer;">' +
+      '<input type="checkbox" class="tag-bd-cb" data-name="'+escapeHtml(n)+'"'+(current.includes(n)?' checked':'')+' style="width:auto;margin:0;"/>' +
+      '<span>'+escapeHtml(n)+'</span></label>').join('') +
+  '</div>';
+}
+// Re-derives every checkbox from the hidden value, greying out (and
+// dropping) the current BD in-charge. Called after anything that sets the
+// hidden value directly (draft restore, field-lock restore, form render).
+function syncTagBdChecklist(box){
+  if(!box) return;
+  const hidden = document.getElementById(box.getAttribute('data-target'));
+  if(!hidden) return;
+  const bdEl = box.getAttribute('data-bd') ? document.getElementById(box.getAttribute('data-bd')) : null;
+  const bd = bdEl ? String(bdEl.value || '').trim() : '';
+  const locked = !!box.closest('.field-locked');
+  const list = parseTagBdList(normalizeTagBdValue(hidden.value, bd));
+  box.querySelectorAll('.tag-bd-cb').forEach(cb => {
+    const name = cb.getAttribute('data-name');
+    const isBd = !!bd && name.toLowerCase() === bd.toLowerCase();
+    cb.checked = !isBd && list.includes(name);
+    cb.disabled = isBd || locked;
+    const label = cb.closest('.tag-bd-option');
+    if(label){
+      label.style.opacity = isBd ? '0.5' : '';
+      label.title = isBd ? 'Already the BD in-charge — has full access' : '';
+    }
+  });
+  hidden.value = list.join('; ');
+}
+function syncAllTagBdChecklists(root){
+  (root || document).querySelectorAll('.tag-bd-checklist').forEach(syncTagBdChecklist);
+}
+document.addEventListener('change', (e)=>{
+  const cb = e.target.closest && e.target.closest('.tag-bd-cb');
+  if(cb){
+    const box = cb.closest('.tag-bd-checklist');
+    const hidden = box && document.getElementById(box.getAttribute('data-target'));
+    if(hidden){
+      hidden.value = Array.from(box.querySelectorAll('.tag-bd-cb')).filter(x => x.checked).map(x => x.getAttribute('data-name')).join('; ');
+      hidden.dispatchEvent(new Event('input', { bubbles: true })); // let draft autosave notice
+    }
+    return;
+  }
+  // BD in-charge changed on the same form → re-grey the checklist.
+  if(e.target && e.target.id){
+    document.querySelectorAll('.tag-bd-checklist[data-bd="'+e.target.id+'"]').forEach(syncTagBdChecklist);
+  }
+});
 // For the edit forms: works out where to write the (possibly changed) tag.
 // Returns null when nothing needs writing, {error} when the column is
 // missing but a tag was chosen, else {idx, value}.
-async function resolveTagBdWrite(tableName, newValue, oldValue){
-  newValue = String(newValue || '').trim();
-  oldValue = String(oldValue || '').trim();
+async function resolveTagBdWrite(tableName, newValue, oldValue, bdInChargeName){
+  newValue = normalizeTagBdValue(newValue, bdInChargeName);
+  oldValue = parseTagBdList(oldValue).join('; ');
   await getTableColumnCount(tableName, true);
   const idx = tagBdColumnIndex(tableName);
   if(idx < 0){
@@ -7871,7 +7946,7 @@ document.getElementById('header-fields').innerHTML =
   headerField('Deal Date', dateHtml('h-date'),'h-date') +
   headerField('Entity', selectHtml('h-entity',['MY','SG'],'MY'),'h-entity') +
   headerField('BD in-charge', selectHtml('h-bd',BD_NAMES,BD_NAMES[0]),'h-bd') +
-  '<div id="h-tag-bd-wrap">'+headerField('Tag BD in-charge (optional — view only)', tagBdSelectHtml('h-tag-bd',''),'h-tag-bd')+'</div>' +
+  '<div style="grid-column:1 / -1;">'+headerField('Tag BD in-charge (optional — view only, tick any number)', tagBdChecklistHtml('h-tag-bd','','h-bd'),'h-tag-bd')+'</div>' +
   headerField('Order type', selectHtml('h-order',ORDER_TYPES,'Stock-In (T)'),'h-order') +
   '<div id="h-role-wrap"><label for="h-role">Buyer or Seller</label>'+
   '<input type="text" id="h-role" value="Seller" readonly/></div>' +
@@ -7896,6 +7971,7 @@ document.getElementById('header-fields').innerHTML =
       '<textarea id="h-description" placeholder="Briefly describe this agreement, for whoever approves it — not shown to the customer"></textarea>',
       'h-description')+
   '</div>';
+syncAllTagBdChecklists(document.getElementById('header-fields'));
 
 /* Buyer/Seller is derived automatically from Order type — Stock-In means we're
    selling, Stock-Out means we're buying — and is no longer a manual selector.
@@ -8057,6 +8133,7 @@ function initLocksIn(container){
   });
   if(container.querySelector('.broker-yes-toggle')) syncBrokerYesUiFromHidden();
   if(container.querySelector('.broker-fee-type-toggle')) syncBrokerFeeTypeUiFromHidden();
+  syncAllTagBdChecklists(container);
 }
 
 // One delegated click handler covers header fields, all trade fields, and
@@ -9554,7 +9631,7 @@ function recapEditFormHtml(dealId, sortedGroup){
       recapEditFieldHtml('Deal Date', '<input type="date" id="re-h-date" value="'+escapeHtml(toDateInputValue(head[MC.agreementDate]))+'"/>')+
       recapEditFieldHtml('Entity', '<input type="text" id="re-h-entity" value="'+escapeHtml(head[MC.entity]||'')+'"/>')+
       recapEditFieldHtml('BD in-charge', bdInChargeSelectHtml('re-h-bd', head[MC.salesPic]))+
-      recapEditFieldHtml('Tag BD in-charge (optional — view only)', tagBdSelectHtml('re-h-tag-bd', dealTaggedBd(sortedGroup)))+
+      '<div style="grid-column:1 / -1;">'+recapEditFieldHtml('Tag BD in-charge (optional — view only, tick any number)', tagBdChecklistHtml('re-h-tag-bd', dealTaggedBd(sortedGroup), 're-h-bd'))+'</div>'+
       recapEditFieldHtml(role+' Full Name', '<input type="text" id="re-h-company" value="'+escapeHtml(head[MC.company]||'')+'"/>')+
       (isCC ? recapEditFieldHtml('Project Name', '<input type="text" id="re-h-project-name" value="'+escapeHtml(head[MC.projectName]||'')+'"/>')+
               recapEditFieldHtml('Project ID', '<input type="text" id="re-h-project-id" value="'+escapeHtml(head[MC.projectId]||'')+'"/>')+
@@ -9596,6 +9673,7 @@ function recapEditFormHtml(dealId, sortedGroup){
 // viewModalHtml) once a save succeeds.
 function openRecapEditor(containerEl, dealId, sortedGroup, restoreHtml, onSaved){
   containerEl.innerHTML = recapEditFormHtml(dealId, sortedGroup);
+  syncAllTagBdChecklists(containerEl);
   document.getElementById('recap-edit-cancel').addEventListener('click', ()=>{
     containerEl.innerHTML = restoreHtml;
   });
@@ -9620,7 +9698,7 @@ async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
   }
 
   const isCC = (sortedGroup[0]._sourceTable || STANDARD_LOG_TABLE_NAME) === CC_LOG_TABLE_NAME;
-  const reTag = await resolveTagBdWrite(dealLogTableName(), rv('re-h-tag-bd'), dealTaggedBd(sortedGroup));
+  const reTag = await resolveTagBdWrite(dealLogTableName(), rv('re-h-tag-bd'), dealTaggedBd(sortedGroup), hBd);
   if(reTag && reTag.error){ errEl.textContent = reTag.error; errEl.style.display = 'block'; return; }
   const updatedRows = [];
   for(let idx = 0; idx < sortedGroup.length; idx++){
@@ -9809,7 +9887,7 @@ function buildFullEditChangeSummary(oldGroup, updatedRows, role){
   diff('Deal Date', formatStoredDate(oldHead[MC.agreementDate]), formatStoredDate(newHead[MC.agreementDate]));
   diff('Entity', oldHead[MC.entity], newHead[MC.entity]);
   diff('BD in-charge', oldHead[MC.salesPic], newHead[MC.salesPic]);
-  if('__tagBdWrite' in newHead) diff('Tag BD in-charge', dealTaggedBd(oldGroup), newHead.__tagBdWrite);
+  if('__tagBdWrite' in newHead) diff('Tag BD in-charge', dealTaggedBdList(oldGroup).join(', '), parseTagBdList(newHead.__tagBdWrite).join(', '));
   diff(role+' Full Name', oldHead[MC.company], newHead[MC.company]);
   oldGroup.forEach((r, idx)=>{
     const ov = r.values[0];
@@ -10071,7 +10149,7 @@ function fullEditFormHtml(dealId, sortedGroup){
       recapEditFieldHtml('Deal Date', '<input type="date" id="fe-h-date" value="'+escapeHtml(toDateInputValue(head[MC.agreementDate]))+'"/>')+
       recapEditFieldHtml('Entity', '<input type="text" id="fe-h-entity" value="'+escapeHtml(head[MC.entity]||'')+'"/>')+
       recapEditFieldHtml('BD in-charge', bdInChargeSelectHtml('fe-h-bd', head[MC.salesPic]))+
-      recapEditFieldHtml('Tag BD in-charge (optional — view only)', tagBdSelectHtml('fe-h-tag-bd', dealTaggedBd(sortedGroup)))+
+      '<div style="grid-column:1 / -1;">'+recapEditFieldHtml('Tag BD in-charge (optional — view only, tick any number)', tagBdChecklistHtml('fe-h-tag-bd', dealTaggedBd(sortedGroup), 'fe-h-bd'))+'</div>'+
       recapEditFieldHtml(role+' Full Name', '<input type="text" id="fe-h-company" value="'+escapeHtml(head[MC.company]||'')+'"/>')+
       (isCC ? recapEditFieldHtml('Project Name', '<input type="text" id="fe-h-project-name" value="'+escapeHtml(head[MC.projectName]||'')+'"/>')+recapEditFieldHtml('Project ID', '<input type="text" id="fe-h-project-id" value="'+escapeHtml(head[MC.projectId]||'')+'"/>')+recapEditFieldHtml('Project Type', '<input type="text" id="fe-h-project-type" value="'+escapeHtml(head[MC.vFromMM]||'')+'"/>')+recapEditFieldHtml('Methodology', '<input type="text" id="fe-h-methodology" value="'+escapeHtml(head[MC.vToMM]||'')+'"/>') : '')+
     '</div>';
@@ -10136,6 +10214,7 @@ function openFullEditModal(dealId){
     introEl.innerHTML = 'Admin Level 1 has already signed off on this deal. If you change anything here besides BD source matching (Matching, Buyer/Seller, No of RECs, Which deal) — e.g. Registry, Tech, Volume, Price, dates — it sends the deal back through the approval chain: the Status resets to <strong>Pending Level 1</strong>, any Level 2 sign-off already recorded (and the Level 2 agreement attachment) is cleared, and Admin Level 1 gets a fresh approval email along with your justification below. If you ONLY correct BD source matching and nothing else, Level 1\'s sign-off is left alone: the deal stays at <strong>Pending Level 2</strong> and Admin Level 2 is simply notified of the updated matching along with your justification. The Deal ID itself does not change either way. This full edit is only available before Level 2 acts — once Level 2 or Level 3 has approved, only Registry, Tech, Volume, and BD source matching can still be corrected, via "Request edit" (which needs a fresh Level 3 sign-off instead of restarting from Level 1).';
   }
   document.getElementById('full-edit-modal-fields').innerHTML = fullEditFormHtml(dealId, group);
+  syncAllTagBdChecklists(document.getElementById('full-edit-modal-fields'));
   // Keep each source's Buyer/Seller field in lockstep with its Own RECs/
   // Proceed Share tickbox right after the form renders, same as the
   // Request-edit modal does for its own er-* fields.
@@ -10297,7 +10376,7 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
     }
 
     const isCC = (liveGroup[0]._sourceTable || STANDARD_LOG_TABLE_NAME) === CC_LOG_TABLE_NAME;
-    const feTag = await resolveTagBdWrite(dealLogTableName(), rv('fe-h-tag-bd'), dealTaggedBd(liveGroup));
+    const feTag = await resolveTagBdWrite(dealLogTableName(), rv('fe-h-tag-bd'), dealTaggedBd(liveGroup), hBd);
     if(feTag && feTag.error) throw new Error(feTag.error);
     const updatedRows = [];
 
