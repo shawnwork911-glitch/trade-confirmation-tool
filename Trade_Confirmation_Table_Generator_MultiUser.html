@@ -6246,11 +6246,11 @@ function editRequestDealFieldHtml(key, storedValue, rowUid){
   const parsed = parseWhichDealSource(storedValue);
   if(parsed.source === 'own'){
     return {own:true, proceed:false, fieldHtml: '<select id="er-'+key+'-whichdeal" class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+'>'+
-      OWN_RECS_OPTIONS.map(o=>'<option value="'+escapeHtml(o)+'"'+(o===parsed.option?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>'};
+      whichDealOptionsHtml(OWN_RECS_OPTIONS, parsed.option)+'</select>'};
   }
   if(parsed.source === 'proceed'){
     return {own:false, proceed:true, fieldHtml: '<select id="er-'+key+'-whichdeal" class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+'>'+
-      PROCEED_SHARE_OPTIONS.map(o=>'<option value="'+escapeHtml(o)+'"'+(o===parsed.option?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>'};
+      whichDealOptionsHtml(PROCEED_SHARE_OPTIONS, parsed.option)+'</select>'};
   }
   return {own:false, proceed:false, fieldHtml: '<input type="text" id="er-'+key+'-whichdeal" class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+' placeholder="Deal Recap ID" value="'+escapeHtml(storedValue||'')+'"/>'};
 }
@@ -6360,10 +6360,10 @@ function updateEditRequestDealField(key){
   const uidAttr = ' data-uid="'+escapeHtml((matchingSel && matchingSel.getAttribute('data-uid')) || '')+'"';
   if(own.checked){
     target.innerHTML = '<select id="er-'+key+'-whichdeal" class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+'>'+
-      OWN_RECS_OPTIONS.map((o,i)=>'<option value="'+escapeHtml(o)+'"'+(i===0?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>';
+      whichDealOptionsHtml(OWN_RECS_OPTIONS, '')+'</select>';
   } else if(proceed.checked){
     target.innerHTML = '<select id="er-'+key+'-whichdeal" class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+'>'+
-      PROCEED_SHARE_OPTIONS.map((o,i)=>'<option value="'+escapeHtml(o)+'"'+(i===0?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>';
+      whichDealOptionsHtml(PROCEED_SHARE_OPTIONS, '')+'</select>';
   } else {
     target.innerHTML = '<input type="text" id="er-'+key+'-whichdeal" class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+' placeholder="Deal Recap ID"/>';
   }
@@ -7636,6 +7636,16 @@ const PROCEED_SHARE_CODE_MAP = {
   "PLTM":"PLTM"
 };
 const OWN_RECS_PREFIX = "Own RECs ";
+// <option>s for the Own RECs / Proceed Share "From which deal" dropdowns.
+// Always starts with a blank "-" placeholder (value ""), selected unless a
+// saved value matches — so ticking Own RECs/Proceed Share never pre-picks
+// the first option; the user must choose one (the "From which deal"
+// required checks all treat "" as missing).
+function whichDealOptionsHtml(options, selected){
+  const sel = String(selected || '');
+  return '<option value=""'+(options.includes(sel)?'':' selected')+'>-</option>' +
+    options.map(o => '<option value="'+escapeHtml(o)+'"'+(o===sel?' selected':'')+'>'+escapeHtml(o)+'</option>').join('');
+}
 // Parses a saved "Which deal" value (as stored in TradeDealLog) back into
 // its source + underlying option — needed because dealCodeFor() no longer
 // stores the bare option text for Own RECs, it stores "Own RECs <option>".
@@ -8589,9 +8599,9 @@ function updateDealField(n){
   if(!own || !proceed || !target) return;
 
   if(own.checked){
-    target.innerHTML = selectHtml('t'+n+'-m-deal', OWN_RECS_OPTIONS, OWN_RECS_OPTIONS[0]);
+    target.innerHTML = '<select id="t'+n+'-m-deal">'+whichDealOptionsHtml(OWN_RECS_OPTIONS, '')+'</select>';
   } else if(proceed.checked){
-    target.innerHTML = selectHtml('t'+n+'-m-deal', PROCEED_SHARE_OPTIONS, PROCEED_SHARE_OPTIONS[0]);
+    target.innerHTML = '<select id="t'+n+'-m-deal">'+whichDealOptionsHtml(PROCEED_SHARE_OPTIONS, '')+'</select>';
   } else {
     target.innerHTML = textHtml('t'+n+'-m-deal','Deal Recap ID');
   }
@@ -10003,11 +10013,11 @@ function fullEditDealFieldHtml(key, storedValue, rowUid){
   const parsed = parseWhichDealSource(storedValue);
   if(parsed.source === 'own'){
     return {own:true, proceed:false, fieldHtml: '<select id="fe-bd-'+key+'-whichdeal" class="full-edit-whichdeal"'+uidAttr+'>'+
-      OWN_RECS_OPTIONS.map(o=>'<option value="'+escapeHtml(o)+'"'+(o===parsed.option?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>'};
+      whichDealOptionsHtml(OWN_RECS_OPTIONS, parsed.option)+'</select>'};
   }
   if(parsed.source === 'proceed'){
     return {own:false, proceed:true, fieldHtml: '<select id="fe-bd-'+key+'-whichdeal" class="full-edit-whichdeal"'+uidAttr+'>'+
-      PROCEED_SHARE_OPTIONS.map(o=>'<option value="'+escapeHtml(o)+'"'+(o===parsed.option?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>'};
+      whichDealOptionsHtml(PROCEED_SHARE_OPTIONS, parsed.option)+'</select>'};
   }
   return {own:false, proceed:false, fieldHtml: '<input type="text" id="fe-bd-'+key+'-whichdeal" class="full-edit-whichdeal"'+uidAttr+' placeholder="Deal Recap ID" value="'+escapeHtml(storedValue||'')+'"/>'};
 }
@@ -10099,10 +10109,10 @@ function updateFullEditDealField(key){
   if(!own || !proceed || !target) return;
   if(own.checked){
     target.innerHTML = '<select id="fe-bd-'+key+'-whichdeal" class="full-edit-whichdeal">'+
-      OWN_RECS_OPTIONS.map((o,i)=>'<option value="'+escapeHtml(o)+'"'+(i===0?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>';
+      whichDealOptionsHtml(OWN_RECS_OPTIONS, '')+'</select>';
   } else if(proceed.checked){
     target.innerHTML = '<select id="fe-bd-'+key+'-whichdeal" class="full-edit-whichdeal">'+
-      PROCEED_SHARE_OPTIONS.map((o,i)=>'<option value="'+escapeHtml(o)+'"'+(i===0?' selected':'')+'>'+escapeHtml(o)+'</option>').join('')+'</select>';
+      whichDealOptionsHtml(PROCEED_SHARE_OPTIONS, '')+'</select>';
   } else {
     target.innerHTML = '<input type="text" id="fe-bd-'+key+'-whichdeal" class="full-edit-whichdeal" placeholder="Deal Recap ID"/>';
   }
