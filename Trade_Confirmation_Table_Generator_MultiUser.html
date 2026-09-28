@@ -932,11 +932,27 @@
 <div id="redemption-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
   <div style="width:100%;max-width:560px;max-height:85vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:12px;">
     <h2 style="margin:0;font-size:16px;">Redemption Documents — Deal ID <span id="redemption-modal-dealid"></span></h2>
-    <p style="margin:0;font-size:13px;color:var(--text-secondary);">This is a Stock-Out (R)/Stock-In (R) deal — it isn't fully complete until each product below has at least one signed Redemption Form uploaded. You can upload more than one file per product (e.g. multiple signed pages). PDF/Word files only, max 10 MB each. Files are saved to the "Redemption Documents" folder on SharePoint, renamed to "Deal ID_Product n_1", "Deal ID_Product n_2", etc.</p>
+    <p id="redemption-modal-intro" style="margin:0;font-size:13px;color:var(--text-secondary);">An admin has requested the signed Redemption Forms for this Stock-Out (R)/Stock-In (R) deal — please upload at least one for each product below. Upload one file per product. PDF/Word files only, max 10 MB.</p>
+    <div id="redemption-modal-return-banner" style="display:none;font-size:13px;color:#7a3b12;background:#fdf1e6;border:1px solid #e8b88a;border-radius:6px;padding:10px 12px;"></div>
     <div id="redemption-modal-fields" style="display:flex;flex-direction:column;gap:12px;"></div>
     <div id="redemption-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
       <button type="button" class="secondary" id="redemption-modal-close">Close</button>
+      <button type="button" id="redemption-modal-resubmit" style="display:none;">Resubmit to Level 3</button>
+    </div>
+  </div>
+</div>
+
+<div id="redemption-return-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1150;align-items:center;justify-content:center;padding:16px;">
+  <div style="width:100%;max-width:420px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:10px;">
+    <h2 style="margin:0;font-size:16px;">Return Redemption Docs to user — Deal ID <span id="redemption-return-modal-dealid"></span></h2>
+    <p style="margin:0;font-size:13px;color:var(--text-secondary);">The submitter and BD in-charge will be emailed this comment. They can then replace or remove the files and press "Resubmit to Level 3" when ready.</p>
+    <label style="margin:4px 0 0;">Comment (required)</label>
+    <textarea id="redemption-return-comment" maxlength="1000" placeholder="e.g. Product 2's form isn't signed by the buyer — please upload the signed copy." style="min-height:90px;"></textarea>
+    <div id="redemption-return-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
+      <button type="button" class="secondary" id="redemption-return-modal-cancel">Cancel</button>
+      <button type="button" id="redemption-return-modal-submit" style="background:#c9962e;">Return to user</button>
     </div>
   </div>
 </div>
@@ -1207,6 +1223,24 @@ const L2_DELAY_REASONS = ['Under Negotiation', 'Pending Counterpart Signature', 
 const L2_DELAY_COLUMN_NAMES = { reason:'L2 Delay Reason', remark:'L2 Delay Remark', by:'L2 Delay Set By', date:'L2 Delay Set Date' };
 // Passed to updateCanonicalTableRow to blank the four L2 columns.
 const L2_CLEAR = { reason:'', remark:'', by:'', date:'' };
+// ---- Redemption Docs request (admin-initiated) ----
+// Redemption Documents are no longer required automatically the moment a
+// Stock-Out (R)/Stock-In (R) REC deal reaches Level 3 Approved. Instead an
+// admin presses "Request Redemption Docs" on the Approved deal (see
+// requestRedemptionDocs), which stamps these two columns on EVERY row of
+// the deal and emails the submitter + BD in-charge (see
+// notifyRedemptionRequested). Only then does the upload button/badge appear
+// for the owner. Located by HEADER NAME (same approach as the L2 delay
+// columns), so add "Redemption Requested By" and "Redemption Requested Date"
+// anywhere in the TradeDealLog table (the end is safest).
+// Plus the Level 3 sign-off that the whole Redemption step is complete
+// (see confirmRedemptionComplete): "Redemption Confirmed By" and
+// "Redemption Confirmed Date". All four are required together.
+const REDEMPTION_REQUEST_COLUMN_NAMES = { by:'Redemption Requested By', date:'Redemption Requested Date', confirmedBy:'Redemption Confirmed By', confirmedDate:'Redemption Confirmed Date' };
+// Level 3 "Return to user" (see returnRedemptionToUser/resubmitRedemptionDocs).
+// Optional: only needed to use Return to user. The comment is cleared when
+// the user resubmits; Returned By/Date are kept for the Deal Timeline.
+const REDEMPTION_RETURN_COLUMN_NAMES = { returnComment:'Redemption Return Comment', returnedBy:'Redemption Returned By', returnedDate:'Redemption Returned Date' };
 const STANDARD_DRAFT_TABLE_NAME = "TradeDealDrafts";   // Excel Table on the TradeDealDrafts sheet
 const CC_DRAFT_TABLE_NAME = "TradeDealDrafts9";           // Excel Table on the CCDealDrafts sheet
 // Small generic key/value settings table. Currently holds one row:
@@ -1660,6 +1694,10 @@ function actionableStatusesForRole(role){
   if(role === 'admin2') return [STATUS_PENDING_2];
   if(role === 'admin3') return [STATUS_PENDING_3, STATUS_PENDING_CHANGE_3];
   return [];
+}
+// Only Admin Level 3 (and Super Admin) can request Redemption Documents.
+function canRequestRedemptionRole(){
+  return currentUserRole === 'admin3' || currentUserRole === 'superadmin';
 }
 function canActOnStatus(status){
   return actionableStatusesForRole(currentUserRole).includes(status);
@@ -2586,6 +2624,45 @@ function missingL2ColumnNames(tableName){
   const norm = (tableColumnNamesCache[tableName] || []).map(normalizeHeaderName);
   return Object.values(L2_DELAY_COLUMN_NAMES).filter(n => norm.indexOf(normalizeHeaderName(n)) === -1);
 }
+// Actual 0-based positions of the two Redemption Docs request columns, or
+// null if either is missing (see REDEMPTION_REQUEST_COLUMN_NAMES).
+function redReqColumnIndexes(tableName){
+  const names = tableColumnNamesCache[tableName];
+  if(!names) return null;
+  const norm = names.map(normalizeHeaderName);
+  const out = {};
+  for(const key of Object.keys(REDEMPTION_REQUEST_COLUMN_NAMES)){
+    const i = norm.indexOf(normalizeHeaderName(REDEMPTION_REQUEST_COLUMN_NAMES[key]));
+    if(i === -1) return null;
+    out[key] = i;
+  }
+  // Optional return columns — only added when ALL three are present.
+  const ret = {};
+  for(const key of Object.keys(REDEMPTION_RETURN_COLUMN_NAMES)){
+    const i = norm.indexOf(normalizeHeaderName(REDEMPTION_RETURN_COLUMN_NAMES[key]));
+    if(i === -1) return out;
+    ret[key] = i;
+  }
+  return Object.assign(out, ret);
+}
+function missingRedReturnColumnNames(tableName){
+  const norm = (tableColumnNamesCache[tableName] || []).map(normalizeHeaderName);
+  return Object.values(REDEMPTION_RETURN_COLUMN_NAMES).filter(n => norm.indexOf(normalizeHeaderName(n)) === -1);
+}
+function missingRedReqColumnNames(tableName){
+  const norm = (tableColumnNamesCache[tableName] || []).map(normalizeHeaderName);
+  return Object.values(REDEMPTION_REQUEST_COLUMN_NAMES).filter(n => norm.indexOf(normalizeHeaderName(n)) === -1);
+}
+function readRedReqFromRaw(raw, idx){
+  if(!idx || !raw) return null;
+  const out = { by: raw[idx.by] ?? '', date: raw[idx.date] ?? '', confirmedBy: raw[idx.confirmedBy] ?? '', confirmedDate: raw[idx.confirmedDate] ?? '' };
+  if('returnComment' in idx){
+    out.returnComment = raw[idx.returnComment] ?? '';
+    out.returnedBy = raw[idx.returnedBy] ?? '';
+    out.returnedDate = raw[idx.returnedDate] ?? '';
+  }
+  return out;
+}
 // Last raw (as-stored) values read for each row, per table, keyed by row
 // index — so writes can put the L2 columns back exactly as they were.
 const rawLogRowCache = {};
@@ -2823,6 +2900,7 @@ function canonicalizeLogRow(row, tableName){
 async function getCanonicalTableRows(tableName){
   const [rows] = await Promise.all([getTableRows(tableName), tableColumnNamesCache[tableName] ? null : getTableColumnCount(tableName, true)]);
   const idx = l2ColumnIndexes(tableName);
+  const redIdx = redReqColumnIndexes(tableName);
   const cache = rawLogRowCache[tableName] = {};
   return rows.map(r => {
     const raw = (r.values && r.values[0]) || [];
@@ -2831,6 +2909,9 @@ async function getCanonicalTableRows(tableName){
     // Level 2 waiting reason, read by header name (see l2ColumnIndexes) and
     // attached to the canonical values array itself — read via l2DelayInfo.
     if(out.values && out.values[0]) out.values[0].__l2 = readL2FromRaw(raw, idx);
+    // Redemption Docs request stamp, same header-name approach — read via
+    // redemptionRequestInfo/dealRedemptionRequest.
+    if(out.values && out.values[0]) out.values[0].__redReq = readRedReqFromRaw(raw, redIdx);
     return out;
   });
 }
@@ -2840,7 +2921,9 @@ async function addCanonicalTableRows(tableName, rowsArray){
 // l2Override (optional): {reason,remark,by,date} to write into the four L2
 // delay columns. When omitted, those columns are written back exactly as
 // last read (rawLogRowCache), so no other write can ever wipe them.
-async function updateCanonicalTableRow(tableName, rowIndex, values, l2Override){
+// redReqOverride (optional): {by,date} for the two Redemption Docs request
+// columns — preserved exactly as last read when omitted, same as L2.
+async function updateCanonicalTableRow(tableName, rowIndex, values, l2Override, redReqOverride){
   const raw = (tableName === CC_LOG_TABLE_NAME ? canonicalToCcRaw(values) : values).slice();
   const idx = l2ColumnIndexes(tableName);
   if(idx){
@@ -2851,6 +2934,21 @@ async function updateCanonicalTableRow(tableName, rowIndex, values, l2Override){
       while(raw.length <= maxIdx) raw.push('');
       raw[idx.reason] = src.reason; raw[idx.remark] = src.remark;
       raw[idx.by] = src.by; raw[idx.date] = src.date;
+    }
+  }
+  const redIdx = redReqColumnIndexes(tableName);
+  if(redIdx){
+    const cached = (rawLogRowCache[tableName] || {})[rowIndex];
+    // Override only replaces the keys it names (e.g. just the confirmation
+    // pair) — the rest are kept exactly as last read.
+    const base = readRedReqFromRaw(cached, redIdx);
+    const src = redReqOverride ? Object.assign({}, base || {}, redReqOverride) : base;
+    if(src){
+      for(const key of Object.keys(redIdx)){
+        if(!(key in src)) continue;
+        while(raw.length <= redIdx[key]) raw.push('');
+        raw[redIdx[key]] = src[key];
+      }
     }
   }
   return updateTableRow(tableName, rowIndex, raw);
@@ -3035,8 +3133,61 @@ async function uploadRedemptionDocument(dealId, productIndex, docIndex, file){
 // STATUS_APPROVED with Order Type "Stock-Out (R)" or "Stock-In (R)" — see
 // isRedemptionOrderType. Doesn't say anything about whether the documents
 // have actually been uploaded yet — see dealRedemptionSummary for that.
+// NOTE: this now only means the deal is ELIGIBLE for a Redemption Docs
+// request — the upload step itself only opens once an admin has actually
+// requested the docs (see dealRedemptionRequest/requestRedemptionDocs).
 function dealNeedsRedemption(status, sourceTable, orderType){
   return status === STATUS_APPROVED && sourceTable !== CC_LOG_TABLE_NAME && isRedemptionOrderType(orderType);
+}
+// The admin's Redemption Docs request stamp on one row, or null if none.
+function redemptionRequestInfo(v){
+  const r = v && v.__redReq;
+  const date = r ? String(r.date ?? '').trim() : '';
+  if(!date) return null;
+  return { by: String(r.by || '').trim(), date: r.date };
+}
+// First request stamp found on any row of the deal (every row carries the
+// same stamp — see requestRedemptionDocs), or null if not requested yet.
+function dealRedemptionRequest(rows){
+  for(const r of (rows || [])){
+    const info = redemptionRequestInfo(r.values && r.values[0]);
+    if(info) return info;
+  }
+  return null;
+}
+// True once the upload step is open for this deal: an admin has requested
+// the docs, OR (legacy deals from before this request step existed) at
+// least one Redemption Form is already on file, so those stay viewable.
+// True only while uploading is actually NEEDED: an admin has requested the
+// docs and at least one product still has none. Drives whether any upload
+// button/file picker is shown at all.
+function dealRedemptionUploadNeeded(rows){
+  return !!dealRedemptionRequest(rows) && !dealRedemptionSummary(rows).complete;
+}
+// Level 3's "Redemption complete" sign-off on this deal, or null.
+function dealRedemptionConfirmation(rows){
+  for(const r of (rows || [])){
+    const x = r.values && r.values[0] && r.values[0].__redReq;
+    if(x && String(x.confirmedDate ?? '').trim()) return { by: String(x.confirmedBy || '').trim(), date: x.confirmedDate };
+  }
+  return null;
+}
+// Active Level 3 "Return to user" on this deal (comment not yet cleared by
+// a resubmit), or null.
+function dealRedemptionReturn(rows){
+  for(const r of (rows || [])){
+    const x = r.values && r.values[0] && r.values[0].__redReq;
+    if(x && String(x.returnComment ?? '').trim()) return { comment: String(x.returnComment).trim(), by: String(x.returnedBy || '').trim(), date: x.returnedDate };
+  }
+  return null;
+}
+// Files can be uploaded, replaced or removed only after the Level 3
+// request and until Level 3 confirms the Redemption step complete.
+function dealRedemptionEditable(rows){
+  return !!dealRedemptionRequest(rows) && !dealRedemptionConfirmation(rows);
+}
+function dealRedemptionUploadOpen(rows){
+  return !!dealRedemptionRequest(rows) || (rows || []).some(r => rowHasRedemptionDoc(r.values && r.values[0]));
 }
 // True if this specific product ROW already has at least one Redemption
 // Form on file. Guarded on values.length since these are optional/additive
@@ -3089,8 +3240,30 @@ function dealRedemptionSummary(rows){
 // for row identity elsewhere in this file. Always re-reads the live rows
 // first (same pattern as approveDeal/rejectDeal) so this never overwrites a
 // row that's moved on since the modal was opened.
-async function saveRedemptionUpload(dealId, tableName, rowUid, productIndex, file){
-  if(!dealId) return;
+// SharePoint file name a product's Redemption Form is stored under (see
+// uploadRedemptionDocument): "<Deal ID>_Product <n>_<docIndex><ext>", where
+// ext is taken from the uploader's original filename (= the stored display
+// name). Used to delete/replace the exact file.
+function redemptionStoredFileName(dealId, productIndex, docIndex, displayName){
+  const extMatch = /\.[^.\\\/]+$/.exec(displayName || '');
+  return (dealId + '_Product ' + productIndex + '_' + docIndex + (extMatch ? extMatch[0] : '')).replace(/[\\\/:*?"<>|]/g, '-');
+}
+// Deletes one stored Redemption Form from the "Redemption Documents" folder
+// (SharePoint moves it to its recycle bin). A file that's already gone is
+// treated as success.
+async function deleteRedemptionStoredFile(storedName){
+  if(!driveId) throw new Error('Not connected to the SharePoint workbook yet — try refreshing the page.');
+  const itemPath = '/drives/' + driveId + '/root:/' + REDEMPTION_DOC_FOLDER_PATH.split('/').map(encodeURIComponent).join('/') + '/' + encodeURIComponent(storedName) + ':';
+  try{
+    await graphFetch(itemPath, { method: 'DELETE' });
+  }catch(err){
+    if(/Graph 404/.test(err.message)) return;
+    throw err;
+  }
+}
+// Re-reads the deal and finds the target product row, checking the deal is
+// still Approved, has been requested, and isn't Level-3-confirmed yet.
+async function loadEditableRedemptionRow(dealId, tableName, rowUid, productIndex){
   tableName = tableName === CC_LOG_TABLE_NAME ? CC_LOG_TABLE_NAME : STANDARD_LOG_TABLE_NAME;
   if(tableName === CC_LOG_TABLE_NAME) throw new Error('Redemption Documents only apply to RECs.');
   await ensureFreshWorkbookSession();
@@ -3101,24 +3274,283 @@ async function saveRedemptionUpload(dealId, tableName, rowUid, productIndex, fil
   if(!row) row = matching[productIndex - 1];
   if(!row) throw new Error('Could not find Product ' + productIndex + ' on this deal anymore — please refresh and try again.');
   if(row.values[0][MC.status] !== STATUS_APPROVED){
-    throw new Error('This deal is no longer Approved — please refresh before uploading.');
+    throw new Error('This deal is no longer Approved — please refresh.');
+  }
+  if(!dealRedemptionRequest(matching)){
+    throw new Error('Redemption Documents haven\'t been requested for this deal yet — they only need to be uploaded once an Admin Level 3 requests them.');
+  }
+  if(dealRedemptionConfirmation(matching)){
+    throw new Error('Level 3 has already confirmed the Redemption step for this deal is complete, so its files can no longer be changed.');
   }
   const liveColumnCount = await getTableColumnCount(tableName);
   if(liveColumnCount <= MC.redemptionDocName){
     throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing the "Redemption Document Name", "Redemption Document URL", "Redemption Uploaded By" and "Redemption Uploaded Date" columns. Ask an admin to add those four columns at the end of the table, then try again.');
   }
-  const existingDocs = parseRedemptionDocs(row.values[0]);
-  const docIndex = existingDocs.length + 1;
-  const info = await uploadRedemptionDocument(dealId, productIndex, docIndex, file);
-  const values = row.values[0].slice();
+  return { tableName, matching, row };
+}
+// ONE file per product. Uploading when a file is already on file REPLACES
+// it: the new file is saved as "<Deal ID>_Product n_1<ext>" (overwriting in
+// place if the extension matches), any other stored file for that product
+// is deleted, and the row's four Redemption columns are overwritten (not
+// appended). Allowed until Level 3 confirms — see dealRedemptionEditable.
+// When this upload completes the LAST missing product, Level 3 is emailed
+// to confirm (see notifyRedemptionReadyForConfirm).
+async function saveRedemptionUpload(dealId, tableName, rowUid, productIndex, file){
+  if(!dealId || !file) return;
+  const ctx = await loadEditableRedemptionRow(dealId, tableName, rowUid, productIndex);
+  const wasComplete = ctx.matching.every(r => rowHasRedemptionDoc(r.values[0]));
+  const oldDocs = parseRedemptionDocs(ctx.row.values[0]);
+  const info = await uploadRedemptionDocument(dealId, productIndex, 1, file);
+  const newStoredName = redemptionStoredFileName(dealId, productIndex, 1, info.name);
+  for(let i = 0; i < oldDocs.length; i++){
+    const oldStoredName = redemptionStoredFileName(dealId, productIndex, i + 1, oldDocs[i].name);
+    if(oldStoredName === newStoredName) continue; // already overwritten in place
+    try{ await deleteRedemptionStoredFile(oldStoredName); }
+    catch(err){ console.warn('Could not delete replaced Redemption Form ' + oldStoredName, err); }
+  }
+  const values = ctx.row.values[0].slice();
   while(values.length <= MC.redemptionUploadedDate) values.push('');
-  const appendJoined = (curr, addition) => curr ? (curr + '; ' + addition) : addition;
-  values[MC.redemptionDocName] = appendJoined(values[MC.redemptionDocName], info.name);
-  values[MC.redemptionDocUrl] = appendJoined(values[MC.redemptionDocUrl], info.webUrl);
-  values[MC.redemptionUploadedBy] = appendJoined(values[MC.redemptionUploadedBy], currentAccount.username);
-  values[MC.redemptionUploadedDate] = appendJoined(values[MC.redemptionUploadedDate], new Date().toISOString());
-  await updateCanonicalTableRow(tableName, row.index, values);
+  values[MC.redemptionDocName] = info.name;
+  values[MC.redemptionDocUrl] = info.webUrl;
+  values[MC.redemptionUploadedBy] = currentAccount.username;
+  values[MC.redemptionUploadedDate] = new Date().toISOString();
+  await updateCanonicalTableRow(ctx.tableName, ctx.row.index, values);
+  const nowComplete = ctx.matching.every(r => r === ctx.row || rowHasRedemptionDoc(r.values[0]));
+  // While Returned, the user resubmits explicitly instead (see
+  // resubmitRedemptionDocs), so no automatic email then.
+  if(nowComplete && !wasComplete && !dealRedemptionReturn(ctx.matching)){
+    await notifyRedemptionReadyForConfirm(dealId, ctx.matching, currentAccount.username);
+  }
   await loadHistory();
+}
+// Removes a product's Redemption Form (file + row columns). Allowed until
+// Level 3 confirms — see dealRedemptionEditable.
+async function deleteRedemptionUpload(dealId, tableName, rowUid, productIndex){
+  if(!dealId) return;
+  const ctx = await loadEditableRedemptionRow(dealId, tableName, rowUid, productIndex);
+  const oldDocs = parseRedemptionDocs(ctx.row.values[0]);
+  if(!oldDocs.length) throw new Error('There is no file on Product ' + productIndex + ' to remove.');
+  for(let i = 0; i < oldDocs.length; i++){
+    await deleteRedemptionStoredFile(redemptionStoredFileName(dealId, productIndex, i + 1, oldDocs[i].name));
+  }
+  const values = ctx.row.values[0].slice();
+  while(values.length <= MC.redemptionUploadedDate) values.push('');
+  values[MC.redemptionDocName] = '';
+  values[MC.redemptionDocUrl] = '';
+  values[MC.redemptionUploadedBy] = '';
+  values[MC.redemptionUploadedDate] = '';
+  await updateCanonicalTableRow(ctx.tableName, ctx.row.index, values);
+  await loadHistory();
+}
+// Level 3 sign-off that the Redemption step is complete. Only once every
+// product has its file. After this, files are locked (read-only).
+async function confirmRedemptionComplete(dealId, tableName){
+  if(!dealId) return;
+  if(!canRequestRedemptionRole()) throw new Error('Only an Admin Level 3 can confirm the Redemption step is complete.');
+  tableName = tableName === CC_LOG_TABLE_NAME ? CC_LOG_TABLE_NAME : STANDARD_LOG_TABLE_NAME;
+  await ensureFreshWorkbookSession();
+  const rows = await getCanonicalTableRows(tableName);
+  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
+  if(!matching.length) throw new Error('Could not find this deal anymore — please refresh and try again.');
+  if(dealGroupStatus(matching) !== STATUS_APPROVED) throw new Error('This deal is no longer Approved — please refresh.');
+  if(dealRedemptionConfirmation(matching)) throw new Error('This deal\'s Redemption step has already been confirmed.');
+  if(dealRedemptionReturn(matching)) throw new Error('This deal is currently returned to the user — wait for them to resubmit before confirming.');
+  const summary = dealRedemptionSummary(matching);
+  if(!summary.complete) throw new Error('Only ' + summary.uploaded + ' of ' + summary.total + ' Redemption Forms are uploaded — every product needs its file before this can be confirmed.');
+  await getTableColumnCount(tableName, true); // fresh header names
+  if(!redReqColumnIndexes(tableName)){
+    throw new Error('The TradeDealLog table in SharePoint is missing these column(s): ' + missingRedReqColumnNames(tableName).map(n => '"' + n + '"').join(', ') + '. Add them to the table, then try again.');
+  }
+  const stamp = { confirmedBy: currentAccount.username, confirmedDate: new Date().toISOString() };
+  for(const r of matching){
+    await updateCanonicalTableRow(tableName, r.index, r.values[0].slice(), undefined, stamp);
+  }
+  await notifyRedemptionConfirmed(dealId, matching, currentAccount.username);
+  await loadHistory();
+}
+// Level 3 sends the uploaded Redemption Forms back to the user with a
+// comment (e.g. a form isn't signed). Stamps the return columns on every
+// row, and emails the submitter + BD in-charge. Files stay editable.
+async function returnRedemptionToUser(dealId, tableName, comment){
+  if(!dealId) return;
+  if(!canRequestRedemptionRole()) throw new Error('Only an Admin Level 3 can return Redemption Documents to the user.');
+  comment = String(comment || '').trim();
+  if(!comment) throw new Error('Please write a comment telling the user what to fix.');
+  tableName = tableName === CC_LOG_TABLE_NAME ? CC_LOG_TABLE_NAME : STANDARD_LOG_TABLE_NAME;
+  await ensureFreshWorkbookSession();
+  const rows = await getCanonicalTableRows(tableName);
+  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
+  if(!matching.length) throw new Error('Could not find this deal anymore — please refresh and try again.');
+  if(dealGroupStatus(matching) !== STATUS_APPROVED) throw new Error('This deal is no longer Approved — please refresh.');
+  if(!dealRedemptionRequest(matching)) throw new Error('Redemption Documents haven\'t been requested for this deal.');
+  if(dealRedemptionConfirmation(matching)) throw new Error('This deal\'s Redemption step has already been confirmed.');
+  if(dealRedemptionReturn(matching)) throw new Error('This deal is already returned to the user.');
+  await getTableColumnCount(tableName, true); // fresh header names
+  const idx = redReqColumnIndexes(tableName);
+  if(!idx || !('returnComment' in idx)){
+    const missing = missingRedReqColumnNames(tableName).concat(missingRedReturnColumnNames(tableName));
+    throw new Error('The TradeDealLog table in SharePoint is missing these column(s): ' + missing.map(n => '"' + n + '"').join(', ') + '. Add them to the table, then try again.');
+  }
+  const stamp = { returnComment: comment, returnedBy: currentAccount.username, returnedDate: new Date().toISOString() };
+  for(const r of matching){
+    await updateCanonicalTableRow(tableName, r.index, r.values[0].slice(), undefined, stamp);
+  }
+  await notifyRedemptionReturned(dealId, matching, currentAccount.username, comment);
+  await loadHistory();
+}
+// The user (owner or admin) sends a Returned deal back to Level 3 once
+// every product has a file again. Clears the return comment (Returned
+// By/Date stay for the timeline) and emails Level 3.
+async function resubmitRedemptionDocs(dealId, tableName){
+  if(!dealId) return;
+  tableName = tableName === CC_LOG_TABLE_NAME ? CC_LOG_TABLE_NAME : STANDARD_LOG_TABLE_NAME;
+  await ensureFreshWorkbookSession();
+  const rows = await getCanonicalTableRows(tableName);
+  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
+  if(!matching.length) throw new Error('Could not find this deal anymore — please refresh and try again.');
+  const v = matching[0].values[0];
+  const myEmail = (currentAccount.username || '').toLowerCase();
+  if(!isAdmin && !isDealOwnerEmail(myEmail, v[MC.salesPic], v[MC.submittedBy])) throw new Error('Only the deal owner can resubmit these documents.');
+  if(!dealRedemptionReturn(matching)) throw new Error('This deal isn\'t returned — nothing to resubmit.');
+  if(dealRedemptionConfirmation(matching)) throw new Error('This deal\'s Redemption step has already been confirmed.');
+  const summary = dealRedemptionSummary(matching);
+  if(!summary.complete) throw new Error('Only ' + summary.uploaded + ' of ' + summary.total + ' Redemption Forms are uploaded — every product needs its file before resubmitting.');
+  await getTableColumnCount(tableName, true);
+  for(const r of matching){
+    await updateCanonicalTableRow(tableName, r.index, r.values[0].slice(), undefined, { returnComment: '' });
+  }
+  await notifyRedemptionReadyForConfirm(dealId, matching, currentAccount.username, true);
+  await loadHistory();
+}
+async function notifyRedemptionReturned(dealId, rows, returnerEmail, comment){
+  const v = rows[0].values[0];
+  const seen = new Set();
+  const toEmails = [String(v[MC.submittedBy] || '').trim(), bdInChargeEmail(v[MC.salesPic])]
+    .filter(e => e && !seen.has(e.toLowerCase()) && seen.add(e.toLowerCase()));
+  if(!toEmails.length){ console.warn('No submitter/BD in-charge email — skipping Redemption return email for Deal ID ' + dealId); return; }
+  const displayId = friendlyDealId(dealId);
+  const html = '<p>' + escapeHtml(returnerEmail || 'Admin Level 3') + ' has returned the Redemption Documents for Deal ID <strong>' + escapeHtml(displayId) + '</strong>' +
+    (v[MC.company] ? ' (' + escapeHtml(v[MC.company]) + ')' : '') + ' for changes.</p>' +
+    '<p><strong>Comment:</strong> ' + escapeHtml(comment) + '</p>' +
+    '<p>Open the deal, use "Fix Redemption Docs" to replace or remove the file(s), then press "Resubmit to Level 3".</p>' +
+    '<p><a href="' + dealDeepLink(dealId) + '">Open it in the Trade Confirmation app</a></p>';
+  try{ await sendMailGraph(toEmails, 'Redemption Documents returned — Deal ID ' + displayId, html); }
+  catch(err){ console.error('Redemption return email failed', err); }
+}
+// Emails every Admin Level 3 once the last product's file is uploaded, so
+// they know it's ready for their confirmation.
+async function notifyRedemptionReadyForConfirm(dealId, rows, uploaderEmail, isResubmit){
+  const toEmails = emailsForRole('admin3');
+  if(!toEmails.length){ console.warn('No admin3 assigned — skipping Redemption confirmation email for Deal ID ' + dealId); return; }
+  const v = rows[0].values[0];
+  const displayId = friendlyDealId(dealId);
+  const html = '<p>All Redemption Documents for Deal ID <strong>' + escapeHtml(displayId) + '</strong>' +
+    (v[MC.company] ? ' (' + escapeHtml(v[MC.company]) + ')' : '') + (isResubmit ? ' have been corrected and resubmitted' : ' have been uploaded') +
+    (uploaderEmail ? ' (' + (isResubmit ? 'by ' : 'last upload by ') + escapeHtml(uploaderEmail) + ')' : '') + ' and are waiting on your Level 3 confirmation.</p>' +
+    '<p>Open the deal, check the files under "Manage Redemption Docs", then press "Confirm Redemption Complete".</p>' +
+    '<p><a href="' + dealDeepLink(dealId) + '">Open it in the Trade Confirmation app</a></p>';
+  try{ await sendMailGraph(toEmails, (isResubmit ? 'Redemption Documents resubmitted' : 'Redemption Documents ready for confirmation') + ' — Deal ID ' + displayId, html); }
+  catch(err){ console.error('Redemption ready-for-confirmation email failed', err); }
+}
+// Lets the submitter + BD in-charge know Level 3 has closed out the step.
+async function notifyRedemptionConfirmed(dealId, rows, confirmerEmail){
+  const v = rows[0].values[0];
+  const seen = new Set();
+  const toEmails = [String(v[MC.submittedBy] || '').trim(), bdInChargeEmail(v[MC.salesPic])]
+    .filter(e => e && !seen.has(e.toLowerCase()) && seen.add(e.toLowerCase()));
+  if(!toEmails.length) return;
+  const displayId = friendlyDealId(dealId);
+  const html = '<p>The Redemption step for Deal ID <strong>' + escapeHtml(displayId) + '</strong> has been confirmed complete by ' +
+    escapeHtml(confirmerEmail || 'Admin Level 3') + '. No further action is needed.</p>' +
+    '<p><a href="' + dealDeepLink(dealId) + '">View it in the Trade Confirmation app</a></p>';
+  try{ await sendMailGraph(toEmails, 'Redemption completed — Deal ID ' + displayId, html); }
+  catch(err){ console.error('Redemption confirmed email failed', err); }
+}
+
+/* ---- Redemption Docs request (admin) ----
+   Stamps "Redemption Requested By/Date" on every row of an Approved
+   Stock-Out (R)/Stock-In (R) REC deal and emails the deal's submitter and
+   BD in-charge. Pressing it again on a deal that's already been requested
+   (and isn't complete yet) re-stamps the date and re-sends the email, as a
+   reminder. Admin Level 3 (or Super Admin) only — see canRequestRedemptionRole. */
+async function requestRedemptionDocs(dealId, tableName){
+  if(!dealId) return;
+  if(!canRequestRedemptionRole()) throw new Error('Only an Admin Level 3 can request Redemption Documents.');
+  tableName = tableName === CC_LOG_TABLE_NAME ? CC_LOG_TABLE_NAME : STANDARD_LOG_TABLE_NAME;
+  if(tableName === CC_LOG_TABLE_NAME) throw new Error('Redemption Documents only apply to RECs.');
+  await ensureFreshWorkbookSession();
+  const rows = await getCanonicalTableRows(tableName);
+  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
+  if(!matching.length) throw new Error('Could not find this deal anymore — please refresh and try again.');
+  const v = matching[0].values[0];
+  const status = dealGroupStatus(matching);
+  if(!dealNeedsRedemption(status, tableName, v[MC.supplyDemand])){
+    throw new Error('Redemption Documents can only be requested on a fully Approved (Level 3) Stock-Out (R)/Stock-In (R) REC deal — this deal is currently: ' + (status || 'unknown') + '.');
+  }
+  if(dealRedemptionConfirmation(matching)){
+    throw new Error('Level 3 has already confirmed the Redemption step for this deal is complete.');
+  }
+  if(dealRedemptionSummary(matching).complete){
+    throw new Error('All Redemption Documents for this deal are already uploaded — use "Confirm Redemption Complete" instead.');
+  }
+  const liveColumnCount = await getTableColumnCount(tableName, true); // fresh header names
+  if(liveColumnCount <= MC.redemptionDocName){
+    throw new Error('The TradeDealLog table in SharePoint is missing the "Redemption Document Name", "Redemption Document URL", "Redemption Uploaded By" and "Redemption Uploaded Date" columns, so the user wouldn\'t be able to upload. Add those four columns at the end of the table, then try again.');
+  }
+  if(!redReqColumnIndexes(tableName)){
+    throw new Error('The TradeDealLog table in SharePoint is missing these column(s): ' + missingRedReqColumnNames(tableName).map(n => '"' + n + '"').join(', ') + '. Add them to the table (check the header spelling matches exactly), then try again.');
+  }
+  const stamp = { by: currentAccount.username, date: new Date().toISOString() };
+  for(const r of matching){
+    await updateCanonicalTableRow(tableName, r.index, r.values[0].slice(), undefined, stamp);
+  }
+  const sent = await notifyRedemptionRequested(dealId, matching, currentAccount.username);
+  await loadHistory();
+  return sent;
+}
+// Emails the deal's submitter + BD in-charge that an admin has requested the
+// signed Redemption Forms. Returns the list of addresses emailed ([] if
+// none on file or the send failed — never blocks the request itself).
+async function notifyRedemptionRequested(dealId, rows, requesterEmail){
+  const v = rows[0].values[0];
+  const seen = new Set();
+  const toEmails = [String(v[MC.submittedBy] || '').trim(), bdInChargeEmail(v[MC.salesPic])]
+    .filter(e => e && !seen.has(e.toLowerCase()) && seen.add(e.toLowerCase()));
+  if(!toEmails.length){
+    console.warn('No submitter/BD in-charge email on file — skipping Redemption Docs request email for Deal ID ' + dealId);
+    return [];
+  }
+  const displayId = friendlyDealId(dealId);
+  const link = dealDeepLink(dealId);
+  const productRows = rows.map((r, i) => {
+    const rv = r.values[0];
+    const vintage = redemptionVintageTag(rv[MC.vFromYY], rv[MC.vToYY]);
+    const done = rowHasRedemptionDoc(rv);
+    return '<tr>' +
+      '<td style="padding:4px 8px;border:1px solid #ddd;">Product ' + (i+1) + '</td>' +
+      '<td style="padding:4px 8px;border:1px solid #ddd;">' + escapeHtml(rv[MC.registry] || '') + (vintage ? ' ' + escapeHtml(vintage) : '') + '</td>' +
+      '<td style="padding:4px 8px;border:1px solid #ddd;">' + escapeHtml(formatStoredDate(rv[MC.deliveryEnd]) || '—') + '</td>' +
+      '<td style="padding:4px 8px;border:1px solid #ddd;">' + (done ? 'Uploaded' : 'Needed') + '</td>' +
+    '</tr>';
+  }).join('');
+  const html =
+    '<p>' + escapeHtml(requesterEmail || 'An admin') + ' has requested the signed Redemption Documents for Deal ID <strong>' + escapeHtml(displayId) + '</strong>' +
+      (v[MC.company] ? ' (' + escapeHtml(v[MC.company]) + ')' : '') + '.</p>' +
+    '<table style="border-collapse:collapse;font-size:13px;"><tr>' +
+      '<th style="padding:4px 8px;border:1px solid #ddd;text-align:left;">Product</th>' +
+      '<th style="padding:4px 8px;border:1px solid #ddd;text-align:left;">Registry</th>' +
+      '<th style="padding:4px 8px;border:1px solid #ddd;text-align:left;">Delivery End Date</th>' +
+      '<th style="padding:4px 8px;border:1px solid #ddd;text-align:left;">Redemption Form</th>' +
+    '</tr>' + productRows + '</table>' +
+    '<p>Open this deal in the Trade Confirmation app and use "Upload Redemption Docs" to upload ONE signed Redemption Form for each product (PDF/Word, max 10 MB). You can replace or remove a file until Admin Level 3 confirms the step is complete. Blank templates are in the Redemption Form tab.</p>' +
+    '<p><a href="' + link + '">Open it in the Trade Confirmation app</a></p>';
+  try{
+    await sendMailGraph(toEmails, 'Redemption Documents requested — Deal ID ' + displayId, html);
+    return toEmails;
+  }catch(err){
+    console.error('Redemption Docs request email failed', err);
+    return [];
+  }
 }
 
 /* ---- Level 2 waiting reason ----
@@ -4941,6 +5373,14 @@ function buildDealTimelineSteps(v, status){
   }
   pushIfDate('Level 2 Approved', v[MC.approvedDate2], v[MC.approvedBy2]);
   pushIfDate('Level 3 Approved', v[MC.approvedDate3], v[MC.approvedBy3]);
+  const redReq = redemptionRequestInfo(v);
+  if(redReq) pushIfDate('Redemption Docs Requested', redReq.date, redReq.by);
+  const redConf = v && v.__redReq;
+  if(redConf && String(redConf.returnedDate ?? '').trim()){
+    const stillReturned = String(redConf.returnComment ?? '').trim();
+    steps.push({label: stillReturned ? 'Redemption Docs returned to user' : 'Redemption Docs returned (resubmitted)', date: redConf.returnedDate, by: redConf.returnedBy, state:'reverted', reason: stillReturned || ''});
+  }
+  if(redConf && String(redConf.confirmedDate ?? '').trim()) pushIfDate('Redemption Completed', redConf.confirmedDate, redConf.confirmedBy);
   if(v[MC.rejectedDate]){
     if(status === STATUS_REJECTED){
       steps.push({label:'Rejected', date:v[MC.rejectedDate], by:v[MC.rejectedBy], state:'rejected', reason:v[MC.rejectReason]});
@@ -5192,14 +5632,39 @@ function renderHistoryTable(el, groups, opts){
     // Approved status: a small badge next to it, plus a button that opens
     // openRedemptionModal, gated the same "owner or admin" way as every
     // other post-approval action on this row.
-    const redemptionApplies = dealNeedsRedemption(status, rowSourceTable, v[MC.supplyDemand]);
+    // Upload only opens once an admin has pressed "Request Redemption Docs"
+    // (see requestRedemptionDocs / dealRedemptionUploadOpen) — until then
+    // the owner sees nothing extra, and admins see the request button.
+    const redemptionEligible = dealNeedsRedemption(status, rowSourceTable, v[MC.supplyDemand]);
+    const redemptionReq = redemptionEligible ? dealRedemptionRequest(g.rows) : null;
+    const redemptionApplies = redemptionEligible && dealRedemptionUploadOpen(g.rows);
     const redemptionInfo = redemptionApplies ? dealRedemptionSummary(g.rows) : null;
-    const redemptionBadge = redemptionInfo
-      ? (redemptionInfo.complete
-          ? '<div style="font-size:11px;color:#1f7a4d;margin-top:2px;">✓ Redemption Documents complete</div>'
-          : '<div style="font-size:11px;color:#8a6d1f;margin-top:2px;">⏳ Redemption Documents: '+redemptionInfo.uploaded+' of '+redemptionInfo.total+' uploaded</div>')
+    const redemptionReqLine = redemptionReq
+      ? '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">Requested'+(redemptionReq.by?' by '+escapeHtml(redemptionReq.by):'')+(redemptionReq.date?' · '+escapeHtml(formatStoredDateTime(redemptionReq.date)):'')+'</div>'
       : '';
-    const canManageRedemption = isOwnerOrAdmin && redemptionApplies;
+    const redemptionConf = redemptionApplies ? dealRedemptionConfirmation(g.rows) : null;
+    const redemptionRet = (redemptionApplies && !redemptionConf) ? dealRedemptionReturn(g.rows) : null;
+    const redemptionBadge = redemptionInfo
+      ? (redemptionRet
+          ? '<div style="font-size:11px;color:#7a3b12;margin-top:2px;">↩ Redemption Docs returned'+(redemptionRet.by?' by '+escapeHtml(redemptionRet.by):'')+': '+escapeHtml(redemptionRet.comment)+'</div>'
+          : redemptionConf
+          ? '<div style="font-size:11px;color:#1f7a4d;margin-top:2px;">✓ Redemption completed — confirmed'+(redemptionConf.by?' by '+escapeHtml(redemptionConf.by):'')+(redemptionConf.date?' · '+escapeHtml(formatStoredDateTime(redemptionConf.date)):'')+'</div>'
+          : redemptionInfo.complete
+            ? '<div style="font-size:11px;color:#8a6d1f;margin-top:2px;">⏳ All Redemption Documents uploaded — awaiting Level 3 confirmation</div>' + redemptionReqLine
+            : '<div style="font-size:11px;color:#8a6d1f;margin-top:2px;">⏳ Redemption Documents: '+redemptionInfo.uploaded+' of '+redemptionInfo.total+' uploaded</div>' + redemptionReqLine)
+      : ((redemptionEligible && canRequestRedemptionRole()) ? '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">Redemption Documents: not requested</div>' : '');
+    const redemptionUploadNeeded = redemptionApplies && dealRedemptionUploadNeeded(g.rows);
+    const redemptionEditable = redemptionApplies && dealRedemptionEditable(g.rows);
+    const redemptionBtnLabel = redemptionRet ? 'Fix Redemption Docs' : redemptionUploadNeeded ? 'Upload Redemption Docs' : (redemptionEditable ? 'Manage Redemption Docs' : 'View Redemption Docs');
+    const redemptionBtnTitle = redemptionUploadNeeded ? 'Upload one signed Redemption Form for each product still missing one.'
+      : (redemptionEditable ? 'Check, replace or remove the uploaded Redemption Forms — possible until Level 3 confirms.' : 'View the Redemption Forms on file for this deal.');
+    const canConfirmRedemption = canRequestRedemptionRole() && redemptionApplies && redemptionInfo.complete && !redemptionConf && !redemptionRet;
+    const canReturnRedemption = canRequestRedemptionRole() && redemptionEditable && redemptionInfo.uploaded > 0 && !redemptionRet;
+    // Button only shows while an upload is actually needed ("Upload
+    // Redemption Docs"), or as a read-only "View Redemption Docs" once
+    // something is on file — never before the Level 3 request.
+    const canManageRedemption = isOwnerOrAdmin && redemptionApplies && (redemptionEditable || redemptionInfo.uploaded > 0);
+    const canRequestRedemption = canRequestRedemptionRole() && redemptionEligible && !(redemptionInfo && redemptionInfo.complete);
     html += '<tr style="border-top:1px solid var(--border);">' +
       (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[MC.salesPic]||'')+'</td>' : '') +
       '<td style="padding:6px;">'+(isPendingDealId(v[MC.dealId]) ? '-' : escapeHtml(friendlyDealId(v[MC.dealId])))+'</td>' +
@@ -5220,7 +5685,10 @@ function renderHistoryTable(el, groups, opts){
         (canReject ? ' <button type="button" class="secondary history-reject-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#8a2d1f;border-color:#c1493a;" title="Discards this requested BD source matching correction — the deal\'s already-Approved details are left untouched.">Reject change</button>' : '') +
         (canRequestEdit ? ' <button type="button" class="secondary history-request-edit-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;">Request edit</button>' : '') +
         (canFullEdit ? ' <button type="button" class="secondary history-full-edit-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;" title="'+escapeHtml(fullEditTitle)+'">Edit &amp; resend</button>' : '') +
-        (canManageRedemption ? ' <button type="button" class="secondary history-redemption-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;'+(redemptionInfo.complete?'':'color:#8a6d1f;border-color:#e8c99a;')+'" title="Upload the signed Redemption Form for each product on this deal.">'+(redemptionInfo.complete?'Redemption Documents':'Upload Redemption Docs')+'</button>' : '') +
+        (canManageRedemption ? ' <button type="button" class="secondary history-redemption-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;'+((redemptionUploadNeeded||redemptionRet)?'color:#8a6d1f;border-color:#e8c99a;':'')+'" title="'+escapeHtml(redemptionBtnTitle)+'">'+redemptionBtnLabel+'</button>' : '') +
+        (canConfirmRedemption ? ' <button type="button" class="secondary history-redemption-confirm-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#1f7a4d;border-color:#9ccfb3;" title="Every product has its Redemption Form — confirm the Redemption step is complete. Files are locked after this.">Confirm Redemption Complete</button>' : '') +
+        (canReturnRedemption ? ' <button type="button" class="secondary history-redemption-return-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#8a6d1f;border-color:#e8c99a;" title="Send the Redemption Documents back to the user with a comment on what to fix.">Return to User</button>' : '') +
+        (canRequestRedemption ? ' <button type="button" class="secondary history-redemption-request-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' data-requested="'+(redemptionReq?'1':'')+'" style="padding:4px 10px;font-size:12px;" title="'+(redemptionReq?'Re-send the Redemption Documents request email to the submitter and BD in-charge.':'Ask the submitter and BD in-charge to upload the signed Redemption Forms for this deal (sends them an email).')+'">'+(redemptionReq?'Resend Redemption Request':'Request Redemption Docs')+'</button>' : '') +
       '</td>' +
     '</tr>';
     if(status === STATUS_REJECTED && v[MC.rejectReason]){
@@ -6197,7 +6665,9 @@ function redemptionVintageTag(fromYY, toYY){
   if(!from) return 'V' + shortYear(to);
   return 'V' + shortYear(from) + '/' + shortYear(to);
 }
-function redemptionModalFieldsHtml(rows){
+// uploadNeeded: false = read-only (no file pickers at all). When true, the
+// picker only shows on products that don't have a Redemption Form yet.
+function redemptionModalFieldsHtml(rows, editable){
   return rows.map((r, idx)=>{
     const rv = r.values[0];
     const n = idx + 1;
@@ -6207,15 +6677,9 @@ function redemptionModalFieldsHtml(rows){
     const registryLabel = registryDisplayName(rv[MC.registry]) || '(no registry)';
     const quantityLabel = String(rv[MC.volume] || '').trim() || '(no quantity)';
     const vintageTag = redemptionVintageTag(rv[MC.vFromYY], rv[MC.vToYY]);
-    // Delivery End Date still drives the due-soon highlight (below) even
-    // though it's no longer shown in the title itself — the title shows
-    // quantity instead, per request.
     const dueSoon = isRedemptionDueSoon(rv[MC.deliveryEnd]);
     const titleText = 'Product '+n+' — '+registryLabel+(vintageTag ? ' — '+vintageTag : '')+' — '+quantityLabel;
     const titleStyle = 'font-size:13px;margin-bottom:4px;' + (has ? 'font-weight:600;' : (dueSoon ? 'font-weight:700;color:#c1493a;' : 'font-weight:600;'));
-    // A product can carry more than one signed Redemption Form on file (see
-    // parseRedemptionDocs) — list every one of them, each with its own
-    // link/uploader/date, rather than just the single most recent upload.
     const statusHtml = has
       ? docs.map(d =>
           '<div style="font-size:12px;color:#1f7a4d;">✓ <a href="'+escapeHtml(d.url)+'" target="_blank" rel="noopener">'+escapeHtml(d.name)+'</a>'+
@@ -6224,13 +6688,17 @@ function redemptionModalFieldsHtml(rows){
           '</div>'
         ).join('')
       : '<div style="font-size:12px;color:#8a6d1f;">Not uploaded yet</div>';
+    // One file per product: Upload when empty, Replace/Remove when on file.
+    const controls = editable
+      ? '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">' +
+          '<input type="file" class="redemption-file-input" accept=".pdf,.doc,.docx" data-idx="'+n+'" data-rowuid="'+escapeHtml(rowUid)+'" style="flex:1;min-width:160px;"/>' +
+          '<button type="button" class="secondary redemption-upload-btn" data-idx="'+n+'" data-has="'+(has?'1':'')+'" style="padding:4px 10px;font-size:12px;">'+(has?'Replace':'Upload')+'</button>' +
+          (has ? '<button type="button" class="secondary redemption-remove-btn" data-idx="'+n+'" data-rowuid="'+escapeHtml(rowUid)+'" style="padding:4px 10px;font-size:12px;color:#8a2d1f;border-color:#c1493a;">Remove</button>' : '') +
+        '</div>'
+      : '';
     return '<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;">' +
       '<div style="'+titleStyle+'">'+escapeHtml(titleText)+'</div>' +
-      statusHtml +
-      '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">' +
-        '<input type="file" class="redemption-file-input" accept=".pdf,.doc,.docx" multiple data-idx="'+n+'" data-rowuid="'+escapeHtml(rowUid)+'" style="flex:1;min-width:160px;"/>' +
-        '<button type="button" class="secondary redemption-upload-btn" data-idx="'+n+'" style="padding:4px 10px;font-size:12px;">'+(has?'Add file(s)':'Upload')+'</button>' +
-      '</div>' +
+      statusHtml + controls +
     '</div>';
   }).join('');
 }
@@ -6242,7 +6710,31 @@ function openRedemptionModal(dealId, tableName){
   const rows = logRowsCache
     .filter(r => String(r.values[0][MC.dealId] || '').trim() === String(dealId).trim() && (r._sourceTable||STANDARD_LOG_TABLE_NAME) === redemptionModalTableName)
     .sort((a,b)=> a.index - b.index);
-  document.getElementById('redemption-modal-fields').innerHTML = redemptionModalFieldsHtml(rows);
+  const editable = dealRedemptionEditable(rows);
+  const complete = dealRedemptionSummary(rows).complete;
+  const conf = dealRedemptionConfirmation(rows);
+  document.getElementById('redemption-modal-intro').textContent = conf
+    ? 'Admin Level 3' + (conf.by ? ' (' + conf.by + ')' : '') + ' confirmed the Redemption step complete' + (conf.date ? ' on ' + formatStoredDateTime(conf.date) : '') + '. The files below can no longer be changed.'
+    : !editable
+      ? 'Redemption Forms on file for this deal (read-only).'
+      : complete
+        ? 'Every product has its Redemption Form — now waiting for Admin Level 3 to confirm. You can still replace or remove a file until then.'
+        : 'An Admin Level 3 has requested the signed Redemption Forms for this Stock-Out (R)/Stock-In (R) deal. Upload ONE file per product (PDF/Word, max 10 MB). You can replace or remove a file until Level 3 confirms the step is complete.';
+  const ret = conf ? null : dealRedemptionReturn(rows);
+  const banner = document.getElementById('redemption-modal-return-banner');
+  if(ret){
+    banner.innerHTML = '<strong>Returned by Level 3' + (ret.by ? ' (' + escapeHtml(ret.by) + ')' : '') + ':</strong> ' + escapeHtml(ret.comment) +
+      '<div style="margin-top:4px;">Replace or remove the file(s) below, then press "Resubmit to Level 3".</div>';
+    banner.style.display = 'block';
+  } else {
+    banner.style.display = 'none';
+  }
+  const resubmitBtn = document.getElementById('redemption-modal-resubmit');
+  resubmitBtn.style.display = ret ? 'inline-block' : 'none';
+  resubmitBtn.disabled = !complete;
+  resubmitBtn.textContent = 'Resubmit to Level 3';
+  resubmitBtn.title = complete ? '' : 'Every product needs a file before resubmitting.';
+  document.getElementById('redemption-modal-fields').innerHTML = redemptionModalFieldsHtml(rows, editable);
   document.getElementById('redemption-modal-overlay').style.display = 'flex';
 }
 function closeRedemptionModal(){
@@ -6251,53 +6743,104 @@ function closeRedemptionModal(){
   redemptionModalTableName = null;
 }
 document.getElementById('redemption-modal-close').addEventListener('click', closeRedemptionModal);
+document.getElementById('redemption-modal-resubmit').addEventListener('click', async ()=>{
+  const btn = document.getElementById('redemption-modal-resubmit');
+  const errEl = document.getElementById('redemption-modal-error');
+  const dealId = redemptionModalDealId, tableName = redemptionModalTableName;
+  if(!confirm('Resubmit the Redemption Documents for Deal ID ' + friendlyDealId(dealId) + ' to Level 3 for confirmation?')) return;
+  errEl.style.display = 'none';
+  btn.disabled = true; btn.textContent = 'Resubmitting…';
+  try{
+    await resubmitRedemptionDocs(dealId, tableName);
+    openRedemptionModal(dealId, tableName);
+  }catch(err){
+    errEl.textContent = err.message; errEl.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Resubmit to Level 3';
+  }
+});
+// ---- Return to user modal (Level 3) ----
+let redemptionReturnDealId = null, redemptionReturnTableName = null;
+function openRedemptionReturnModal(dealId, tableName){
+  redemptionReturnDealId = dealId;
+  redemptionReturnTableName = tableName;
+  document.getElementById('redemption-return-modal-dealid').textContent = friendlyDealId(dealId);
+  document.getElementById('redemption-return-comment').value = '';
+  document.getElementById('redemption-return-modal-error').style.display = 'none';
+  const submit = document.getElementById('redemption-return-modal-submit');
+  submit.disabled = false; submit.textContent = 'Return to user';
+  document.getElementById('redemption-return-modal-overlay').style.display = 'flex';
+  document.getElementById('redemption-return-comment').focus();
+}
+function closeRedemptionReturnModal(){
+  document.getElementById('redemption-return-modal-overlay').style.display = 'none';
+  redemptionReturnDealId = null; redemptionReturnTableName = null;
+}
+document.getElementById('redemption-return-modal-cancel').addEventListener('click', closeRedemptionReturnModal);
+document.getElementById('redemption-return-modal-overlay').addEventListener('click', (e)=>{
+  if(e.target.id === 'redemption-return-modal-overlay') closeRedemptionReturnModal();
+});
+document.getElementById('redemption-return-modal-submit').addEventListener('click', async ()=>{
+  const btn = document.getElementById('redemption-return-modal-submit');
+  const errEl = document.getElementById('redemption-return-modal-error');
+  const comment = document.getElementById('redemption-return-comment').value.trim();
+  errEl.style.display = 'none';
+  if(!comment){ errEl.textContent = 'Please write a comment telling the user what to fix.'; errEl.style.display = 'block'; return; }
+  btn.disabled = true; btn.textContent = 'Returning…';
+  try{
+    await returnRedemptionToUser(redemptionReturnDealId, redemptionReturnTableName, comment);
+    closeRedemptionReturnModal();
+  }catch(err){
+    errEl.textContent = err.message; errEl.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Return to user';
+  }
+});
 document.getElementById('redemption-modal-overlay').addEventListener('click', (e)=>{
   if(e.target.id === 'redemption-modal-overlay') closeRedemptionModal();
 });
-// The file input allows selecting several files at once (see
-// redemptionModalFieldsHtml's "multiple" attribute) — uploaded ONE AT A
-// TIME, in order, awaiting each saveRedemptionUpload call before starting
-// the next. That's deliberate, not just simplicity: saveRedemptionUpload
-// re-reads the row's live existing-docs count to assign the next docIndex
-// and to append onto the redemptionDocName/Url/UploadedBy/UploadedDate
-// columns, so two uploads for the same row racing in parallel could each
-// read the row before the other's write lands and clobber one another's
-// append (a classic lost-update). Doing them sequentially — each one
-// fully re-reading, writing, and reloading history before the next starts
-// — sidesteps that entirely, at the cost of N sequential round trips
-// instead of one batch call.
+// One file per product: Upload (empty), Replace or Remove (file on file),
+// all only until Level 3 confirms — see saveRedemptionUpload/
+// deleteRedemptionUpload/dealRedemptionEditable.
 document.getElementById('redemption-modal-fields').addEventListener('click', async (e)=>{
+  const errEl = document.getElementById('redemption-modal-error');
+  const dealId = redemptionModalDealId;
+  const tableName = redemptionModalTableName;
+  const removeBtn = e.target.closest('.redemption-remove-btn');
+  if(removeBtn){
+    const idx = parseInt(removeBtn.getAttribute('data-idx'), 10);
+    if(!confirm('Remove the Redemption Form uploaded for Product ' + idx + '? The file will be deleted from SharePoint.')) return;
+    errEl.style.display = 'none';
+    removeBtn.disabled = true; removeBtn.textContent = 'Removing…';
+    try{
+      await deleteRedemptionUpload(dealId, tableName, removeBtn.getAttribute('data-rowuid') || '', idx);
+      openRedemptionModal(dealId, tableName);
+    }catch(err){
+      errEl.textContent = err.message; errEl.style.display = 'block';
+      removeBtn.disabled = false; removeBtn.textContent = 'Remove';
+    }
+    return;
+  }
   const btn = e.target.closest('.redemption-upload-btn');
   if(!btn) return;
   const idx = parseInt(btn.getAttribute('data-idx'), 10);
   const fileInput = document.querySelector('#redemption-modal-fields .redemption-file-input[data-idx="'+idx+'"]');
-  const files = fileInput ? Array.from(fileInput.files) : [];
-  const errEl = document.getElementById('redemption-modal-error');
+  const file = fileInput && fileInput.files[0];
   errEl.style.display = 'none';
-  if(!files.length){
-    errEl.textContent = 'Choose at least one file for Product ' + idx + ' first.';
+  if(!file){
+    errEl.textContent = 'Choose a file for Product ' + idx + ' first.';
     errEl.style.display = 'block';
     return;
   }
-  const rowUid = fileInput.getAttribute('data-rowuid') || '';
-  const dealId = redemptionModalDealId;
-  const tableName = redemptionModalTableName;
+  const isReplace = !!btn.getAttribute('data-has');
+  if(isReplace && !confirm('Replace the current Redemption Form for Product ' + idx + ' with "' + file.name + '"? The old file will be deleted.')) return;
   const prevLabel = btn.textContent;
   btn.disabled = true;
-  let uploaded = 0;
+  btn.textContent = isReplace ? 'Replacing…' : 'Uploading…';
   try{
-    for(let i = 0; i < files.length; i++){
-      btn.textContent = files.length > 1 ? ('Uploading ' + (i+1) + ' of ' + files.length + '…') : 'Uploading…';
-      await saveRedemptionUpload(dealId, tableName, rowUid, idx, files[i]);
-      uploaded++;
-    }
-  }catch(err){
-    errEl.textContent = err.message + (uploaded > 0 ? (' (' + uploaded + ' of ' + files.length + ' file' + (files.length > 1 ? 's' : '') + ' in this batch uploaded before the error — see the list above.)') : '');
-    errEl.style.display = 'block';
-  }
-  if(uploaded > 0){
+    await saveRedemptionUpload(dealId, tableName, fileInput.getAttribute('data-rowuid') || '', idx, file);
     openRedemptionModal(dealId, tableName); // re-render from the freshly-saved row(s)
-  }else{
+  }catch(err){
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
     btn.disabled = false;
     btn.textContent = prevLabel;
   }
@@ -6396,6 +6939,57 @@ document.addEventListener('click', (e)=>{
   if(fullEditBtn){
     setActiveDealLogTable(fullEditBtn.getAttribute('data-logtable'));
     openFullEditModal(fullEditBtn.getAttribute('data-dealid'));
+    return;
+  }
+  const redemptionReturnBtn = e.target.closest('.history-redemption-return-btn');
+  if(redemptionReturnBtn){
+    const tableName = redemptionReturnBtn.getAttribute('data-logtable');
+    setActiveDealLogTable(tableName);
+    openRedemptionReturnModal(redemptionReturnBtn.getAttribute('data-dealid'), tableName);
+    return;
+  }
+  const redemptionConfirmBtn = e.target.closest('.history-redemption-confirm-btn');
+  if(redemptionConfirmBtn){
+    const dealId = redemptionConfirmBtn.getAttribute('data-dealid');
+    const tableName = redemptionConfirmBtn.getAttribute('data-logtable');
+    if(!confirm('Confirm the Redemption step is complete for Deal ID ' + friendlyDealId(dealId) + '? Make sure you\'ve checked each uploaded file first — after this, the files can no longer be replaced or removed.')) return;
+    setActiveDealLogTable(tableName);
+    redemptionConfirmBtn.disabled = true;
+    redemptionConfirmBtn.textContent = 'Confirming…';
+    confirmRedemptionComplete(dealId, tableName)
+      .catch(err => {
+        console.error('Redemption confirm failed', err);
+        alert('Could not confirm: ' + err.message);
+        redemptionConfirmBtn.disabled = false;
+        redemptionConfirmBtn.textContent = 'Confirm Redemption Complete';
+      });
+    return;
+  }
+  const redemptionReqBtn = e.target.closest('.history-redemption-request-btn');
+  if(redemptionReqBtn){
+    const dealId = redemptionReqBtn.getAttribute('data-dealid');
+    const tableName = redemptionReqBtn.getAttribute('data-logtable');
+    const again = !!redemptionReqBtn.getAttribute('data-requested');
+    const msg = again
+      ? 'Resend the Redemption Documents request for Deal ID ' + friendlyDealId(dealId) + '? The submitter and BD in-charge will be emailed again.'
+      : 'Request the signed Redemption Documents for Deal ID ' + friendlyDealId(dealId) + '? The submitter and BD in-charge will be emailed and the upload button will appear on this deal.';
+    if(!confirm(msg)) return;
+    setActiveDealLogTable(tableName);
+    const oldLabel = redemptionReqBtn.textContent;
+    redemptionReqBtn.disabled = true;
+    redemptionReqBtn.textContent = 'Requesting…';
+    requestRedemptionDocs(dealId, tableName)
+      .then(sent => {
+        alert(sent && sent.length
+          ? 'Redemption Documents requested. Email sent to: ' + sent.join(', ')
+          : 'Redemption Documents requested, but the email notification could not be sent (no submitter/BD in-charge email on file, or Mail.Send isn\'t permitted). Please let them know directly.');
+      })
+      .catch(err => {
+        console.error('Redemption request failed', err);
+        alert('Could not request Redemption Documents: ' + err.message);
+        redemptionReqBtn.disabled = false;
+        redemptionReqBtn.textContent = oldLabel;
+      });
     return;
   }
   const redemptionBtn = e.target.closest('.history-redemption-btn');
