@@ -1223,6 +1223,16 @@ const L2_DELAY_REASONS = ['Under Negotiation', 'Pending Counterpart Signature', 
 const L2_DELAY_COLUMN_NAMES = { reason:'L2 Delay Reason', remark:'L2 Delay Remark', by:'L2 Delay Set By', date:'L2 Delay Set Date' };
 // Passed to updateCanonicalTableRow to blank the four L2 columns.
 const L2_CLEAR = { reason:'', remark:'', by:'', date:'' };
+// ---- Tag BD in-charge (RECs and Carbon Credit, optional, view-only) ----
+// One extra BD (same BD_NAMES list as "BD in-charge") who can open and view
+// the whole deal but can't edit or action anything on it. Stored on every
+// row of the deal in a column found by HEADER NAME (like the L2 delay
+// columns) — add "Tagged BD In-charge" to BOTH the TradeDealLog (RECs) and
+// CCDealLog (Carbon Credit) tables (the end is safest). New values are
+// passed to updateCanonicalTableRow/addCanonicalTableRows as a
+// __tagBdWrite property on the canonical values array (see applyTagBdWrite);
+// when absent, the cell is written back exactly as last read. See tagBdColumnIndex / dealTaggedBd / isTaggedBdViewer.
+const TAG_BD_COLUMN_NAME = 'Tagged BD In-charge';
 // ---- Redemption Docs request (admin-initiated) ----
 // Redemption Documents are no longer required automatically the moment a
 // Stock-Out (R)/Stock-In (R) REC deal reaches Level 3 Approved. Instead an
@@ -2069,7 +2079,7 @@ function tryOpenDealFromUrl(){
   // approval-notification email) shouldn't let someone else's confirmation
   // be opened just because the link was seen or forwarded.
   const myEmailLower = (currentAccount && currentAccount.username || '').toLowerCase();
-  if(!isAdmin && !isDealOwnerEmail(myEmailLower, withHtml.values[0][MC.salesPic], withHtml.values[0][MC.submittedBy])){ urlDealOpened = true; return; }
+  if(!isAdmin && !isDealOwnerEmail(myEmailLower, withHtml.values[0][MC.salesPic], withHtml.values[0][MC.submittedBy]) && !isTaggedBdViewer(myEmailLower, group)){ urlDealOpened = true; return; }
   const freshHtml = refreshBdMatchingInHtml(withHtml.values[0][MC.generatedHtml], group);
   openViewModal(dealId, freshHtml, withHtml.values[0][MC.agreementFileUrl], group);
   urlDealOpened = true;
@@ -2645,6 +2655,13 @@ function redReqColumnIndexes(tableName){
   }
   return Object.assign(out, ret);
 }
+// 0-based position of the "Tagged BD In-charge" column in this table's raw
+// row, or -1 if the column isn't there.
+function tagBdColumnIndex(tableName){
+  const names = tableColumnNamesCache[tableName];
+  if(!names) return -1;
+  return names.map(normalizeHeaderName).indexOf(normalizeHeaderName(TAG_BD_COLUMN_NAME));
+}
 function missingRedReturnColumnNames(tableName){
   const norm = (tableColumnNamesCache[tableName] || []).map(normalizeHeaderName);
   return Object.values(REDEMPTION_RETURN_COLUMN_NAMES).filter(n => norm.indexOf(normalizeHeaderName(n)) === -1);
@@ -2901,6 +2918,7 @@ async function getCanonicalTableRows(tableName){
   const [rows] = await Promise.all([getTableRows(tableName), tableColumnNamesCache[tableName] ? null : getTableColumnCount(tableName, true)]);
   const idx = l2ColumnIndexes(tableName);
   const redIdx = redReqColumnIndexes(tableName);
+  const tagIdx = tagBdColumnIndex(tableName);
   const cache = rawLogRowCache[tableName] = {};
   return rows.map(r => {
     const raw = (r.values && r.values[0]) || [];
@@ -2912,11 +2930,22 @@ async function getCanonicalTableRows(tableName){
     // Redemption Docs request stamp, same header-name approach — read via
     // redemptionRequestInfo/dealRedemptionRequest.
     if(out.values && out.values[0]) out.values[0].__redReq = readRedReqFromRaw(raw, redIdx);
+    // Tagged BD In-charge (RECs and Carbon Credit) — read via dealTaggedBd.
+    if(out.values && out.values[0]) out.values[0].__tagBd = tagIdx >= 0 ? String(raw[tagIdx] ?? '').trim() : '';
     return out;
   });
 }
 async function addCanonicalTableRows(tableName, rowsArray){
-  return addTableRows(tableName, tableName === CC_LOG_TABLE_NAME ? rowsArray.map(canonicalToCcRaw) : rowsArray);
+  const tagIdx = tagBdColumnIndex(tableName);
+  const rawRows = rowsArray.map(v => {
+    const raw = (tableName === CC_LOG_TABLE_NAME ? canonicalToCcRaw(v) : v).slice();
+    if(tagIdx >= 0 && ('__tagBdWrite' in v)){
+      while(raw.length <= tagIdx) raw.push('');
+      raw[tagIdx] = v.__tagBdWrite;
+    }
+    return raw;
+  });
+  return addTableRows(tableName, rawRows);
 }
 // l2Override (optional): {reason,remark,by,date} to write into the four L2
 // delay columns. When omitted, those columns are written back exactly as
@@ -2950,6 +2979,13 @@ async function updateCanonicalTableRow(tableName, rowIndex, values, l2Override, 
         raw[redIdx[key]] = src[key];
       }
     }
+  }
+  const tagIdx = tagBdColumnIndex(tableName);
+  if(tagIdx >= 0){
+    const cached = (rawLogRowCache[tableName] || {})[rowIndex];
+    const v = ('__tagBdWrite' in values) ? values.__tagBdWrite : (cached ? (cached[tagIdx] ?? '') : (raw[tagIdx] ?? ''));
+    while(raw.length <= tagIdx) raw.push('');
+    raw[tagIdx] = v;
   }
   return updateTableRow(tableName, rowIndex, raw);
 }
@@ -3971,6 +4007,13 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
   }
   const nowIso = submittedDateIso || new Date().toISOString();
   const tradeCount = parseInt(document.getElementById('trade-count').value, 10) || 1;
+  // Tag BD in-charge (optional, RECs and Carbon Credit). Only needs the
+  // column when someone is actually tagged.
+  const tagBdValue = val('h-tag-bd').trim();
+  await getTableColumnCount(dealLogTableName(), true); // fresh header names
+  if(tagBdValue && tagBdColumnIndex(dealLogTableName()) < 0){
+    throw new Error('The ' + (currentProductMode === 'carboncredit' ? 'CCDealLog' : 'TradeDealLog') + ' table in SharePoint is missing the "' + TAG_BD_COLUMN_NAME + '" column needed for "Tag BD in-charge". Ask an admin to add it at the end of the table, or clear "Tag BD in-charge" and try again.');
+  }
   const rowsToWrite = [];
   for(let n = 1; n <= tradeCount; n++){
     const matching = val('t'+n+'-m-matching');
@@ -4074,6 +4117,7 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
        (needsRegistryTechFix(row[MC.registry], row[MC.tech]) || needsVolumeFix(row[MC.volume]))){
       row[MC.regTechReminderSentDate] = row[MC.deliveryEnd];
     }
+    row.__tagBdWrite = tagBdValue; // written by addCanonicalTableRows
     rowsToWrite.push(row);
   }
   await addCanonicalTableRows(dealLogTableName(), rowsToWrite);
@@ -5018,8 +5062,12 @@ async function loadHistory(){
     // submitted it OR whoever is set as its BD in-charge (see
     // isDealOwnerEmail/bdInChargeEmail) — not just the literal submitter,
     // since a deal is often filled in by ops on a BD's behalf.
+    // Deals this person is TAGGED on (view only — see isTaggedBdViewer) are
+    // listed here too so they can find them; renderHistoryTable gives
+    // them the View button only, never any edit/action buttons.
     const mineGroups = groupByDealId(
-      rows.filter(r => isDealOwnerEmail(myEmail, r.values[0][MC.salesPic], r.values[0][MC.submittedBy]))
+      rows.filter(r => isDealOwnerEmail(myEmail, r.values[0][MC.salesPic], r.values[0][MC.submittedBy]) ||
+                       (r.values[0].__tagBd && bdInChargeEmail(r.values[0].__tagBd) === myEmail))
     ).sort(compareGroupsByDeliveryEnd);
     historyGroupsCache.mine = mineGroups;
 
@@ -5527,8 +5575,11 @@ function renderHistoryTable(el, groups, opts){
     // submitter — treated as a second owner, not just a read-only viewer.
     const isDealOwner = isDealOwnerEmail(myEmailLower, v[MC.salesPic], v[MC.submittedBy]);
     const isOwnerOrAdmin = isAdmin || isDealOwner;
+    // Tagged BD in-charge: may open the deal (View) but nothing else.
+    const isTaggedViewer = !isOwnerOrAdmin && isTaggedBdViewer(myEmailLower, g.rows);
+    const taggedBdName = dealTaggedBd(g.rows);
     const deliveryDatesText = confirmationGroupDeliveryDates(g, deliveryFrom, deliveryTo).join(', ');
-    if(restrictOthers && !isOwnerOrAdmin){
+    if(restrictOthers && !isOwnerOrAdmin && !isTaggedViewer){
       html += '<tr class="confirmation-row-restricted" style="border-top:1px solid var(--border);">' +
         (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[MC.salesPic]||'')+'</td>' : '') +
         '<td style="padding:6px;">'+(isPendingDealId(v[MC.dealId]) ? '-' : escapeHtml(friendlyDealId(v[MC.dealId])))+'</td>' +
@@ -5567,7 +5618,7 @@ function renderHistoryTable(el, groups, opts){
     const agreementLink = agreementUrl
       ? '<div style="font-size:11px;margin-top:2px;"><a href="'+escapeHtml(agreementUrl)+'" target="_blank" rel="noopener">📄 View agreement</a></div>'
       : '';
-    const canRequestEdit = showRequestEdit && (status === STATUS_APPROVED || status === STATUS_PENDING_3);
+    const canRequestEdit = isOwnerOrAdmin && showRequestEdit && (status === STATUS_APPROVED || status === STATUS_PENDING_3);
     // Full details/products edit — available in the window right after
     // Admin Level 1 approves and before Level 2 acts (Pending Level 2), or
     // any time a level has sent the deal back via Revert (Reverted - Level
@@ -5577,7 +5628,7 @@ function renderHistoryTable(el, groups, opts){
     // or Level 3 has approved outright, i.e. without a revert), and — unless
     // resubmitting from a Level 2 or Level 3 revert (see saveFullEditAndResubmit)
     // — resubmits the deal back through Level 1.
-    const canFullEdit = showFullEdit && canFullyEditAfterLevel1(status);
+    const canFullEdit = isOwnerOrAdmin && showFullEdit && canFullyEditAfterLevel1(status);
     const fullEditTitle = status === STATUS_REVERTED_2
       ? 'Edit details/products — resubmitting sends this deal straight back to Pending Level 2 (Level 1\'s approval stays in place)'
       : status === STATUS_REVERTED_3
@@ -5676,6 +5727,9 @@ function renderHistoryTable(el, groups, opts){
         (trail ? '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">'+trail+'</div>' : '')+
         agreementLink+
         redemptionBadge+
+        (isTaggedViewer
+          ? '<div style="font-size:11px;color:#4a2d63;margin-top:2px;">👁 You\'re tagged on this deal — view only</div>'
+          : (taggedBdName ? '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">Tagged: '+escapeHtml(taggedBdName)+' (view only)</div>' : ''))+
       '</td>' +
       '<td style="padding:6px;white-space:nowrap;">' +
         regTechWarningIcon +
@@ -7409,6 +7463,50 @@ function isDealOwnerEmail(email, salesPic, submittedBy){
   if(String(submittedBy || '').toLowerCase() === email) return true;
   return bdInChargeEmail(salesPic) === email;
 }
+// The deal's "Tag BD in-charge" name, or '' if none.
+function dealTaggedBd(rows){
+  for(const r of (rows || [])){
+    const t = r && r.values && r.values[0] && r.values[0].__tagBd;
+    if(t) return t;
+  }
+  return '';
+}
+// True if `email` (lowercased) is the deal's tagged BD — VIEW-ONLY access:
+// they can open the whole deal but get no edit/action buttons. Deliberately
+// separate from isDealOwnerEmail, which grants owner (self-service) rights.
+function isTaggedBdViewer(email, rows){
+  if(!email) return false;
+  const tagged = dealTaggedBd(rows);
+  return !!tagged && bdInChargeEmail(tagged) === email;
+}
+// Dropdown for "Tag BD in-charge": optional ("— None —"), same BD_NAMES list
+// as BD in-charge, keeping a legacy saved value as an extra option.
+function tagBdSelectHtml(id, currentValue){
+  const current = String(currentValue || '').trim();
+  const names = (current && !BD_NAMES.includes(current)) ? [current].concat(BD_NAMES) : BD_NAMES;
+  const opts = '<option value=""'+(current?'':' selected')+'>— None —</option>' +
+    names.map(n => '<option value="'+escapeHtml(n)+'"'+(n===current?' selected':'')+'>'+escapeHtml(n)+'</option>').join('');
+  return '<select id="'+id+'">'+opts+'</select>';
+}
+// For the edit forms: works out where to write the (possibly changed) tag.
+// Returns null when nothing needs writing, {error} when the column is
+// missing but a tag was chosen, else {idx, value}.
+async function resolveTagBdWrite(tableName, newValue, oldValue){
+  newValue = String(newValue || '').trim();
+  oldValue = String(oldValue || '').trim();
+  await getTableColumnCount(tableName, true);
+  const idx = tagBdColumnIndex(tableName);
+  if(idx < 0){
+    return newValue ? { error: 'The ' + (tableName === CC_LOG_TABLE_NAME ? 'CCDealLog' : 'TradeDealLog') + ' table in SharePoint is missing the "' + TAG_BD_COLUMN_NAME + '" column needed for "Tag BD in-charge". Ask an admin to add it, or set it back to "— None —".' } : null;
+  }
+  return { idx, value: newValue, changed: newValue !== oldValue };
+}
+// Marks the canonical values array with the new tag; updateCanonicalTableRow
+// writes it into the right raw column for either table.
+function applyTagBdWrite(values, tag){
+  if(!tag || tag.error || tag.idx === undefined) return;
+  values.__tagBdWrite = tag.value;
+}
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const YEARS = ["2025","2026","2027","2028","2029","2030"];
 
@@ -7773,6 +7871,7 @@ document.getElementById('header-fields').innerHTML =
   headerField('Deal Date', dateHtml('h-date'),'h-date') +
   headerField('Entity', selectHtml('h-entity',['MY','SG'],'MY'),'h-entity') +
   headerField('BD in-charge', selectHtml('h-bd',BD_NAMES,BD_NAMES[0]),'h-bd') +
+  '<div id="h-tag-bd-wrap">'+headerField('Tag BD in-charge (optional — view only)', tagBdSelectHtml('h-tag-bd',''),'h-tag-bd')+'</div>' +
   headerField('Order type', selectHtml('h-order',ORDER_TYPES,'Stock-In (T)'),'h-order') +
   '<div id="h-role-wrap"><label for="h-role">Buyer or Seller</label>'+
   '<input type="text" id="h-role" value="Seller" readonly/></div>' +
@@ -9455,6 +9554,7 @@ function recapEditFormHtml(dealId, sortedGroup){
       recapEditFieldHtml('Deal Date', '<input type="date" id="re-h-date" value="'+escapeHtml(toDateInputValue(head[MC.agreementDate]))+'"/>')+
       recapEditFieldHtml('Entity', '<input type="text" id="re-h-entity" value="'+escapeHtml(head[MC.entity]||'')+'"/>')+
       recapEditFieldHtml('BD in-charge', bdInChargeSelectHtml('re-h-bd', head[MC.salesPic]))+
+      recapEditFieldHtml('Tag BD in-charge (optional — view only)', tagBdSelectHtml('re-h-tag-bd', dealTaggedBd(sortedGroup)))+
       recapEditFieldHtml(role+' Full Name', '<input type="text" id="re-h-company" value="'+escapeHtml(head[MC.company]||'')+'"/>')+
       (isCC ? recapEditFieldHtml('Project Name', '<input type="text" id="re-h-project-name" value="'+escapeHtml(head[MC.projectName]||'')+'"/>')+
               recapEditFieldHtml('Project ID', '<input type="text" id="re-h-project-id" value="'+escapeHtml(head[MC.projectId]||'')+'"/>')+
@@ -9520,6 +9620,8 @@ async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
   }
 
   const isCC = (sortedGroup[0]._sourceTable || STANDARD_LOG_TABLE_NAME) === CC_LOG_TABLE_NAME;
+  const reTag = await resolveTagBdWrite(dealLogTableName(), rv('re-h-tag-bd'), dealTaggedBd(sortedGroup));
+  if(reTag && reTag.error){ errEl.textContent = reTag.error; errEl.style.display = 'block'; return; }
   const updatedRows = [];
   for(let idx = 0; idx < sortedGroup.length; idx++){
     const i = idx + 1;
@@ -9543,6 +9645,7 @@ async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
     values[MC.tigrsIrecName] = rv(idp+'transfer');
     values[MC.tech] = isCC ? 'CC' : rv(idp+'tech');
     values[MC.country] = rv(idp+'country');
+    applyTagBdWrite(values, reTag);
     if(isCC){
       values[MC.projectName] = rv('re-h-project-name');
       values[MC.projectId] = rv('re-h-project-id');
@@ -9706,6 +9809,7 @@ function buildFullEditChangeSummary(oldGroup, updatedRows, role){
   diff('Deal Date', formatStoredDate(oldHead[MC.agreementDate]), formatStoredDate(newHead[MC.agreementDate]));
   diff('Entity', oldHead[MC.entity], newHead[MC.entity]);
   diff('BD in-charge', oldHead[MC.salesPic], newHead[MC.salesPic]);
+  if('__tagBdWrite' in newHead) diff('Tag BD in-charge', dealTaggedBd(oldGroup), newHead.__tagBdWrite);
   diff(role+' Full Name', oldHead[MC.company], newHead[MC.company]);
   oldGroup.forEach((r, idx)=>{
     const ov = r.values[0];
@@ -9967,6 +10071,7 @@ function fullEditFormHtml(dealId, sortedGroup){
       recapEditFieldHtml('Deal Date', '<input type="date" id="fe-h-date" value="'+escapeHtml(toDateInputValue(head[MC.agreementDate]))+'"/>')+
       recapEditFieldHtml('Entity', '<input type="text" id="fe-h-entity" value="'+escapeHtml(head[MC.entity]||'')+'"/>')+
       recapEditFieldHtml('BD in-charge', bdInChargeSelectHtml('fe-h-bd', head[MC.salesPic]))+
+      recapEditFieldHtml('Tag BD in-charge (optional — view only)', tagBdSelectHtml('fe-h-tag-bd', dealTaggedBd(sortedGroup)))+
       recapEditFieldHtml(role+' Full Name', '<input type="text" id="fe-h-company" value="'+escapeHtml(head[MC.company]||'')+'"/>')+
       (isCC ? recapEditFieldHtml('Project Name', '<input type="text" id="fe-h-project-name" value="'+escapeHtml(head[MC.projectName]||'')+'"/>')+recapEditFieldHtml('Project ID', '<input type="text" id="fe-h-project-id" value="'+escapeHtml(head[MC.projectId]||'')+'"/>')+recapEditFieldHtml('Project Type', '<input type="text" id="fe-h-project-type" value="'+escapeHtml(head[MC.vFromMM]||'')+'"/>')+recapEditFieldHtml('Methodology', '<input type="text" id="fe-h-methodology" value="'+escapeHtml(head[MC.vToMM]||'')+'"/>') : '')+
     '</div>';
@@ -10081,8 +10186,12 @@ function fullEditChangedOnlyBdMatching(liveGroup, updatedRows){
     const oldValues = liveGroup[idx].values[0];
     const newValues = updatedRows[idx].values[0];
     const len = Math.max(oldValues.length, newValues.length);
+    // (The view-only tag travels as values.__tagBdWrite, not a column
+    // here, so changing only the tag never counts as a deal-term change.)
+    const tagIdx = liveGroup[idx]._sourceTable === CC_LOG_TABLE_NAME ? -1 : tagBdColumnIndex(STANDARD_LOG_TABLE_NAME);
     for(let col = 0; col < len; col++){
       if(FULL_EDIT_TRAIL_COLS.has(col)) continue;
+      if(col === tagIdx) continue;
       const a = oldValues[col] === undefined || oldValues[col] === null ? '' : oldValues[col];
       const b = newValues[col] === undefined || newValues[col] === null ? '' : newValues[col];
       if(String(a) !== String(b) && !FULL_EDIT_BD_MATCHING_COLS.has(col)) return false;
@@ -10188,6 +10297,8 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
     }
 
     const isCC = (liveGroup[0]._sourceTable || STANDARD_LOG_TABLE_NAME) === CC_LOG_TABLE_NAME;
+    const feTag = await resolveTagBdWrite(dealLogTableName(), rv('fe-h-tag-bd'), dealTaggedBd(liveGroup));
+    if(feTag && feTag.error) throw new Error(feTag.error);
     const updatedRows = [];
 
     for(let idx = 0; idx < liveGroup.length; idx++){
@@ -10212,6 +10323,7 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
       values[MC.tigrsIrecName] = rv(idp+'transfer');
       values[MC.tech] = isCC ? 'CC' : rv(idp+'tech');
       values[MC.country] = rv(idp+'country');
+      applyTagBdWrite(values, feTag);
 
       if(isCC){
         values[MC.projectName] = rv('fe-h-project-name');
