@@ -876,7 +876,7 @@
 <div id="approve-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
   <div style="width:100%;max-width:420px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:10px;">
     <h2 style="margin:0;font-size:16px;">Approve Deal ID <span id="approve-modal-dealid"></span> — Level 2</h2>
-    <p style="margin:0;font-size:13px;color:var(--text-secondary);">Level 2 approval requires the signed agreement to be attached. Once approved, it becomes viewable to everyone from this deal's row. Max 4 MB.</p>
+    <p style="margin:0;font-size:13px;color:var(--text-secondary);">Level 2 approval requires the signed agreement to be attached. Once approved, it becomes viewable to everyone from this deal's row. Max 10 MB.</p>
     <label style="margin:4px 0 0;">Agreement file (required)</label>
     <input type="file" id="approve-modal-file" accept=".pdf,.doc,.docx"/>
     <div id="approve-modal-transfer-fields" style="display:flex;flex-direction:column;gap:8px;"></div>
@@ -3037,29 +3037,75 @@ async function deleteTableRow(tableName, rowIndex){
    Uploaded into an "Agreement Files" folder in the same SharePoint drive
    that hosts the workbook, so it inherits the same site permissions —
    anyone who can already open the workbook can open the agreement.
-   Uses the simple (non-resumable) upload endpoint, which Graph limits to
-   4 MB; that's enough for a scanned/signed agreement PDF in normal use. */
-const AGREEMENT_UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
+   Max 10 MB. Graph's simple "PUT .../content" endpoint is hard-limited to
+   4 MB, so files up to 4 MB still go through one PUT, and larger files
+   (up to AGREEMENT_UPLOAD_MAX_BYTES) use Graph's resumable upload session
+   in sequential Content-Range chunks — same approach as
+   uploadRedemptionDocument below. */
+const AGREEMENT_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
+const AGREEMENT_SIMPLE_UPLOAD_MAX_BYTES = 4 * 1024 * 1024; // Graph's own ceiling for PUT .../content
+const AGREEMENT_UPLOAD_CHUNK_BYTES = 5 * 1024 * 1024; // must be a multiple of 320 KiB per Graph's docs
 async function uploadAgreementFile(dealId, file){
   if(!driveId) throw new Error('Not connected to the SharePoint workbook yet — try refreshing the page.');
   if(file.size > AGREEMENT_UPLOAD_MAX_BYTES){
-    throw new Error('That file is larger than 4 MB — please compress it or upload a smaller file.');
+    throw new Error('That file is larger than 10 MB — please compress it or upload a smaller file.');
   }
-  const token = await getAccessToken(GRAPH_SCOPES);
   const safeName = (dealId + ' - ' + file.name).replace(/[\\\/:*?"<>|]/g, '-');
-  const path = '/drives/' + driveId + '/root:/Agreement Files/' + encodeURIComponent(safeName) + ':/content';
-  const res = await fetch('https://graph.microsoft.com/v1.0' + path, {
-    method: 'PUT',
-    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': file.type || 'application/octet-stream' },
-    body: file
-  });
-  if(!res.ok){
-    const text = await res.text().catch(()=> '');
-    throw new Error('Agreement upload failed (' + res.status + '): ' + text.slice(0, 300));
+  const itemPath = '/drives/' + driveId + '/root:/Agreement Files/' + encodeURIComponent(safeName) + ':';
+  if(file.size <= AGREEMENT_SIMPLE_UPLOAD_MAX_BYTES){
+    const token = await getAccessToken(GRAPH_SCOPES);
+    const res = await fetch('https://graph.microsoft.com/v1.0' + itemPath + '/content', {
+      method: 'PUT',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': file.type || 'application/octet-stream' },
+      body: file
+    });
+    if(!res.ok){
+      const text = await res.text().catch(()=> '');
+      throw new Error('Agreement upload failed (' + res.status + '): ' + text.slice(0, 300));
+    }
+    const item = await res.json();
+    return { name: item.name, webUrl: item.webUrl };
   }
-  const item = await res.json();
+  // Larger files: resumable upload session, chunked. conflictBehavior
+  // 'replace' mirrors the simple PUT's overwrite-in-place behavior above.
+  const sessionToken = await getAccessToken(GRAPH_SCOPES);
+  const sessionRes = await fetch('https://graph.microsoft.com/v1.0' + itemPath + '/createUploadSession', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + sessionToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ item: { '@microsoft.graph.conflictBehavior': 'replace' } })
+  });
+  if(!sessionRes.ok){
+    const text = await sessionRes.text().catch(()=> '');
+    throw new Error('Agreement upload failed to start (' + sessionRes.status + '): ' + text.slice(0, 300));
+  }
+  const session = await sessionRes.json();
+  const uploadUrl = session.uploadUrl;
+  let start = 0;
+  let item = null;
+  while(start < file.size){
+    const end = Math.min(start + AGREEMENT_UPLOAD_CHUNK_BYTES, file.size);
+    const chunk = file.slice(start, end);
+    const chunkRes = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Length': String(end - start),
+        'Content-Range': 'bytes ' + start + '-' + (end - 1) + '/' + file.size
+      },
+      body: chunk
+    });
+    if(!chunkRes.ok){
+      const text = await chunkRes.text().catch(()=> '');
+      throw new Error('Agreement upload failed partway through (' + chunkRes.status + '): ' + text.slice(0, 300));
+    }
+    if(end === file.size){
+      item = await chunkRes.json();
+    }
+    start = end;
+  }
+  if(!item) throw new Error('Agreement upload did not complete — please try again.');
   return { name: item.name, webUrl: item.webUrl };
 }
+
 
 /* ---- Redemption Form upload (RECs, Order Type "Stock-Out (R)" or
    "Stock-In (R)" only) ----
@@ -3077,7 +3123,7 @@ async function uploadAgreementFile(dealId, file){
    ID>_Product <n>_<docIndex>" plus the uploaded file's own extension, so
    uploading a second/third file for the same product gets its own
    SharePoint file instead of overwriting the previous one.
-   Graph's simple "PUT .../content" upload (used for Level 2 agreement
+   Graph's simple "PUT .../content" upload (also used for small Level 2 agreement
    files, see uploadAgreementFile above) is hard-limited by Graph itself to
    4 MB — that's not this app's choice, so raising REDEMPTION_DOC_UPLOAD_MAX_
    BYTES past 4 MB requires Graph's resumable upload session API instead:
