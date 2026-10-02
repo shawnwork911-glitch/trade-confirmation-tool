@@ -2061,6 +2061,46 @@ async function notifyDealIdAssigned(dealId, submitterEmail){
   }
 }
 
+// ---- Tag BD in-charge notification ----
+// Names in newValue that weren't already in oldValue (case-insensitive) —
+// only these people get emailed, so re-saving a deal never re-notifies
+// someone who was already tagged.
+function newlyTaggedBdNames(oldValue, newValue){
+  const old = new Set(parseTagBdList(oldValue).map(n => n.toLowerCase()));
+  return parseTagBdList(newValue).filter(n => !old.has(n.toLowerCase()));
+}
+// Emails every newly tagged BD (view-only access) on a deal. Best-effort:
+// a failed email never undoes the save. The person doing the tagging is
+// never emailed about their own tag.
+async function notifyTaggedBds(dealId, description, names, taggerEmail, bdInChargeName){
+  const me = String(taggerEmail || '').trim().toLowerCase();
+  const seen = new Set();
+  const toEmails = [];
+  const noEmail = [];
+  (names || []).forEach(n => {
+    const e = bdInChargeEmail(n);
+    if(!e){ noEmail.push(n); return; }
+    if(e === me || seen.has(e)) return;
+    seen.add(e); toEmails.push(e);
+  });
+  if(noEmail.length) console.warn('No email on file (BD_NAME_EMAILS) for tagged BD: ' + noEmail.join(', ') + ' — skipping their tag notification for Deal ID ' + dealId);
+  if(!toEmails.length) return;
+  const pending = isPendingDealId(dealId);
+  const displayId = friendlyDealId(dealId);
+  const label = pending ? 'a new agreement (Deal ID pending Level 1 approval)' : 'Deal ID <strong>' + escapeHtml(displayId) + '</strong>';
+  const bdBlock = bdInChargeName ? '<p><strong>BD in-charge:</strong> ' + escapeHtml(bdInChargeName) + '</p>' : '';
+  const descBlock = (description && String(description).trim()) ? '<p><strong>Description:</strong> ' + escapeHtml(description) + '</p>' : '';
+  const html = '<p>' + escapeHtml(taggerEmail || 'Someone') + ' has tagged you on ' + label + ' in the Trade Confirmation app.</p>' +
+    bdBlock + descBlock +
+    '<p>You have <strong>view-only</strong> access to this deal. It also appears in your saved confirmations list.</p>' +
+    '<p><a href="' + dealDeepLink(dealId) + '">Open it in the Trade Confirmation app</a></p>';
+  try{
+    await sendMailGraph(toEmails, 'You\'ve been tagged — ' + (pending ? 'new agreement' : displayId), html);
+  }catch(err){
+    console.error('Tag BD notification email failed', err);
+  }
+}
+
 // a notification email's "?deal=XXXXX" link, once logRowsCache has data.
 let urlDealOpened = false;
 function tryOpenDealFromUrl(){
@@ -4169,6 +4209,10 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
   }
   await addCanonicalTableRows(dealLogTableName(), rowsToWrite);
   await loadHistory();
+  if(tagBdValue){
+    try{ await notifyTaggedBds(dealId, val('h-description'), parseTagBdList(tagBdValue), currentAccount.username, val('h-bd')); }
+    catch(err){ console.warn('Tag BD notification failed:', err); }
+  }
 }
 /* Advances a deal one step through the approval chain, writing the
    approver + timestamp for whichever level the current status corresponds
@@ -4495,7 +4539,7 @@ async function revertDeal(dealId, comment){
    registry/tech/volume are always included (even for products that didn't
    need a fix) carrying that product's current, unchanged value, so the diff
    below only picks up a real change. */
-async function requestBdMatchChange(dealId, edits, matchNote){
+async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
   if(!dealId) return;
   await ensureFreshWorkbookSession();
   const rows = await getCanonicalTableRows(dealLogTableName());
@@ -4593,8 +4637,39 @@ async function requestBdMatchChange(dealId, edits, matchNote){
       changeLines.push((matching.length > 1 ? 'Product ' + (i+1) + ' \u2014 ' : '') + rowChangeLines[i]);
     }
   }
-  if(!changeLines.length){
+  // Tag BD in-charge (view-only) — applied immediately on every row of the
+  // deal regardless of status, never staged for Level 3. Undefined
+  // tagBdValue = caller didn't offer the field, so leave it untouched.
+  const dealBd = matching[0].values[0][MC.salesPic];
+  const oldTag = dealTaggedBd(matching);
+  let tagWrite = null;
+  if(tagBdValue !== undefined){
+    tagWrite = await resolveTagBdWrite(dealLogTableName(), tagBdValue, oldTag, dealBd);
+    if(tagWrite && tagWrite.error) throw new Error(tagWrite.error);
+  }
+  const tagChanged = !!(tagWrite && tagWrite.changed);
+  if(!changeLines.length && !tagChanged){
     throw new Error('No changes were made — nothing to submit for re-approval.');
+  }
+  // Writes the new tag onto every row this request ISN'T otherwise
+  // rewriting (rows it does rewrite carry it via applyTagBdWrite), then
+  // emails whoever was newly tagged.
+  const finishTagWrite = async () => {
+    if(!tagChanged) return;
+    for(let i = 0; i < matching.length; i++){
+      if(rowChanged[i]) continue;
+      const values = matching[i].values[0].slice();
+      applyTagBdWrite(values, tagWrite);
+      await updateCanonicalTableRow(dealLogTableName(), matching[i].index, values);
+    }
+    try{ await notifyTaggedBds(dealId, matching[0].values[0][MC.description], newlyTaggedBdNames(oldTag, tagWrite.value), currentAccount.username, dealBd); }
+    catch(err){ console.warn('Tag BD notification failed:', err); }
+  };
+  if(!changeLines.length){
+    // Tag-only change: no status change, no approval, no operations email.
+    await finishTagWrite();
+    await loadHistory();
+    return;
   }
   const nowIso = new Date().toISOString();
   if(currentStatus === STATUS_PENDING_3){
@@ -4633,8 +4708,10 @@ async function requestBdMatchChange(dealId, edits, matchNote){
       values[MC.rejectedBy] = '';
       values[MC.rejectedDate] = '';
       values[MC.rejectReason] = '';
+      if(tagChanged) applyTagBdWrite(values, tagWrite);
       await updateCanonicalTableRow(dealLogTableName(), r.index, values);
     }
+    await finishTagWrite();
     const notifyBody = changeLines.join('\n') + (matchNote ? '\n\nNote: ' + matchNote : '');
     await notifyNextApprover(STATUS_PENDING_CHANGE_3, dealId, matching[0].values[0][MC.description], notifyBody);
     if(bdMatchingChanged){
@@ -4680,6 +4757,7 @@ async function requestBdMatchChange(dealId, edits, matchNote){
        !needsRegistryTechFix(values[MC.registry], values[MC.tech]) && !needsVolumeFix(values[MC.volume])){
       values[MC.regTechReminderSentDate] = '';
     }
+    if(tagChanged) applyTagBdWrite(values, tagWrite);
     await updateCanonicalTableRow(dealLogTableName(), r.index, values);
     try{
       const approvedItemId = await addApprovedDealToList(values, changeNote);
@@ -4692,6 +4770,7 @@ async function requestBdMatchChange(dealId, edits, matchNote){
       approvedListErrors.push('Product ' + tradeNum + ': ' + err.message);
     }
   }
+  await finishTagWrite();
   await notifyOperationsBdMatchChange(dealId, matching[0].values[0][MC.description], changeLines, matchNote, currentAccount.username);
   if(bdMatchingChanged){
     try{
@@ -6549,7 +6628,17 @@ function openEditRequestModal(dealId){
   const isCC = dealLogTableName() === CC_LOG_TABLE_NAME;
   const noOfRecsLabel = isCC ? 'No of VCUs' : 'No of RECs';
   const fieldsEl = document.getElementById('edit-request-modal-fields');
-  fieldsEl.innerHTML = group.map((r, idx)=>{
+  // Tag BD in-charge — view-only access, so it's saved straight away and
+  // never needs Level 3 approval (see requestBdMatchChange). The hidden
+  // er-h-bd carries the BD in-charge so the checklist greys them out.
+  const erBd = group.length ? String(group[0].values[0][MC.salesPic] || '') : '';
+  const tagHtml = '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;">' +
+      '<p style="margin:0;font-size:13px;font-weight:600;">Tag BD in-charge (optional — view only)</p>' +
+      '<p style="margin:0;font-size:12px;color:var(--text-secondary);">Anyone newly tagged gets an email and view-only access. Saved immediately — no approval needed.</p>' +
+      '<input type="hidden" id="er-h-bd" value="'+escapeHtml(erBd)+'"/>' +
+      tagBdChecklistHtml('er-h-tag-bd', dealTaggedBd(group), 'er-h-bd') +
+    '</div>';
+  fieldsEl.innerHTML = tagHtml + group.map((r, idx)=>{
     const v = r.values[0];
     const matchingVal = v[MC.matching] || 'Open Position';
     const active = matchingVal && matchingVal !== 'Open Position';
@@ -6595,6 +6684,7 @@ function openEditRequestModal(dealId){
       '<textarea id="edit-request-match-note" rows="3" placeholder="e.g. BD confirmed wrong buyer name was entered at submission"></textarea>' +
     '</div>';
   document.getElementById('edit-request-modal-overlay').style.display = 'flex';
+  syncAllTagBdChecklists(fieldsEl);
   refreshAllDateDisplays(fieldsEl);
   group.forEach((r, idx)=> erSourceKeysFor(idx).forEach(key => syncEditRequestBuyerSeller(key)));
 }
@@ -6719,7 +6809,7 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
   btn.disabled = true;
   btn.textContent = 'Submitting…';
   try{
-    await requestBdMatchChange(dealId, edits, matchNote);
+    await requestBdMatchChange(dealId, edits, matchNote, val('er-h-tag-bd'));
     closeEditRequestModal();
   }catch(err){
     errEl.textContent = err.message;
@@ -9868,6 +9958,10 @@ async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
       await updateCanonicalTableRow(dealLogTableName(), r.index, r.values[0]);
     }
     await loadHistory(); // refresh logRowsCache so every other view of this deal picks up the edit too
+    if(reTag && reTag.changed){
+      try{ await notifyTaggedBds(dealId, sortedGroup[0].values[0][MC.description], newlyTaggedBdNames(dealTaggedBd(sortedGroup), reTag.value), currentAccount.username, hBd); }
+      catch(err){ console.warn('Tag BD notification failed:', err); }
+    }
     const refreshedGroup = logRowsCache
       .filter(r => String(r.values[0][MC.dealId]||'').trim() === dealId)
       .sort((a,b)=> a.index - b.index);
@@ -10684,6 +10778,11 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
       }catch(err){
         console.warn('Admin Level 1 BD-match-change notification failed:', err);
       }
+    }
+
+    if(feTag && feTag.changed){
+      try{ await notifyTaggedBds(dealId, updatedRows[0].values[0][MC.description], newlyTaggedBdNames(dealTaggedBd(liveGroup), feTag.value), currentAccount.username, hBd); }
+      catch(err){ console.warn('Tag BD notification failed:', err); }
     }
 
     // Refresh the queue. If refresh fails, the workbook is still saved correctly.
