@@ -2723,6 +2723,7 @@ function readRedReqFromRaw(raw, idx){
 // Last raw (as-stored) values read for each row, per table, keyed by row
 // index — so writes can put the L2 columns back exactly as they were.
 const rawLogRowCache = {};
+const rawLogRowCacheHeaders = {};
 function readL2FromRaw(raw, idx){
   if(!idx || !raw) return null;
   return { reason: raw[idx.reason] ?? '', remark: raw[idx.remark] ?? '', by: raw[idx.by] ?? '', date: raw[idx.date] ?? '' };
@@ -2950,16 +2951,61 @@ function canonicalToCcRaw(values){
   raw[CC.sourceMatchNote]=values[MC.sourceMatchNote]??'';
   return raw;
 }
+// ---- TradeDealLog (RECs) layout fix ----
+// MC.projectId/projectName/prepayment (62-64) are Carbon Credit-only fields.
+// The live TradeDealLog table does NOT have "Project ID", "Project Name" or
+// "Prepayment" columns, so its "Source Vintage Start" sits at raw position
+// 62, not 65 — every positional field from 62 onward was 3 columns off
+// (Source Vintage was being written into "Redemption Document Name/URL",
+// Redemption docs were read from "Redemption Uploaded Date", etc.).
+// These two helpers insert/remove those 3 empty slots at the workbook
+// boundary, ONLY when the table has no "Project ID" header — so a table that
+// does have them keeps working unchanged. Columns after the fixed block
+// (L2 delay, Redemption request/return, Tagged BD) are still found by
+// header name and are untouched by this shift.
+const REC_CC_ONLY_SLOT_START = 62, REC_CC_ONLY_SLOT_COUNT = 3;
+function recTableLacksCcOnlySlots(tableName){
+  if(tableName === CC_LOG_TABLE_NAME) return false;
+  const names = tableColumnNamesCache[tableName];
+  if(!names) throw new Error('Column headers for ' + tableName + ' are not loaded yet — please refresh and try again.');
+  return names.map(normalizeHeaderName).indexOf(normalizeHeaderName('Project ID')) === -1;
+}
+function recRawToCanonical(raw, tableName){
+  raw = raw || [];
+  if(!recTableLacksCcOnlySlots(tableName)) return raw;
+  const out = raw.slice(0, REC_CC_ONLY_SLOT_START);
+  while(out.length < REC_CC_ONLY_SLOT_START) out.push('');
+  for(let i = 0; i < REC_CC_ONLY_SLOT_COUNT; i++) out.push('');
+  return out.concat(raw.slice(REC_CC_ONLY_SLOT_START));
+}
+function canonicalToRecRaw(values, tableName){
+  if(!recTableLacksCcOnlySlots(tableName)) return values.slice();
+  return values.slice(0, REC_CC_ONLY_SLOT_START).concat(values.slice(REC_CC_ONLY_SLOT_START + REC_CC_ONLY_SLOT_COUNT));
+}
+function canonicalToTableRaw(values, tableName){
+  return tableName === CC_LOG_TABLE_NAME ? canonicalToCcRaw(values).slice() : canonicalToRecRaw(values, tableName);
+}
+// Header layout fingerprint — a write is refused if the table's columns
+// changed between the read and the write (see updateCanonicalTableRow), so
+// a column inserted/moved/deleted in Excel while the app is open can never
+// shift data into the wrong columns.
+function tableHeaderSignature(tableName){
+  return (tableColumnNamesCache[tableName] || []).map(normalizeHeaderName).join('|');
+}
+const TABLE_LAYOUT_CHANGED_MSG = 'The deal log table\'s columns changed in Excel since this page loaded. Nothing was saved — please refresh the page and try again.';
 function canonicalizeLogRow(row, tableName){
-  if(tableName !== CC_LOG_TABLE_NAME){ row._sourceTable = STANDARD_LOG_TABLE_NAME; return row; }
+  if(tableName !== CC_LOG_TABLE_NAME){
+    return Object.assign({}, row, {values:[recRawToCanonical(row.values[0] || [], tableName)], _sourceTable:STANDARD_LOG_TABLE_NAME});
+  }
   return Object.assign({}, row, {values:[ccRawToCanonical(row.values[0] || [])], _sourceTable:CC_LOG_TABLE_NAME});
 }
 async function getCanonicalTableRows(tableName){
-  const [rows] = await Promise.all([getTableRows(tableName), tableColumnNamesCache[tableName] ? null : getTableColumnCount(tableName, true)]);
+  const [rows] = await Promise.all([getTableRows(tableName), getTableColumnCount(tableName, true)]);
   const idx = l2ColumnIndexes(tableName);
   const redIdx = redReqColumnIndexes(tableName);
   const tagIdx = tagBdColumnIndex(tableName);
   const cache = rawLogRowCache[tableName] = {};
+  rawLogRowCacheHeaders[tableName] = tableHeaderSignature(tableName);
   return rows.map(r => {
     const raw = (r.values && r.values[0]) || [];
     cache[r.index] = raw.slice();
@@ -2976,9 +3022,10 @@ async function getCanonicalTableRows(tableName){
   });
 }
 async function addCanonicalTableRows(tableName, rowsArray){
+  await getTableColumnCount(tableName, true); // fresh header names before mapping
   const tagIdx = tagBdColumnIndex(tableName);
   const rawRows = rowsArray.map(v => {
-    const raw = (tableName === CC_LOG_TABLE_NAME ? canonicalToCcRaw(v) : v).slice();
+    const raw = canonicalToTableRaw(v, tableName);
     if(tagIdx >= 0 && ('__tagBdWrite' in v)){
       while(raw.length <= tagIdx) raw.push('');
       raw[tagIdx] = v.__tagBdWrite;
@@ -2993,7 +3040,11 @@ async function addCanonicalTableRows(tableName, rowsArray){
 // redReqOverride (optional): {by,date} for the two Redemption Docs request
 // columns — preserved exactly as last read when omitted, same as L2.
 async function updateCanonicalTableRow(tableName, rowIndex, values, l2Override, redReqOverride){
-  const raw = (tableName === CC_LOG_TABLE_NAME ? canonicalToCcRaw(values) : values).slice();
+  await getTableColumnCount(tableName, true); // fresh header names before mapping
+  if(rawLogRowCacheHeaders[tableName] !== undefined && rawLogRowCacheHeaders[tableName] !== tableHeaderSignature(tableName)){
+    throw new Error(TABLE_LAYOUT_CHANGED_MSG);
+  }
+  const raw = canonicalToTableRaw(values, tableName);
   const idx = l2ColumnIndexes(tableName);
   if(idx){
     const cached = (rawLogRowCache[tableName] || {})[rowIndex];
@@ -7607,10 +7658,13 @@ function isDealOwnerEmail(email, salesPic, submittedBy){
 // "Tag BD in-charge" can hold SEVERAL people: stored in the one "Tagged BD
 // In-charge" cell as a "; "-joined list of BD_NAMES (same convention as
 // the per-BD-source fields). A single legacy name reads as a list of one.
+// Anything containing a digit, "@" or a file extension can't be a BD name —
+// it's a value that strayed in from another column — so it's ignored.
+function looksLikeBdName(n){ return !!n && !/[0-9@]/.test(n) && !/\.[a-z0-9]{2,5}$/i.test(n); }
 function parseTagBdList(value){
   const seen = new Set();
-  return String(value || '').split(/;\s*/).map(n => n.trim()).filter(n => {
-    if(!n || seen.has(n.toLowerCase())) return false;
+  return String(value || '').replace(/\u00a0/g, ' ').split(/;\s*/).map(n => n.trim()).filter(n => {
+    if(!looksLikeBdName(n) || seen.has(n.toLowerCase())) return false;
     seen.add(n.toLowerCase());
     return true;
   });
