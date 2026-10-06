@@ -932,13 +932,30 @@
 <div id="redemption-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
   <div style="width:100%;max-width:560px;max-height:85vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:12px;">
     <h2 style="margin:0;font-size:16px;">Redemption Documents — Deal ID <span id="redemption-modal-dealid"></span></h2>
-    <p id="redemption-modal-intro" style="margin:0;font-size:13px;color:var(--text-secondary);">An admin has requested the signed Redemption Forms for this Stock-Out (R)/Stock-In (R) deal — please upload at least one for each product below. Upload one file per product. PDF/Word files only, max 10 MB.</p>
+    <p id="redemption-modal-intro" style="margin:0;font-size:13px;color:var(--text-secondary);">An admin has requested the signed Redemption Forms for the selected product(s) of this Stock-Out (R)/Stock-In (R) deal — upload one file per requested product. PDF/Word files only, max 10 MB.</p>
     <div id="redemption-modal-return-banner" style="display:none;font-size:13px;color:#7a3b12;background:#fdf1e6;border:1px solid #e8b88a;border-radius:6px;padding:10px 12px;"></div>
     <div id="redemption-modal-fields" style="display:flex;flex-direction:column;gap:12px;"></div>
     <div id="redemption-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
       <button type="button" class="secondary" id="redemption-modal-close">Close</button>
       <button type="button" id="redemption-modal-resubmit" style="display:none;">Resubmit to Level 3</button>
+    </div>
+  </div>
+</div>
+
+<div id="redemption-request-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1150;align-items:center;justify-content:center;padding:16px;">
+  <div style="width:100%;max-width:560px;max-height:85vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:10px;">
+    <h2 style="margin:0;font-size:16px;">Request Redemption Docs — Deal ID <span id="redemption-request-modal-dealid"></span></h2>
+    <p id="redemption-request-modal-intro" style="margin:0;font-size:13px;color:var(--text-secondary);">Tick the product(s) that need a signed Redemption Form. Only the ticked products will be listed in the request email to the submitter and BD in-charge, and only those will need an upload.</p>
+    <div style="display:flex;gap:12px;font-size:12px;">
+      <a href="#" id="redemption-request-select-all">Select all</a>
+      <a href="#" id="redemption-request-select-none">Clear</a>
+    </div>
+    <div id="redemption-request-modal-fields" style="display:flex;flex-direction:column;gap:8px;"></div>
+    <div id="redemption-request-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
+      <button type="button" class="secondary" id="redemption-request-modal-cancel">Cancel</button>
+      <button type="button" id="redemption-request-modal-submit">Send request</button>
     </div>
   </div>
 </div>
@@ -1237,7 +1254,7 @@ const TAG_BD_COLUMN_NAME = 'Tagged BD In-charge';
 // Redemption Documents are no longer required automatically the moment a
 // Stock-Out (R)/Stock-In (R) REC deal reaches Level 3 Approved. Instead an
 // admin presses "Request Redemption Docs" on the Approved deal (see
-// requestRedemptionDocs), which stamps these two columns on EVERY row of
+// requestRedemptionDocs), which stamps these two columns on the SELECTED product rows of
 // the deal and emails the submitter + BD in-charge (see
 // notifyRedemptionRequested). Only then does the upload button/badge appear
 // for the owner. Located by HEADER NAME (same approach as the L2 delay
@@ -3334,6 +3351,26 @@ function dealRedemptionRequest(rows){
 // True only while uploading is actually NEEDED: an admin has requested the
 // docs and at least one product still has none. Drives whether any upload
 // button/file picker is shown at all.
+// ---- Per-product request scope ----
+// Level 3 now picks WHICH products of a deal need a Redemption Form (see
+// openRedemptionRequestModal/requestRedemptionDocs) — the request stamp is
+// written only on the chosen product rows. A product is "in scope" when its
+// own row carries a request stamp. Legacy deals (files uploaded before the
+// request step existed, so no row is stamped) fall back to every product.
+function rowRedemptionRequested(r){
+  return !!redemptionRequestInfo(r && r.values && r.values[0]);
+}
+function redemptionScopeRows(rows){
+  rows = rows || [];
+  const requested = rows.filter(rowRedemptionRequested);
+  return requested.length ? requested : rows;
+}
+// 1-based "Product N" numbers (position in the full deal) of the requested products.
+function redemptionRequestedProductNumbers(rows){
+  const out = [];
+  (rows || []).forEach((r, i) => { if(rowRedemptionRequested(r)) out.push(i + 1); });
+  return out;
+}
 function dealRedemptionUploadNeeded(rows){
   return !!dealRedemptionRequest(rows) && !dealRedemptionSummary(rows).complete;
 }
@@ -3395,10 +3432,14 @@ function parseRedemptionDocs(rv){
 // this count. `rows` must already be sorted by row.index (same order used
 // for "Product N" numbering everywhere else in this app — see
 // groupByDealId).
+// Counts only the REQUESTED products (see redemptionScopeRows) — products
+// Level 3 didn't select don't need a file. dealTotal is every product on the deal.
 function dealRedemptionSummary(rows){
-  const total = rows.length;
-  const uploaded = rows.filter(r => rowHasRedemptionDoc(r.values[0])).length;
-  return { total, uploaded, complete: total > 0 && uploaded === total };
+  const scope = redemptionScopeRows(rows);
+  const total = scope.length;
+  const uploaded = scope.filter(r => rowHasRedemptionDoc(r.values[0])).length;
+  const requestedCount = (rows || []).filter(rowRedemptionRequested).length;
+  return { total, uploaded, complete: total > 0 && uploaded === total, requestedCount, dealTotal: (rows || []).length };
 }
 // Uploads one more file for one product on an already-Approved Stock-Out
 // (R) REC deal, then APPENDS the result onto that row's own
@@ -3455,6 +3496,9 @@ async function loadEditableRedemptionRow(dealId, tableName, rowUid, productIndex
   if(dealRedemptionConfirmation(matching)){
     throw new Error('Level 3 has already confirmed the Redemption step for this deal is complete, so its files can no longer be changed.');
   }
+  if(!rowRedemptionRequested(row) && !rowHasRedemptionDoc(row.values[0])){
+    throw new Error('A Redemption Form wasn\'t requested for Product ' + productIndex + ' on this deal — only the products Level 3 selected need one.');
+  }
   const liveColumnCount = await getTableColumnCount(tableName);
   if(liveColumnCount <= MC.redemptionDocName){
     throw new Error('The TradeDealLog table in SharePoint hasn\'t been updated yet — it\'s missing the "Redemption Document Name", "Redemption Document URL", "Redemption Uploaded By" and "Redemption Uploaded Date" columns. Ask an admin to add those four columns at the end of the table, then try again.');
@@ -3471,7 +3515,7 @@ async function loadEditableRedemptionRow(dealId, tableName, rowUid, productIndex
 async function saveRedemptionUpload(dealId, tableName, rowUid, productIndex, file){
   if(!dealId || !file) return;
   const ctx = await loadEditableRedemptionRow(dealId, tableName, rowUid, productIndex);
-  const wasComplete = ctx.matching.every(r => rowHasRedemptionDoc(r.values[0]));
+  const wasComplete = dealRedemptionSummary(ctx.matching).complete;
   const oldDocs = parseRedemptionDocs(ctx.row.values[0]);
   const info = await uploadRedemptionDocument(dealId, productIndex, 1, file);
   const newStoredName = redemptionStoredFileName(dealId, productIndex, 1, info.name);
@@ -3488,7 +3532,7 @@ async function saveRedemptionUpload(dealId, tableName, rowUid, productIndex, fil
   values[MC.redemptionUploadedBy] = currentAccount.username;
   values[MC.redemptionUploadedDate] = new Date().toISOString();
   await updateCanonicalTableRow(ctx.tableName, ctx.row.index, values);
-  const nowComplete = ctx.matching.every(r => r === ctx.row || rowHasRedemptionDoc(r.values[0]));
+  const nowComplete = redemptionScopeRows(ctx.matching).every(r => r === ctx.row || rowHasRedemptionDoc(r.values[0]));
   // While Returned, the user resubmits explicitly instead (see
   // resubmitRedemptionDocs), so no automatic email then.
   if(nowComplete && !wasComplete && !dealRedemptionReturn(ctx.matching)){
@@ -3529,7 +3573,7 @@ async function confirmRedemptionComplete(dealId, tableName){
   if(dealRedemptionConfirmation(matching)) throw new Error('This deal\'s Redemption step has already been confirmed.');
   if(dealRedemptionReturn(matching)) throw new Error('This deal is currently returned to the user — wait for them to resubmit before confirming.');
   const summary = dealRedemptionSummary(matching);
-  if(!summary.complete) throw new Error('Only ' + summary.uploaded + ' of ' + summary.total + ' Redemption Forms are uploaded — every product needs its file before this can be confirmed.');
+  if(!summary.complete) throw new Error('Only ' + summary.uploaded + ' of ' + summary.total + ' Redemption Forms are uploaded — every requested product needs its file before this can be confirmed.');
   await getTableColumnCount(tableName, true); // fresh header names
   if(!redReqColumnIndexes(tableName)){
     throw new Error('The TradeDealLog table in SharePoint is missing these column(s): ' + missingRedReqColumnNames(tableName).map(n => '"' + n + '"').join(', ') + '. Add them to the table, then try again.');
@@ -3587,7 +3631,7 @@ async function resubmitRedemptionDocs(dealId, tableName){
   if(!dealRedemptionReturn(matching)) throw new Error('This deal isn\'t returned — nothing to resubmit.');
   if(dealRedemptionConfirmation(matching)) throw new Error('This deal\'s Redemption step has already been confirmed.');
   const summary = dealRedemptionSummary(matching);
-  if(!summary.complete) throw new Error('Only ' + summary.uploaded + ' of ' + summary.total + ' Redemption Forms are uploaded — every product needs its file before resubmitting.');
+  if(!summary.complete) throw new Error('Only ' + summary.uploaded + ' of ' + summary.total + ' Redemption Forms are uploaded — every requested product needs its file before resubmitting.');
   await getTableColumnCount(tableName, true);
   for(const r of matching){
     await updateCanonicalTableRow(tableName, r.index, r.values[0].slice(), undefined, { returnComment: '' });
@@ -3641,12 +3685,16 @@ async function notifyRedemptionConfirmed(dealId, rows, confirmerEmail){
 }
 
 /* ---- Redemption Docs request (admin) ----
-   Stamps "Redemption Requested By/Date" on every row of an Approved
-   Stock-Out (R)/Stock-In (R) REC deal and emails the deal's submitter and
-   BD in-charge. Pressing it again on a deal that's already been requested
-   (and isn't complete yet) re-stamps the date and re-sends the email, as a
-   reminder. Admin Level 3 (or Super Admin) only — see canRequestRedemptionRole. */
-async function requestRedemptionDocs(dealId, tableName){
+   Stamps "Redemption Requested By/Date" ONLY on the product rows Level 3
+   selected (see openRedemptionRequestModal) of an Approved Stock-Out
+   (R)/Stock-In (R) REC deal and emails the deal's submitter and BD
+   in-charge the list of requested products. Products already requested
+   stay requested (they're re-stamped as a reminder); more products can be
+   added later until Level 3 confirms the step complete.
+   `selection` = [{idx, rowUid}] — idx is the 1-based "Product N" position,
+   rowUid the permanent Row Uid (preferred when present).
+   Admin Level 3 (or Super Admin) only — see canRequestRedemptionRole. */
+async function requestRedemptionDocs(dealId, tableName, selection){
   if(!dealId) return;
   if(!canRequestRedemptionRole()) throw new Error('Only an Admin Level 3 can request Redemption Documents.');
   tableName = tableName === CC_LOG_TABLE_NAME ? CC_LOG_TABLE_NAME : STANDARD_LOG_TABLE_NAME;
@@ -3663,8 +3711,22 @@ async function requestRedemptionDocs(dealId, tableName){
   if(dealRedemptionConfirmation(matching)){
     throw new Error('Level 3 has already confirmed the Redemption step for this deal is complete.');
   }
-  if(dealRedemptionSummary(matching).complete){
-    throw new Error('All Redemption Documents for this deal are already uploaded — use "Confirm Redemption Complete" instead.');
+  // Resolve the selected products against the LIVE rows (rowUid first,
+  // position as fallback — same approach as loadEditableRedemptionRow).
+  const selectedRows = [];
+  for(const sel of (selection || [])){
+    let row = sel.rowUid ? matching.find(r => String(r.values[0][MC.rowUid] || '') === sel.rowUid) : null;
+    if(!row) row = matching[sel.idx - 1];
+    if(!row) throw new Error('Could not find Product ' + sel.idx + ' on this deal anymore — please refresh and try again.');
+    if(!selectedRows.includes(row)) selectedRows.push(row);
+  }
+  // Already-requested products always stay in the request.
+  const targetRows = matching.filter(r => rowRedemptionRequested(r) || selectedRows.includes(r));
+  if(!targetRows.length){
+    throw new Error('Select at least one product that needs a Redemption Form.');
+  }
+  if(targetRows.every(r => rowHasRedemptionDoc(r.values[0]))){
+    throw new Error('Every selected product already has its Redemption Form uploaded — select another product, or use "Confirm Redemption Complete" instead.');
   }
   const liveColumnCount = await getTableColumnCount(tableName, true); // fresh header names
   if(liveColumnCount <= MC.redemptionDocName){
@@ -3674,8 +3736,10 @@ async function requestRedemptionDocs(dealId, tableName){
     throw new Error('The TradeDealLog table in SharePoint is missing these column(s): ' + missingRedReqColumnNames(tableName).map(n => '"' + n + '"').join(', ') + '. Add them to the table (check the header spelling matches exactly), then try again.');
   }
   const stamp = { by: currentAccount.username, date: new Date().toISOString() };
-  for(const r of matching){
+  for(const r of targetRows){
     await updateCanonicalTableRow(tableName, r.index, r.values[0].slice(), undefined, stamp);
+    // Mirror the stamp locally so the email below sees the new scope.
+    r.values[0].__redReq = Object.assign({}, r.values[0].__redReq || {}, stamp);
   }
   const sent = await notifyRedemptionRequested(dealId, matching, currentAccount.username);
   await loadHistory();
@@ -3696,26 +3760,29 @@ async function notifyRedemptionRequested(dealId, rows, requesterEmail){
   const displayId = friendlyDealId(dealId);
   const link = dealDeepLink(dealId);
   const productRows = rows.map((r, i) => {
+    if(!rowRedemptionRequested(r)) return '';
     const rv = r.values[0];
     const vintage = redemptionVintageTag(rv[MC.vFromYY], rv[MC.vToYY]);
     const done = rowHasRedemptionDoc(rv);
     return '<tr>' +
       '<td style="padding:4px 8px;border:1px solid #ddd;">Product ' + (i+1) + '</td>' +
       '<td style="padding:4px 8px;border:1px solid #ddd;">' + escapeHtml(rv[MC.registry] || '') + (vintage ? ' ' + escapeHtml(vintage) : '') + '</td>' +
+      '<td style="padding:4px 8px;border:1px solid #ddd;">' + escapeHtml(String(rv[MC.volume] || '').trim() || '—') + '</td>' +
       '<td style="padding:4px 8px;border:1px solid #ddd;">' + escapeHtml(formatStoredDate(rv[MC.deliveryEnd]) || '—') + '</td>' +
       '<td style="padding:4px 8px;border:1px solid #ddd;">' + (done ? 'Uploaded' : 'Needed') + '</td>' +
     '</tr>';
   }).join('');
   const html =
     '<p>' + escapeHtml(requesterEmail || 'An admin') + ' has requested the signed Redemption Documents for Deal ID <strong>' + escapeHtml(displayId) + '</strong>' +
-      (v[MC.company] ? ' (' + escapeHtml(v[MC.company]) + ')' : '') + '.</p>' +
+      (v[MC.company] ? ' (' + escapeHtml(v[MC.company]) + ')' : '') + ' — for the following product(s) only:</p>' +
     '<table style="border-collapse:collapse;font-size:13px;"><tr>' +
       '<th style="padding:4px 8px;border:1px solid #ddd;text-align:left;">Product</th>' +
       '<th style="padding:4px 8px;border:1px solid #ddd;text-align:left;">Registry</th>' +
+      '<th style="padding:4px 8px;border:1px solid #ddd;text-align:left;">Quantity</th>' +
       '<th style="padding:4px 8px;border:1px solid #ddd;text-align:left;">Delivery End Date</th>' +
       '<th style="padding:4px 8px;border:1px solid #ddd;text-align:left;">Redemption Form</th>' +
     '</tr>' + productRows + '</table>' +
-    '<p>Open this deal in the Trade Confirmation app and use "Upload Redemption Docs" to upload ONE signed Redemption Form for each product (PDF/Word, max 10 MB). You can replace or remove a file until Admin Level 3 confirms the step is complete. Blank templates are in the Redemption Form tab.</p>' +
+    '<p>Open this deal in the Trade Confirmation app and use "Upload Redemption Docs" to upload ONE signed Redemption Form for each product listed above (PDF/Word, max 10 MB). Other products on this deal do not need one. You can replace or remove a file until Admin Level 3 confirms the step is complete. Blank templates are in the Redemption Form tab.</p>' +
     '<p><a href="' + link + '">Open it in the Trade Confirmation app</a></p>';
   try{
     await sendMailGraph(toEmails, 'Redemption Documents requested — Deal ID ' + displayId, html);
@@ -5577,7 +5644,7 @@ function renderAnalysisTab(){
 // with a different meaning at STATUS_REVERTED_1/2/3, exactly as
 // renderHistoryTable already reads them) is always the last dot since it's
 // only ever written once whatever stage the deal was up to.
-function buildDealTimelineSteps(v, status){
+function buildDealTimelineSteps(v, status, rows){
   const steps = [];
   const pushIfDate = (label, dateVal, byVal) => {
     if(dateVal) steps.push({label, date: dateVal, by: byVal, state: 'done'});
@@ -5598,8 +5665,12 @@ function buildDealTimelineSteps(v, status){
   }
   pushIfDate('Level 2 Approved', v[MC.approvedDate2], v[MC.approvedBy2]);
   pushIfDate('Level 3 Approved', v[MC.approvedDate3], v[MC.approvedBy3]);
-  const redReq = redemptionRequestInfo(v);
-  if(redReq) pushIfDate('Redemption Docs Requested', redReq.date, redReq.by);
+  const redReq = rows ? dealRedemptionRequest(rows) : redemptionRequestInfo(v);
+  if(redReq){
+    const nums = rows ? redemptionRequestedProductNumbers(rows) : [];
+    const which = (rows && nums.length && nums.length < rows.length) ? ' (Product ' + nums.join(', ') + ')' : '';
+    pushIfDate('Redemption Docs Requested' + which, redReq.date, redReq.by);
+  }
   const redConf = v && v.__redReq;
   if(redConf && String(redConf.returnedDate ?? '').trim()){
     const stillReturned = String(redConf.returnComment ?? '').trim();
@@ -5622,8 +5693,8 @@ function buildDealTimelineSteps(v, status){
 // spare column beside the recap table in the View modal (see
 // #view-modal-timeline / openViewModal), rather than the wide horizontal
 // strip a full-width card would use.
-function renderDealTimelinePanelHtml(v, status){
-  const steps = buildDealTimelineSteps(v, status);
+function renderDealTimelinePanelHtml(v, status, rows){
+  const steps = buildDealTimelineSteps(v, status, rows);
   if(!steps.length) return '<p style="font-size:12px;color:var(--text-secondary);margin:0;">No stage dates recorded yet.</p>';
   return steps.map((s, idx)=>{
     const isLast = idx === steps.length - 1;
@@ -5879,12 +5950,13 @@ function renderHistoryTable(el, groups, opts){
           ? '<div style="font-size:11px;color:#1f7a4d;margin-top:2px;">✓ Redemption completed — confirmed'+(redemptionConf.by?' by '+escapeHtml(redemptionConf.by):'')+(redemptionConf.date?' · '+escapeHtml(formatStoredDateTime(redemptionConf.date)):'')+'</div>'
           : redemptionInfo.complete
             ? '<div style="font-size:11px;color:#8a6d1f;margin-top:2px;">⏳ All Redemption Documents uploaded — awaiting Level 3 confirmation</div>' + redemptionReqLine
-            : '<div style="font-size:11px;color:#8a6d1f;margin-top:2px;">⏳ Redemption Documents: '+redemptionInfo.uploaded+' of '+redemptionInfo.total+' uploaded</div>' + redemptionReqLine)
+            : '<div style="font-size:11px;color:#8a6d1f;margin-top:2px;">⏳ Redemption Documents: '+redemptionInfo.uploaded+' of '+redemptionInfo.total+' uploaded'+
+                ((redemptionInfo.requestedCount && redemptionInfo.requestedCount < redemptionInfo.dealTotal) ? ' (Product '+redemptionRequestedProductNumbers(g.rows).join(', ')+' requested)' : '')+'</div>' + redemptionReqLine)
       : ((redemptionEligible && canRequestRedemptionRole()) ? '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">Redemption Documents: not requested</div>' : '');
     const redemptionUploadNeeded = redemptionApplies && dealRedemptionUploadNeeded(g.rows);
     const redemptionEditable = redemptionApplies && dealRedemptionEditable(g.rows);
     const redemptionBtnLabel = redemptionRet ? 'Fix Redemption Docs' : redemptionUploadNeeded ? 'Upload Redemption Docs' : (redemptionEditable ? 'Manage Redemption Docs' : 'View Redemption Docs');
-    const redemptionBtnTitle = redemptionUploadNeeded ? 'Upload one signed Redemption Form for each product still missing one.'
+    const redemptionBtnTitle = redemptionUploadNeeded ? 'Upload one signed Redemption Form for each requested product still missing one.'
       : (redemptionEditable ? 'Check, replace or remove the uploaded Redemption Forms — possible until Level 3 confirms.' : 'View the Redemption Forms on file for this deal.');
     const canConfirmRedemption = canRequestRedemptionRole() && redemptionApplies && redemptionInfo.complete && !redemptionConf && !redemptionRet;
     const canReturnRedemption = canRequestRedemptionRole() && redemptionEditable && redemptionInfo.uploaded > 0 && !redemptionRet;
@@ -5892,7 +5964,12 @@ function renderHistoryTable(el, groups, opts){
     // Redemption Docs"), or as a read-only "View Redemption Docs" once
     // something is on file — never before the Level 3 request.
     const canManageRedemption = isOwnerOrAdmin && redemptionApplies && (redemptionEditable || redemptionInfo.uploaded > 0);
-    const canRequestRedemption = canRequestRedemptionRole() && redemptionEligible && !(redemptionInfo && redemptionInfo.complete);
+    // Shown until Level 3 confirms, while either a requested product is
+    // still missing its file (resend) or some product hasn't been requested
+    // yet (add it to the request).
+    const redemptionHasUnrequested = g.rows.some(r => !rowRedemptionRequested(r));
+    const canRequestRedemption = canRequestRedemptionRole() && redemptionEligible && !redemptionConf &&
+      (!redemptionReq || redemptionHasUnrequested || !(redemptionInfo && redemptionInfo.complete));
     html += '<tr style="border-top:1px solid var(--border);">' +
       (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[MC.salesPic]||'')+'</td>' : '') +
       '<td style="padding:6px;">'+(isPendingDealId(v[MC.dealId]) ? '-' : escapeHtml(friendlyDealId(v[MC.dealId])))+'</td>' +
@@ -5919,7 +5996,7 @@ function renderHistoryTable(el, groups, opts){
         ((canManageRedemption || canRequestRedemption || canConfirmRedemption || canReturnRedemption)
           ? ' <span class="history-redemption-stack" style="display:inline-flex;flex-direction:column;align-items:stretch;gap:4px;vertical-align:middle;">' +
             (canManageRedemption ? '<button type="button" class="secondary history-redemption-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;'+((redemptionUploadNeeded||redemptionRet)?'color:#8a6d1f;border-color:#e8c99a;':'')+'" title="'+escapeHtml(redemptionBtnTitle)+'">'+redemptionBtnLabel+'</button>' : '') +
-            (canRequestRedemption ? '<button type="button" class="secondary history-redemption-request-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' data-requested="'+(redemptionReq?'1':'')+'" style="padding:4px 10px;font-size:12px;" title="'+(redemptionReq?'Re-send the Redemption Documents request email to the submitter and BD in-charge.':'Ask the submitter and BD in-charge to upload the signed Redemption Forms for this deal (sends them an email).')+'">'+(redemptionReq?'Resend Redemption Request':'Request Redemption Docs')+'</button>' : '') +
+            (canRequestRedemption ? '<button type="button" class="secondary history-redemption-request-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' data-requested="'+(redemptionReq?'1':'')+'" style="padding:4px 10px;font-size:12px;" title="'+(redemptionReq?'Add more products to the Redemption Documents request, or re-send the request email to the submitter and BD in-charge.':'Choose which products need a signed Redemption Form and email the request to the submitter and BD in-charge.')+'">'+(redemptionReq?'Update Redemption Request':'Request Redemption Docs')+'</button>' : '') +
             (canConfirmRedemption ? '<button type="button" class="secondary history-redemption-confirm-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#1f7a4d;border-color:#9ccfb3;" title="Every product has its Redemption Form — confirm the Redemption step is complete. Files are locked after this.">Confirm Redemption Complete</button>' : '') +
             (canReturnRedemption ? '<button type="button" class="secondary history-redemption-return-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#8a6d1f;border-color:#e8c99a;" title="Send the Redemption Documents back to the user with a comment on what to fix.">Return to User</button>' : '') +
             '</span>'
@@ -6175,7 +6252,7 @@ function openViewModal(dealId, html, agreementUrl, group, deliveryFilter){
   const timelineStepsEl = document.getElementById('view-modal-timeline-steps');
   if(timelineStepsEl){
     timelineStepsEl.innerHTML = viewModalGroup.length
-      ? renderDealTimelinePanelHtml(viewModalGroup[0].values[0], dealGroupStatus(viewModalGroup))
+      ? renderDealTimelinePanelHtml(viewModalGroup[0].values[0], dealGroupStatus(viewModalGroup), viewModalGroup.slice().sort((a,b)=> a.index - b.index))
       : '<p style="font-size:12px;color:var(--text-secondary);margin:0;">No timeline available.</p>';
   }
   // Superadmin-only, and allowed at any stage (including pre-Level-1, while
@@ -6914,11 +6991,22 @@ function redemptionVintageTag(fromYY, toYY){
 // uploadNeeded: false = read-only (no file pickers at all). When true, the
 // picker only shows on products that don't have a Redemption Form yet.
 function redemptionModalFieldsHtml(rows, editable){
+  const scope = redemptionScopeRows(rows);
   return rows.map((r, idx)=>{
     const rv = r.values[0];
     const n = idx + 1;
     const docs = parseRedemptionDocs(rv);
     const has = docs.length > 0;
+    // Product Level 3 didn't select: no upload needed, shown greyed out.
+    if(!scope.includes(r) && !has){
+      const regL = registryDisplayName(rv[MC.registry]) || '(no registry)';
+      const vt = redemptionVintageTag(rv[MC.vFromYY], rv[MC.vToYY]);
+      const qtyL = String(rv[MC.volume] || '').trim() || '(no quantity)';
+      return '<div style="border:1px dashed var(--border);border-radius:8px;padding:8px 12px;opacity:.65;">' +
+        '<div style="font-size:13px;font-weight:600;">'+escapeHtml('Product '+n+' — '+regL+(vt?' — '+vt:'')+' — '+qtyL)+'</div>' +
+        '<div style="font-size:12px;color:var(--text-secondary);">Not requested — no Redemption Form needed</div>' +
+      '</div>';
+    }
     const rowUid = rv[MC.rowUid] || '';
     const registryLabel = registryDisplayName(rv[MC.registry]) || '(no registry)';
     const quantityLabel = String(rv[MC.volume] || '').trim() || '(no quantity)';
@@ -6964,8 +7052,8 @@ function openRedemptionModal(dealId, tableName){
     : !editable
       ? 'Redemption Forms on file for this deal (read-only).'
       : complete
-        ? 'Every product has its Redemption Form — now waiting for Admin Level 3 to confirm. You can still replace or remove a file until then.'
-        : 'An Admin Level 3 has requested the signed Redemption Forms for this Stock-Out (R)/Stock-In (R) deal. Upload ONE file per product (PDF/Word, max 10 MB). You can replace or remove a file until Level 3 confirms the step is complete.';
+        ? 'Every requested product has its Redemption Form — now waiting for Admin Level 3 to confirm. You can still replace or remove a file until then.'
+        : 'An Admin Level 3 has requested the signed Redemption Forms for the product(s) below on this Stock-Out (R)/Stock-In (R) deal. Upload ONE file per requested product (PDF/Word, max 10 MB) — products marked "Not requested" don\'t need one. You can replace or remove a file until Level 3 confirms the step is complete.';
   const ret = conf ? null : dealRedemptionReturn(rows);
   const banner = document.getElementById('redemption-modal-return-banner');
   if(ret){
@@ -6979,7 +7067,7 @@ function openRedemptionModal(dealId, tableName){
   resubmitBtn.style.display = ret ? 'inline-block' : 'none';
   resubmitBtn.disabled = !complete;
   resubmitBtn.textContent = 'Resubmit to Level 3';
-  resubmitBtn.title = complete ? '' : 'Every product needs a file before resubmitting.';
+  resubmitBtn.title = complete ? '' : 'Every requested product needs a file before resubmitting.';
   document.getElementById('redemption-modal-fields').innerHTML = redemptionModalFieldsHtml(rows, editable);
   document.getElementById('redemption-modal-overlay').style.display = 'flex';
 }
@@ -7002,6 +7090,78 @@ document.getElementById('redemption-modal-resubmit').addEventListener('click', a
   }catch(err){
     errEl.textContent = err.message; errEl.style.display = 'block';
     btn.disabled = false; btn.textContent = 'Resubmit to Level 3';
+  }
+});
+// ---- Request Redemption Docs: per-product selection modal (Level 3) ----
+let redemptionRequestDealId = null, redemptionRequestTableName = null;
+function openRedemptionRequestModal(dealId, tableName){
+  redemptionRequestDealId = dealId;
+  redemptionRequestTableName = tableName === CC_LOG_TABLE_NAME ? CC_LOG_TABLE_NAME : STANDARD_LOG_TABLE_NAME;
+  const rows = logRowsCache
+    .filter(r => String(r.values[0][MC.dealId] || '').trim() === String(dealId).trim() && (r._sourceTable||STANDARD_LOG_TABLE_NAME) === redemptionRequestTableName)
+    .sort((a,b)=> a.index - b.index);
+  const anyRequested = rows.some(rowRedemptionRequested);
+  document.getElementById('redemption-request-modal-dealid').textContent = friendlyDealId(dealId);
+  document.getElementById('redemption-request-modal-intro').textContent = anyRequested
+    ? 'Products already requested stay in the request (the email is re-sent as a reminder). Tick any additional product(s) that also need a signed Redemption Form.'
+    : 'Tick the product(s) that need a signed Redemption Form. Only the ticked products will be listed in the request email to the submitter and BD in-charge, and only those will need an upload.';
+  document.getElementById('redemption-request-modal-fields').innerHTML = rows.map((r, i)=>{
+    const rv = r.values[0];
+    const n = i + 1;
+    const requested = rowRedemptionRequested(r);
+    const has = rowHasRedemptionDoc(rv);
+    const regL = registryDisplayName(rv[MC.registry]) || '(no registry)';
+    const vt = redemptionVintageTag(rv[MC.vFromYY], rv[MC.vToYY]);
+    const qtyL = String(rv[MC.volume] || '').trim() || '(no quantity)';
+    const del = formatStoredDate(rv[MC.deliveryEnd]);
+    const note = requested ? (has ? 'Requested · uploaded' : 'Already requested · not uploaded yet') : (has ? 'File already on file' : '');
+    return '<label style="display:flex;gap:10px;align-items:flex-start;border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin:0;cursor:'+(requested?'default':'pointer')+';font-weight:normal;">' +
+      '<input type="checkbox" class="redemption-request-cb" data-idx="'+n+'" data-rowuid="'+escapeHtml(rv[MC.rowUid] || '')+'"'+(requested?' checked disabled':'')+' style="margin-top:3px;width:auto;"/>' +
+      '<span style="display:flex;flex-direction:column;gap:2px;">' +
+        '<span style="font-size:13px;font-weight:600;">'+escapeHtml('Product '+n+' — '+regL+(vt?' — '+vt:'')+' — '+qtyL)+'</span>' +
+        '<span style="font-size:12px;color:var(--text-secondary);">Delivery end: '+escapeHtml(del || '—')+(note ? ' · '+escapeHtml(note) : '')+'</span>' +
+      '</span>' +
+    '</label>';
+  }).join('');
+  document.getElementById('redemption-request-modal-error').style.display = 'none';
+  const submit = document.getElementById('redemption-request-modal-submit');
+  submit.disabled = false;
+  submit.textContent = anyRequested ? 'Update & resend request' : 'Send request';
+  document.getElementById('redemption-request-modal-overlay').style.display = 'flex';
+}
+function closeRedemptionRequestModal(){
+  document.getElementById('redemption-request-modal-overlay').style.display = 'none';
+  redemptionRequestDealId = null; redemptionRequestTableName = null;
+}
+function setAllRedemptionRequestCbs(checked){
+  document.querySelectorAll('#redemption-request-modal-fields .redemption-request-cb:not(:disabled)').forEach(cb => { cb.checked = checked; });
+}
+document.getElementById('redemption-request-select-all').addEventListener('click', (e)=>{ e.preventDefault(); setAllRedemptionRequestCbs(true); });
+document.getElementById('redemption-request-select-none').addEventListener('click', (e)=>{ e.preventDefault(); setAllRedemptionRequestCbs(false); });
+document.getElementById('redemption-request-modal-cancel').addEventListener('click', closeRedemptionRequestModal);
+document.getElementById('redemption-request-modal-overlay').addEventListener('click', (e)=>{
+  if(e.target.id === 'redemption-request-modal-overlay') closeRedemptionRequestModal();
+});
+document.getElementById('redemption-request-modal-submit').addEventListener('click', async ()=>{
+  const btn = document.getElementById('redemption-request-modal-submit');
+  const errEl = document.getElementById('redemption-request-modal-error');
+  const selection = Array.from(document.querySelectorAll('#redemption-request-modal-fields .redemption-request-cb:checked'))
+    .map(cb => ({ idx: parseInt(cb.getAttribute('data-idx'), 10), rowUid: cb.getAttribute('data-rowuid') || '' }));
+  errEl.style.display = 'none';
+  if(!selection.length){ errEl.textContent = 'Select at least one product that needs a Redemption Form.'; errEl.style.display = 'block'; return; }
+  const dealId = redemptionRequestDealId, tableName = redemptionRequestTableName;
+  const oldLabel = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Requesting…';
+  try{
+    const sent = await requestRedemptionDocs(dealId, tableName, selection);
+    closeRedemptionRequestModal();
+    alert(sent && sent.length
+      ? 'Redemption Documents requested for Product ' + selection.map(s => s.idx).join(', ') + '. Email sent to: ' + sent.join(', ')
+      : 'Redemption Documents requested, but the email notification could not be sent (no submitter/BD in-charge email on file, or Mail.Send isn\'t permitted). Please let them know directly.');
+  }catch(err){
+    console.error('Redemption request failed', err);
+    errEl.textContent = 'Could not request Redemption Documents: ' + err.message; errEl.style.display = 'block';
+    btn.disabled = false; btn.textContent = oldLabel;
   }
 });
 // ---- Return to user modal (Level 3) ----
@@ -7213,29 +7373,9 @@ document.addEventListener('click', (e)=>{
   }
   const redemptionReqBtn = e.target.closest('.history-redemption-request-btn');
   if(redemptionReqBtn){
-    const dealId = redemptionReqBtn.getAttribute('data-dealid');
     const tableName = redemptionReqBtn.getAttribute('data-logtable');
-    const again = !!redemptionReqBtn.getAttribute('data-requested');
-    const msg = again
-      ? 'Resend the Redemption Documents request for Deal ID ' + friendlyDealId(dealId) + '? The submitter and BD in-charge will be emailed again.'
-      : 'Request the signed Redemption Documents for Deal ID ' + friendlyDealId(dealId) + '? The submitter and BD in-charge will be emailed and the upload button will appear on this deal.';
-    if(!confirm(msg)) return;
     setActiveDealLogTable(tableName);
-    const oldLabel = redemptionReqBtn.textContent;
-    redemptionReqBtn.disabled = true;
-    redemptionReqBtn.textContent = 'Requesting…';
-    requestRedemptionDocs(dealId, tableName)
-      .then(sent => {
-        alert(sent && sent.length
-          ? 'Redemption Documents requested. Email sent to: ' + sent.join(', ')
-          : 'Redemption Documents requested, but the email notification could not be sent (no submitter/BD in-charge email on file, or Mail.Send isn\'t permitted). Please let them know directly.');
-      })
-      .catch(err => {
-        console.error('Redemption request failed', err);
-        alert('Could not request Redemption Documents: ' + err.message);
-        redemptionReqBtn.disabled = false;
-        redemptionReqBtn.textContent = oldLabel;
-      });
+    openRedemptionRequestModal(redemptionReqBtn.getAttribute('data-dealid'), tableName);
     return;
   }
   const redemptionBtn = e.target.closest('.history-redemption-btn');
