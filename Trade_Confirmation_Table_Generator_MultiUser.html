@@ -559,6 +559,9 @@
   .deal-timeline-v-note{font-size:11px;color:var(--text);margin-top:2px;white-space:normal;word-break:break-word;font-style:italic;}
   .l2-delay-box{background:#fff6e5;border:1px solid #e8c99a;color:#6b4a0a;border-radius:6px;padding:8px 10px;font-size:12px;}
   .l2-delay-box select,.l2-delay-box input{font-size:12px;padding:4px 6px;}
+  summary.box-toggle{cursor:pointer;list-style-position:inside;}
+  details[open] > summary.box-toggle .box-toggle-hint{display:none;}
+  .box-toggle-hint{font-size:11px;opacity:.7;font-weight:normal;}
   .l2-delay-box select{width:auto;min-width:220px;flex:none;}
   .l2-delay-controls{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px;}
   /* Hover-only tooltip for the Analysis tab's "unconfirmed Volume range"
@@ -582,6 +585,14 @@
   #user-mgmt-list th{font-size:12px;color:var(--text-secondary);border-bottom:1px solid var(--border);text-align:left;padding:6px;}
   #user-mgmt-list td{padding:6px;font-size:13px;}
 
+  .delivery-urgency{font-size:11px;font-weight:600;margin-top:3px;white-space:nowrap;}
+  .delivery-urgency.red{color:#a32018;}
+  .delivery-urgency.orange{color:#b3560f;}
+  .delivery-urgency.green{color:#1f7a4d;}
+  #urgent-deliveries-card{border:1px solid #d9534f;border-left:5px solid #d9534f;}
+  #urgent-deliveries-card .card-title{color:#a32018;}
+  #urgent-deliveries-list table{width:100%;border-collapse:collapse;}
+  #urgent-deliveries-list th{font-size:12px;color:var(--text-secondary);border-bottom:1px solid var(--border);}
   .confirmation-section-selector{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px;}
   .confirmation-section-selector button{background:transparent;color:var(--text);border:1px solid var(--border-strong);padding:8px 14px;font-size:13px;}
   .confirmation-section-selector button:hover{background:var(--surface-2);}
@@ -700,6 +711,12 @@
   </div><!-- /tab-panel-form -->
 
   <div id="tab-panel-confirmations" class="tab-panel" style="display:none;">
+
+  <div class="card" id="urgent-deliveries-card" style="display:none;">
+    <p class="card-title" id="urgent-deliveries-title">🔴 Urgent deliveries</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Pending confirmations whose Delivery End Date is overdue or within the next 7 days — earliest first. Full details are only shown for deals you're involved in (and to admins); other deals show as a summary row.</p>
+    <div id="urgent-deliveries-list"></div>
+  </div>
 
   <div class="confirmation-section-selector" id="confirmation-section-selector">
     <button type="button" id="confirmation-section-my" data-confirmation-section="my">My Saved Confirmations</button>
@@ -2522,28 +2539,6 @@ function buildBdMatchingCompiled(values){
   }
   return blocks.join('; ');
 }
-// Per-source vintage for the Approved list's "BD Source Vintage" column:
-// "Jan 2025 to Dec 2026" per BD source (Source Vintage Start "to" Source
-// Vintage End, each normalised from whatever Excel stored - text or date
-// serial - via formatStoredVintage), several sources joined by "; ".
-function buildBdVintageCompiled(values){
-  const vstarts = splitBdSourceValue(values[MC.sourceVintageStart]);
-  const vends = splitBdSourceValue(values[MC.sourceVintageEnd]);
-  const count = Math.max(vstarts.length, vends.length);
-  const out = [];
-  for(let i=0;i<count;i++){
-    const a = formatStoredVintage(vstarts[i] || ''), b = formatStoredVintage(vends[i] || '');
-    if(!a && !b) continue;
-    out.push(a && b ? (a + ' to ' + b) : (a || b));
-  }
-  return out.join('; ');
-}
-// Delivery Date (legacy column, no longer captured on new deals) - copied
-// across only when the TradeDealLog row still has one.
-function bdDeliveryDateForApproved(values){
-  const parts = splitBdSourceValue(values[MC.deliveryDateM]).filter(p=>p!=='');
-  return parts.map(formatDeliveryDateDMY).join('; ');
-}
 // changeNote is optional context describing WHY this entry was added —
 // e.g. the specific Matching/Buyer-Seller/Which-deal diff for a BD source
 // matching change — so the "Approved" list reads as a proper audit log
@@ -2598,15 +2593,6 @@ async function addApprovedDealToList(values, changeNote){
         // There's no separate "Delivery Date" column any more either — BD
         // source matching no longer captures one at all, for either mode.
         'BD Source Matching': buildBdMatchingCompiled(values),
-        // Also sent as their own columns (in addition to the compiled
-        // BD Source Matching above): Buyer/Seller, No of RECs, Which deal,
-        // Delivery Date, and BD Source Vintage ("Start to End" per source).
-        // Any column the SharePoint list doesn't have is skipped (warned).
-        'Buyer/Seller': values[MC.buyerSeller],
-        'No of VCUs': values[MC.noOfRecs],
-        'Which deal': values[MC.whichDeal],
-        'Delivery Date': bdDeliveryDateForApproved(values),
-        'BD Source Vintage': buildBdVintageCompiled(values),
         'Status': values[MC.status],
         'Submitted By': values[MC.submittedBy],
         'Submitted Date': values[MC.submittedDate],
@@ -2650,15 +2636,6 @@ async function addApprovedDealToList(values, changeNote){
         // no separate "Delivery Date" column any more — RECs BD source
         // matching no longer captures one at all.
         'BD Source Matching': buildBdMatchingCompiled(values),
-        // Also sent as their own columns (in addition to the compiled
-        // BD Source Matching above): Buyer/Seller, No of RECs, Which deal,
-        // Delivery Date, and BD Source Vintage ("Start to End" per source).
-        // Any column the SharePoint list doesn't have is skipped (warned).
-        'Buyer/Seller': values[MC.buyerSeller],
-        'No of RECs': values[MC.noOfRecs],
-        'Which deal': values[MC.whichDeal],
-        'Delivery Date': bdDeliveryDateForApproved(values),
-        'BD Source Vintage': buildBdVintageCompiled(values),
         'Status': values[MC.status],
         'Submitted By': values[MC.submittedBy],
         'Submitted Date': values[MC.submittedDate],
@@ -4429,6 +4406,16 @@ async function approveDeal(dealId, file, transferOverrides){
       matching.forEach((r, idx)=>{
         if(!String(r.values[0][MC.tigrsIrecName] || '').trim()) missingTransferTrades.push(idx + 1);
       });
+      if(!missingTransferTrades.length && isStockOutT(matching[0].values[0][MC.supplyDemand])){
+        const badTrades = [];
+        matching.forEach((r, idx)=>{
+          if(stockOutTAccountError(r.values[0][MC.supplyDemand], r.values[0][MC.tigrsIrecName])) badTrades.push(idx + 1);
+        });
+        if(badTrades.length){
+          const dealRole = roleFromOrderType(matching[0].values[0][MC.supplyDemand]);
+          throw new Error('The ' + transferAccountLabel(dealRole) + ' for Product ' + badTrades.join(', ') + ' must be at least ' + STOCK_OUT_T_MIN_ACCOUNT_LEN + ' characters and cannot be NA for a Stock-Out (T) deal.');
+        }
+      }
       if(missingTransferTrades.length){
         const dealRole = roleFromOrderType(matching[0].values[0][MC.supplyDemand]);
         throw new Error('Please fill in the ' + transferAccountLabel(dealRole) + ' for Product ' + missingTransferTrades.join(', ') + ' before approving at Level 2.');
@@ -5256,10 +5243,38 @@ function groupSortTier(g){
   if(dealGroupStatus(g.rows) === STATUS_REJECTED) return 2;
   return groupHasPassedLevel3(g) ? 1 : 0;
 }
+// ---- Delivery-due countdown + urgency flag ----
+// Only deals still in the approval chain (tier 0 — pending or reverted)
+// get one. Based on the EARLIEST product Delivery End Date vs today's
+// date: 🔴 overdue or due within 7 days, 🟠 within 14 days, 🟢 otherwise.
+const URGENCY_RED_DAYS = 7, URGENCY_ORANGE_DAYS = 14;
+function deliveryUrgency(g){
+  if(!g || groupSortTier(g) !== 0) return null;
+  const ms = groupEarliestDeliveryEndMs(g);
+  if(ms === Infinity) return null;
+  const t = new Date();
+  const todayUtc = Date.UTC(t.getFullYear(), t.getMonth(), t.getDate());
+  const days = Math.round((ms - todayUtc) / 86400000);
+  const level = days <= URGENCY_RED_DAYS ? 'red' : (days <= URGENCY_ORANGE_DAYS ? 'orange' : 'green');
+  const icon = level === 'red' ? '🔴' : (level === 'orange' ? '🟠' : '🟢');
+  const plural = n => n + (n === 1 ? ' day' : ' days');
+  const text = days < 0 ? 'Overdue by ' + plural(-days) : (days === 0 ? 'Due today' : 'Delivery in ' + plural(days));
+  return {level, days, icon, text};
+}
+function deliveryUrgencyHtml(g){
+  const u = deliveryUrgency(g);
+  return u ? '<div class="delivery-urgency ' + u.level + '">' + u.icon + ' ' + escapeHtml(u.text) + '</div>' : '';
+}
+function urgencyRank(g){
+  const u = deliveryUrgency(g);
+  return !u ? 3 : (u.level === 'red' ? 0 : (u.level === 'orange' ? 1 : 2));
+}
 function compareGroupsByDeliveryEnd(a, b){
   const tierA = groupSortTier(a), tierB = groupSortTier(b);
   if(tierA !== tierB) return tierA - tierB;
   if(tierA > 0) return compareGroupsBySubmittedDesc(a, b);
+  const rankA = urgencyRank(a), rankB = urgencyRank(b);
+  if(rankA !== rankB) return rankA - rankB;
   const da = groupEarliestDeliveryEndMs(a), db = groupEarliestDeliveryEndMs(b);
   if(da !== db){
     if(da === Infinity) return 1;
@@ -5340,6 +5355,35 @@ function wireConfirmationFilterBar(key, listElId, searchElId, statusElId, typeEl
   [statusEl,typeEl,orderTypeEl].forEach(el=>{ if(el && !el.dataset.wired){ el.addEventListener('change', run); el.dataset.wired = '1'; } });
   [fromEl,toEl].forEach(el=>{ if(el && !el.dataset.wired){ el.addEventListener('change', run); el.addEventListener('input', run); el.dataset.wired = '1'; } });
 }
+// Pinned card at the very top of the Confirmations tab: every pending deal
+// that's overdue or due within 7 days. Visible to every user; the details
+// inside are only shown to the deal's related users and admins (see below).
+// Hidden when there are none.
+function renderUrgentDeliveries(){
+  const card = document.getElementById('urgent-deliveries-card');
+  const listEl = document.getElementById('urgent-deliveries-list');
+  if(!card || !listEl) return;
+  // Everyone sees which deals are urgent (the countdown is not private), but
+  // renderHistoryTable's restrictOthers keeps each deal's details and
+  // actions to its owner / BD in-charge / tagged BD and admins — anyone
+  // else only gets the read-only summary row, same as All confirmations.
+  const source = historyGroupsCache.admin;
+  const urgent = (source || []).filter(g => {
+    const u = deliveryUrgency(g);
+    return u && u.level === 'red';
+  }).sort(compareGroupsByDeliveryEnd);
+  if(!urgent.length){
+    card.style.display = 'none';
+    listEl.innerHTML = '';
+    return;
+  }
+  const title = document.getElementById('urgent-deliveries-title');
+  if(title) title.textContent = '🔴 Urgent deliveries (' + urgent.length + ')';
+  card.style.display = 'block';
+  renderHistoryTable(listEl, urgent, isAdmin
+    ? Object.assign({}, CONFIRMATION_FILTER_OPTS.queue)
+    : {showOwner:true, showActions:false, showRequestEdit:true, showFullEdit:true, restrictOthers:true});
+}
 function wireConfirmationFilterBars(){
   populateConfirmationFilterSelects();
   wireConfirmationFilterBar('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-type', 'history-filter-order', 'history-filter-delivery-from', 'history-filter-delivery-to', 'history-filter-count');
@@ -5392,6 +5436,7 @@ async function loadHistory(){
     }
 
     wireConfirmationFilterBars();
+    renderUrgentDeliveries();
     applyConfirmationFilter('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-type', 'history-filter-order', 'history-filter-delivery-from', 'history-filter-delivery-to', 'history-filter-count');
     applyConfirmationFilter('admin', 'admin-history-list', 'admin-filter-search', 'admin-filter-status', 'admin-filter-type', 'admin-filter-order', 'admin-filter-delivery-from', 'admin-filter-delivery-to', 'admin-filter-count');
     if(isAdmin){
@@ -5886,7 +5931,7 @@ function renderHistoryTable(el, groups, opts){
         '<td style="padding:6px;">'+escapeHtml(formatStoredDate(v[MC.agreementDate]))+'</td>' +
         '<td style="padding:6px;">'+escapeHtml(v[MC.company]||'')+'</td>' +
         '<td style="padding:6px;">—</td>' +
-        '<td style="padding:6px;">'+escapeHtml(deliveryDatesText||'—')+'</td>' +
+        '<td style="padding:6px;">'+escapeHtml(deliveryDatesText||'—')+deliveryUrgencyHtml(g)+'</td>' +
         '<td style="padding:6px;">'+statusBadge(status)+'</td>' +
         '<td style="padding:6px;white-space:nowrap;"><span class="row-lock-note">Owner only</span></td>' +
       '</tr>';
@@ -6028,7 +6073,7 @@ function renderHistoryTable(el, groups, opts){
       '<td style="padding:6px;">'+escapeHtml(formatStoredDate(v[MC.agreementDate]))+'</td>' +
       '<td style="padding:6px;">'+escapeHtml(v[MC.company]||'')+'</td>' +
       '<td style="padding:6px;">'+g.rows.length+'</td>' +
-      '<td style="padding:6px;">'+escapeHtml(deliveryDatesText||'—')+'</td>' +
+      '<td style="padding:6px;">'+escapeHtml(deliveryDatesText||'—')+deliveryUrgencyHtml(g)+'</td>' +
       '<td style="padding:6px;">'+statusBadge(status)+
         (trail ? '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">'+trail+'</div>' : '')+
         agreementLink+
@@ -6158,9 +6203,11 @@ function renderHistoryTable(el, groups, opts){
         '</div>';
       }
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
-        '<div class="l2-delay-box"><strong>⏳ Level 2 approval pending'+escapeHtml(waitText)+'</strong>' +
+        '<details class="l2-delay-box"><summary class="box-toggle"><strong>⏳ Level 2 approval pending'+escapeHtml(waitText)+'</strong>' +
+        (!l2Delay && canAct ? ' <strong style="color:#8a2d1f;">— reason required</strong>' : '') +
+        ' <span class="box-toggle-hint">(click to view)</span></summary>' +
         currentLine + controls +
-        '</div></td></tr>';
+        '</details></td></tr>';
     }
     if(v[MC.description] && (status === STATUS_PENDING_1 || status === STATUS_REVERTED_1)){
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
@@ -6178,9 +6225,10 @@ function renderHistoryTable(el, groups, opts){
     // added it yet, so this block just doesn't render.
     if(v[MC.editChangeSummary] && [STATUS_PENDING_1, STATUS_REVERTED_1, STATUS_PENDING_2, STATUS_REVERTED_2, STATUS_PENDING_3, STATUS_REVERTED_3].includes(status)){
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
-        '<div style="background:#eaf1fb;border:1px solid #b8cdec;color:#1f3a63;border-radius:6px;padding:8px 10px;font-size:12px;">' +
-        '<strong>What changed in the latest edit:</strong><br>' + escapeHtml(v[MC.editChangeSummary]).replace(/\n/g,'<br>') +
-        '</div></td></tr>';
+        '<details style="background:#eaf1fb;border:1px solid #b8cdec;color:#1f3a63;border-radius:6px;padding:8px 10px;font-size:12px;">' +
+        '<summary class="box-toggle"><strong>What changed in the latest edit</strong> <span class="box-toggle-hint">(click to view)</span></summary>' +
+        '<div style="margin-top:6px;">' + escapeHtml(v[MC.editChangeSummary]).replace(/\n/g,'<br>') + '</div>' +
+        '</details></td></tr>';
     }
   });
   html += '</table>';
@@ -7357,7 +7405,11 @@ document.addEventListener('click', (e)=>{
       if(firstRow && isL2Overdue(firstRow.values[0], STATUS_PENDING_2) && !l2DelayInfo(firstRow.values[0])){
         alert('This deal has been waiting more than ' + L2_DELAY_THRESHOLD_DAYS + ' days since Level 1 approval. Please select and save a reason in the "Level 2 approval pending" box below this deal before approving.');
         const sel = document.querySelector('.l2-delay-controls[data-dealid="'+dealId.replace(/"/g,'\\"')+'"] .l2-delay-select');
-        if(sel){ sel.scrollIntoView({block:'center'}); sel.focus(); }
+        if(sel){
+          const box = sel.closest('details');
+          if(box) box.open = true;
+          sel.scrollIntoView({block:'center'}); sel.focus();
+        }
         return;
       }
       openApproveModal(dealId);
@@ -8436,6 +8488,21 @@ function updateBuyerSellerFieldLabel(){
 function isStockOutR(orderType){
   return String(orderType || '').trim() === 'Stock-Out (R)';
 }
+// Stock-Out (T) on the RECs tab needs a real Buyer Receiving Account: at
+// least STOCK_OUT_T_MIN_ACCOUNT_LEN characters, and "NA" / "N/A" is not
+// accepted as a placeholder (every other order type still allows NA).
+const STOCK_OUT_T_MIN_ACCOUNT_LEN = 8;
+function isStockOutT(orderType){
+  return String(orderType || '').trim() === 'Stock-Out (T)';
+}
+function stockOutTAccountError(orderType, value){
+  if(!isStockOutT(orderType)) return '';
+  const t = String(value || '').trim();
+  if(!t) return 'required';
+  if(/^n\/?a$/i.test(t)) return 'NA is not accepted';
+  if(t.length < STOCK_OUT_T_MIN_ACCOUNT_LEN) return 'minimum '+STOCK_OUT_T_MIN_ACCOUNT_LEN+' characters';
+  return '';
+}
 // True for either of the two Order Types that carry the Redemption Form
 // requirement (see dealNeedsRedemption) — "Stock-Out (R)" and "Stock-In
 // (R)". Deliberately separate from isStockOutR, which only ever means the
@@ -8462,6 +8529,9 @@ function updateTransferAccountLabels(){
     const input = document.getElementById(`t${i}-transfer`);
     const label = document.querySelector(`label[for="t${i}-transfer"]`);
     if(label) label.textContent = label_text;
+    if(input) input.placeholder = isStockOutT(val('h-order'))
+      ? 'Required — min '+STOCK_OUT_T_MIN_ACCOUNT_LEN+' characters, NA not accepted'
+      : 'Required — type NA if not yet known';
     const wrap = input && input.closest('[id$="-wrap"]');
     if(hideReceiving){
       if(input) input.value = '';
@@ -11147,7 +11217,12 @@ function tradeFieldDefs(i){
   // deals never use this field at all (see isStockOutR/updateTransferAccountLabels),
   // so it isn't required there.
   if(!isStockOutR(val('h-order'))){
-    baseDefs.push({ids:['t'+i+'-transfer'], label:transferAccountLabel(currentRole())});
+    const stockOutT = isStockOutT(val('h-order'));
+    baseDefs.push({
+      ids:['t'+i+'-transfer'],
+      label: transferAccountLabel(currentRole()) + (stockOutT ? ' (min '+STOCK_OUT_T_MIN_ACCOUNT_LEN+' characters, NA not accepted)' : ''),
+      validate: stockOutT ? (()=> !stockOutTAccountError(val('h-order'), val('t'+i+'-transfer'))) : null
+    });
   }
 
   const matchingValue = val('t'+i+'-m-matching');
@@ -11194,7 +11269,7 @@ function validateVersion(requireDealId){
   const filled = parseInt(document.getElementById('trade-count').value,10);
   for(let i=1;i<=filled;i++){
     tradeFieldDefs(i).forEach(f=>{
-      if(f.ids.some(id=>isEmpty(id))){
+      if(f.ids.some(id=>isEmpty(id)) || (f.validate && !f.validate())){
         missing.push({section:'Product '+i, label:f.label});
         markMissing(f.ids.join(','));
       }
@@ -11279,6 +11354,7 @@ function isNAValue(v){
 function transferAccountNAItems(filled){
   const items = [];
   if(isStockOutR(val('h-order'))) return items; // field isn't used for Stock-Out (R)
+  if(isStockOutT(val('h-order'))) return items; // NA isn't accepted for Stock-Out (T); validateVersion blocks it
   for(let i=1;i<=filled;i++){
     if(isNAValue(val('t'+i+'-transfer'))) items.push('Product '+i);
   }
