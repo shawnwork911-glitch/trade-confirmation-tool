@@ -712,16 +712,17 @@
 
   <div id="tab-panel-confirmations" class="tab-panel" style="display:none;">
 
-  <div class="card" id="urgent-deliveries-card" style="display:none;">
-    <p class="card-title" id="urgent-deliveries-title">🔴 Urgent deliveries</p>
-    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Pending confirmations whose Delivery End Date is overdue or within the next 7 days — earliest first. Full details are only shown for deals you're involved in (and to admins); other deals show as a summary row.</p>
-    <div id="urgent-deliveries-list"></div>
-  </div>
-
   <div class="confirmation-section-selector" id="confirmation-section-selector">
+    <button type="button" id="confirmation-section-urgent" data-confirmation-section="urgent">🔴 Urgent Deliveries<span id="urgent-count-badge"></span></button>
     <button type="button" id="confirmation-section-my" data-confirmation-section="my">My Saved Confirmations</button>
     <button type="button" id="confirmation-section-queue" data-confirmation-section="queue">Approval Queue</button>
     <button type="button" id="confirmation-section-all" data-confirmation-section="all">All Confirmations</button>
+  </div>
+
+  <div class="card" id="urgent-deliveries-card" style="display:block;">
+    <p class="card-title" id="urgent-deliveries-title">🔴 Urgent deliveries</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Pending confirmations whose Delivery End Date is overdue or within the next 7 days — earliest first. Full details are only shown for deals you're involved in (and to admins); other deals show as a summary row.</p>
+    <div id="urgent-deliveries-list"></div>
   </div>
 
   <div class="card" id="my-history-card">
@@ -1515,7 +1516,7 @@ function setActiveTab(tab){
 }
 document.getElementById('tab-btn-form').addEventListener('click', ()=> setActiveTab('form'));
 document.getElementById('tab-btn-carboncredit').addEventListener('click', ()=> setActiveTab('carboncredit'));
-document.getElementById('tab-btn-confirmations').addEventListener('click', ()=> setActiveTab('confirmations'));
+document.getElementById('tab-btn-confirmations').addEventListener('click', ()=>{ setActiveTab('confirmations'); setConfirmationSection('urgent'); });
 document.getElementById('tab-btn-analysis').addEventListener('click', ()=> setActiveTab('analysis'));
 document.getElementById('tab-btn-usermgmt').addEventListener('click', ()=> setActiveTab('usermgmt'));
 document.getElementById('tab-btn-redemption').addEventListener('click', ()=> setActiveTab('redemption'));
@@ -1648,6 +1649,7 @@ function canBuildAgreement(){
 
 let activeConfirmationSection = null;
 function confirmationSectionAllowed(section){
+  if(section === 'urgent') return true;
   if(section === 'my') return canBuildAgreement();
   if(section === 'queue') return isAdmin;
   if(section === 'all') return true;
@@ -1655,9 +1657,11 @@ function confirmationSectionAllowed(section){
 }
 function setConfirmationSection(section){
   if(!confirmationSectionAllowed(section)){
-    section = canBuildAgreement() ? 'my' : (isAdmin ? 'queue' : 'all');
+    section = 'urgent';
   }
   activeConfirmationSection = section;
+  const urgentCard = document.getElementById('urgent-deliveries-card');
+  if(urgentCard) urgentCard.style.display = section === 'urgent' ? 'block' : 'none';
   const myCard = document.getElementById('my-history-card');
   const queueCard = document.getElementById('approval-queue-card');
   const allCard = document.getElementById('admin-history-card');
@@ -1675,7 +1679,9 @@ function refreshConfirmationSectionSelector(){
   if(myBtn) myBtn.style.display = confirmationSectionAllowed('my') ? 'inline-block' : 'none';
   if(queueBtn) queueBtn.style.display = confirmationSectionAllowed('queue') ? 'inline-block' : 'none';
   if(allBtn) allBtn.style.display = 'inline-block';
-  const fallback = canBuildAgreement() ? 'my' : (isAdmin ? 'queue' : 'all');
+  const urgentBtn = document.getElementById('confirmation-section-urgent');
+  if(urgentBtn) urgentBtn.style.display = 'inline-block';
+  const fallback = 'urgent';
   setConfirmationSection(activeConfirmationSection && confirmationSectionAllowed(activeConfirmationSection) ? activeConfirmationSection : fallback);
 }
 
@@ -5372,14 +5378,14 @@ function renderUrgentDeliveries(){
     const u = deliveryUrgency(g);
     return u && u.level === 'red';
   }).sort(compareGroupsByDeliveryEnd);
+  const badge = document.getElementById('urgent-count-badge');
+  if(badge) badge.textContent = urgent.length ? ' (' + urgent.length + ')' : '';
   if(!urgent.length){
-    card.style.display = 'none';
-    listEl.innerHTML = '';
+    listEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);margin:0;">No urgent deliveries right now — nothing is overdue or due within the next 7 days.</p>';
     return;
   }
   const title = document.getElementById('urgent-deliveries-title');
   if(title) title.textContent = '🔴 Urgent deliveries (' + urgent.length + ')';
-  card.style.display = 'block';
   renderHistoryTable(listEl, urgent, isAdmin
     ? Object.assign({}, CONFIRMATION_FILTER_OPTS.queue)
     : {showOwner:true, showActions:false, showRequestEdit:true, showFullEdit:true, restrictOthers:true});
