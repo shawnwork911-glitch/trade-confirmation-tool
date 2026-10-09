@@ -2522,6 +2522,28 @@ function buildBdMatchingCompiled(values){
   }
   return blocks.join('; ');
 }
+// Per-source vintage for the Approved list's "BD Source Vintage" column:
+// "Jan 2025 to Dec 2026" per BD source (Source Vintage Start "to" Source
+// Vintage End, each normalised from whatever Excel stored - text or date
+// serial - via formatStoredVintage), several sources joined by "; ".
+function buildBdVintageCompiled(values){
+  const vstarts = splitBdSourceValue(values[MC.sourceVintageStart]);
+  const vends = splitBdSourceValue(values[MC.sourceVintageEnd]);
+  const count = Math.max(vstarts.length, vends.length);
+  const out = [];
+  for(let i=0;i<count;i++){
+    const a = formatStoredVintage(vstarts[i] || ''), b = formatStoredVintage(vends[i] || '');
+    if(!a && !b) continue;
+    out.push(a && b ? (a + ' to ' + b) : (a || b));
+  }
+  return out.join('; ');
+}
+// Delivery Date (legacy column, no longer captured on new deals) - copied
+// across only when the TradeDealLog row still has one.
+function bdDeliveryDateForApproved(values){
+  const parts = splitBdSourceValue(values[MC.deliveryDateM]).filter(p=>p!=='');
+  return parts.map(formatDeliveryDateDMY).join('; ');
+}
 // changeNote is optional context describing WHY this entry was added —
 // e.g. the specific Matching/Buyer-Seller/Which-deal diff for a BD source
 // matching change — so the "Approved" list reads as a proper audit log
@@ -2576,6 +2598,15 @@ async function addApprovedDealToList(values, changeNote){
         // There's no separate "Delivery Date" column any more either — BD
         // source matching no longer captures one at all, for either mode.
         'BD Source Matching': buildBdMatchingCompiled(values),
+        // Also sent as their own columns (in addition to the compiled
+        // BD Source Matching above): Buyer/Seller, No of RECs, Which deal,
+        // Delivery Date, and BD Source Vintage ("Start to End" per source).
+        // Any column the SharePoint list doesn't have is skipped (warned).
+        'Buyer/Seller': values[MC.buyerSeller],
+        'No of VCUs': values[MC.noOfRecs],
+        'Which deal': values[MC.whichDeal],
+        'Delivery Date': bdDeliveryDateForApproved(values),
+        'BD Source Vintage': buildBdVintageCompiled(values),
         'Status': values[MC.status],
         'Submitted By': values[MC.submittedBy],
         'Submitted Date': values[MC.submittedDate],
@@ -2619,6 +2650,15 @@ async function addApprovedDealToList(values, changeNote){
         // no separate "Delivery Date" column any more — RECs BD source
         // matching no longer captures one at all.
         'BD Source Matching': buildBdMatchingCompiled(values),
+        // Also sent as their own columns (in addition to the compiled
+        // BD Source Matching above): Buyer/Seller, No of RECs, Which deal,
+        // Delivery Date, and BD Source Vintage ("Start to End" per source).
+        // Any column the SharePoint list doesn't have is skipped (warned).
+        'Buyer/Seller': values[MC.buyerSeller],
+        'No of RECs': values[MC.noOfRecs],
+        'Which deal': values[MC.whichDeal],
+        'Delivery Date': bdDeliveryDateForApproved(values),
+        'BD Source Vintage': buildBdVintageCompiled(values),
         'Status': values[MC.status],
         'Submitted By': values[MC.submittedBy],
         'Submitted Date': values[MC.submittedDate],
