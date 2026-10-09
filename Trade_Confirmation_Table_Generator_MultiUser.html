@@ -721,7 +721,7 @@
 
   <div class="card" id="urgent-deliveries-card" style="display:block;">
     <p class="card-title" id="urgent-deliveries-title">🔴 Urgent deliveries</p>
-    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Pending confirmations whose Delivery End Date is overdue or within the next 7 days — earliest first. Full details are only shown for deals you're involved in (and to admins); other deals show as a summary row.</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Pending confirmations whose Delivery Start Date is overdue or within the next 7 days — earliest first. Full details are only shown for deals you're involved in (and to admins); other deals show as a summary row.</p>
     <div id="urgent-deliveries-list"></div>
   </div>
 
@@ -733,7 +733,7 @@
       <select id="history-filter-status"></select>
       <select id="history-filter-order"><option value="">All order types</option><option value="Stock-In (T)">Stock-In (T)</option><option value="Stock-Out (T)">Stock-Out (T)</option><option value="Stock-Out (R)">Stock-Out (R)</option><option value="Stock-In (R)">Stock-In (R)</option></select>
       <span class="confirmation-filter-daterange">
-        <span class="analysis-filter-group-label" style="margin-left:0;">Delivery End:</span>
+        <span class="analysis-filter-group-label" style="margin-left:0;">Delivery Start:</span>
         <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">From <input type="date" id="history-filter-delivery-from"></label>
         <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">To <input type="date" id="history-filter-delivery-to"></label>
       </span>
@@ -751,7 +751,7 @@
       <select id="queue-filter-status"></select>
       <select id="queue-filter-order"><option value="">All order types</option><option value="Stock-In (T)">Stock-In (T)</option><option value="Stock-Out (T)">Stock-Out (T)</option><option value="Stock-Out (R)">Stock-Out (R)</option><option value="Stock-In (R)">Stock-In (R)</option></select>
       <span class="confirmation-filter-daterange">
-        <span class="analysis-filter-group-label" style="margin-left:0;">Delivery End:</span>
+        <span class="analysis-filter-group-label" style="margin-left:0;">Delivery Start:</span>
         <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">From <input type="date" id="queue-filter-delivery-from"></label>
         <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">To <input type="date" id="queue-filter-delivery-to"></label>
       </span>
@@ -769,7 +769,7 @@
       <select id="admin-filter-status"></select>
       <select id="admin-filter-order"><option value="">All order types</option><option value="Stock-In (T)">Stock-In (T)</option><option value="Stock-Out (T)">Stock-Out (T)</option><option value="Stock-Out (R)">Stock-Out (R)</option><option value="Stock-In (R)">Stock-In (R)</option></select>
       <span class="confirmation-filter-daterange">
-        <span class="analysis-filter-group-label" style="margin-left:0;">Delivery End:</span>
+        <span class="analysis-filter-group-label" style="margin-left:0;">Delivery Start:</span>
         <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">From <input type="date" id="admin-filter-delivery-from"></label>
         <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;">To <input type="date" id="admin-filter-delivery-to"></label>
       </span>
@@ -5207,7 +5207,7 @@ function populateConfirmationFilterSelects(){
 function confirmationGroupDeliveryDates(g, fromDate, toDate){
   const seen = new Map(); // date (ms) -> formatted display text
   (g && g.rows || []).forEach(r=>{
-    const raw = r.values[0][MC.deliveryEnd];
+    const raw = r.values[0][MC.deliveryStart];
     const d = parseStoredDateToDate(raw);
     if(!d) return;
     if(fromDate && d < fromDate) return;
@@ -5226,7 +5226,7 @@ function confirmationGroupDeliveryDates(g, fromDate, toDate){
 function groupEarliestDeliveryEndMs(g){
   let min = Infinity;
   (g && g.rows || []).forEach(r=>{
-    const d = parseStoredDateToDate(r.values[0][MC.deliveryEnd]);
+    const d = parseStoredDateToDate(r.values[0][MC.deliveryStart]);
     if(d && d.getTime() < min) min = d.getTime();
   });
   return min;
@@ -5251,7 +5251,7 @@ function groupSortTier(g){
 }
 // ---- Delivery-due countdown + urgency flag ----
 // Only deals still in the approval chain (tier 0 — pending or reverted)
-// get one. Based on the EARLIEST product Delivery End Date vs today's
+// get one. Based on the EARLIEST product Delivery Start Date vs today's
 // date: 🔴 overdue or due within 7 days, 🟠 within 14 days, 🟢 otherwise.
 const URGENCY_RED_DAYS = 7, URGENCY_ORANGE_DAYS = 14;
 function deliveryUrgency(g){
@@ -5299,7 +5299,7 @@ function confirmationGroupMatchesFilter(g, searchLower, statusFilter, typeFilter
     // range and Product 2 ending well after it must NOT match just because
     // the range happens to sit between them.
     const hasMatchingProduct = (g && g.rows || []).some(r=>{
-      const d = parseStoredDateToDate(r.values[0][MC.deliveryEnd]);
+      const d = parseStoredDateToDate(r.values[0][MC.deliveryStart]);
       if(!d) return false;
       if(deliveryFromFilter && d < deliveryFromFilter) return false;
       if(deliveryToFilter && d > deliveryToFilter) return false;
@@ -5907,7 +5907,7 @@ function renderHistoryTable(el, groups, opts){
     '<th style="text-align:left;padding:6px;">Agreement Date</th>' +
     '<th style="text-align:left;padding:6px;">Counterparty</th>' +
     '<th style="text-align:left;padding:6px;">Products</th>' +
-    '<th style="text-align:left;padding:6px;">Delivery End Date</th>' +
+    '<th style="text-align:left;padding:6px;">Delivery Start Date</th>' +
     '<th style="text-align:left;padding:6px;">Status</th>' +
     '<th style="padding:6px;"></th></tr>';
   const restrictOthers = !!opts.restrictOthers;
@@ -6280,7 +6280,7 @@ function deliveryFilterForViewButton(btn){
 }
 function rowMatchesDeliveryFilter(row, filter){
   if(!row || !filter) return false;
-  const d = parseStoredDateToDate(row.values[0][MC.deliveryEnd]);
+  const d = parseStoredDateToDate(row.values[0][MC.deliveryStart]);
   if(!d) return false;
   if(filter.from && d < filter.from) return false;
   if(filter.to && d > filter.to) return false;
