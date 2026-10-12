@@ -589,10 +589,10 @@
   .delivery-urgency.red{color:#a32018;}
   .delivery-urgency.orange{color:#b3560f;}
   .delivery-urgency.green{color:#1f7a4d;}
-  #urgent-deliveries-card{border:1px solid #d9534f;border-left:5px solid #d9534f;}
-  #urgent-deliveries-card .card-title{color:#a32018;}
-  #urgent-deliveries-list table{width:100%;border-collapse:collapse;}
-  #urgent-deliveries-list th{font-size:12px;color:var(--text-secondary);border-bottom:1px solid var(--border);}
+  #urgent-deliveries-card,#overdue-deliveries-card{border:1px solid #d9534f;border-left:5px solid #d9534f;}
+  #urgent-deliveries-card .card-title,#overdue-deliveries-card .card-title{color:#a32018;}
+  #urgent-deliveries-list table,#overdue-deliveries-list table{width:100%;border-collapse:collapse;}
+  #urgent-deliveries-list th,#overdue-deliveries-list th{font-size:12px;color:var(--text-secondary);border-bottom:1px solid var(--border);}
   .confirmation-section-selector{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px;}
   .confirmation-section-selector button{background:transparent;color:var(--text);border:1px solid var(--border-strong);padding:8px 14px;font-size:13px;}
   .confirmation-section-selector button:hover{background:var(--surface-2);}
@@ -714,6 +714,7 @@
 
   <div class="confirmation-section-selector" id="confirmation-section-selector">
     <button type="button" id="confirmation-section-urgent" data-confirmation-section="urgent">🔴 Urgent Deliveries<span id="urgent-count-badge"></span></button>
+    <button type="button" id="confirmation-section-overdue" data-confirmation-section="overdue">⏰ Overdue<span id="overdue-count-badge"></span></button>
     <button type="button" id="confirmation-section-my" data-confirmation-section="my">My Saved Confirmations</button>
     <button type="button" id="confirmation-section-queue" data-confirmation-section="queue">Approval Queue</button>
     <button type="button" id="confirmation-section-all" data-confirmation-section="all">All Confirmations</button>
@@ -721,8 +722,14 @@
 
   <div class="card" id="urgent-deliveries-card" style="display:block;">
     <p class="card-title" id="urgent-deliveries-title">🔴 Urgent deliveries</p>
-    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Pending confirmations whose Delivery Start Date is overdue or within the next 7 days — earliest first. Full details are only shown for deals you're involved in (and to admins); other deals show as a summary row.</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Pending confirmations whose Delivery Start Date is today or within the next 7 days — earliest first. Past-due deals are listed under the Overdue tab. Full details are only shown for deals you're involved in (and to admins); other deals show as a summary row.</p>
     <div id="urgent-deliveries-list"></div>
+  </div>
+
+  <div class="card" id="overdue-deliveries-card" style="display:none;">
+    <p class="card-title" id="overdue-deliveries-title">⏰ Overdue deliveries</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Pending confirmations whose Delivery Start Date has already passed — most overdue first. Full details are only shown for deals you're involved in (and to admins); other deals show as a summary row.</p>
+    <div id="overdue-deliveries-list"></div>
   </div>
 
   <div class="card" id="my-history-card">
@@ -1649,7 +1656,7 @@ function canBuildAgreement(){
 
 let activeConfirmationSection = null;
 function confirmationSectionAllowed(section){
-  if(section === 'urgent') return true;
+  if(section === 'urgent' || section === 'overdue') return true;
   if(section === 'my') return canBuildAgreement();
   if(section === 'queue') return isAdmin;
   if(section === 'all') return true;
@@ -1662,6 +1669,8 @@ function setConfirmationSection(section){
   activeConfirmationSection = section;
   const urgentCard = document.getElementById('urgent-deliveries-card');
   if(urgentCard) urgentCard.style.display = section === 'urgent' ? 'block' : 'none';
+  const overdueCard = document.getElementById('overdue-deliveries-card');
+  if(overdueCard) overdueCard.style.display = section === 'overdue' ? 'block' : 'none';
   const myCard = document.getElementById('my-history-card');
   const queueCard = document.getElementById('approval-queue-card');
   const allCard = document.getElementById('admin-history-card');
@@ -1681,6 +1690,8 @@ function refreshConfirmationSectionSelector(){
   if(allBtn) allBtn.style.display = 'inline-block';
   const urgentBtn = document.getElementById('confirmation-section-urgent');
   if(urgentBtn) urgentBtn.style.display = 'inline-block';
+  const overdueBtn = document.getElementById('confirmation-section-overdue');
+  if(overdueBtn) overdueBtn.style.display = 'inline-block';
   const fallback = 'urgent';
   setConfirmationSection(activeConfirmationSection && confirmationSectionAllowed(activeConfirmationSection) ? activeConfirmationSection : fallback);
 }
@@ -5366,27 +5377,44 @@ function wireConfirmationFilterBar(key, listElId, searchElId, statusElId, typeEl
 // inside are only shown to the deal's related users and admins (see below).
 // Hidden when there are none.
 function renderUrgentDeliveries(){
-  const card = document.getElementById('urgent-deliveries-card');
-  const listEl = document.getElementById('urgent-deliveries-list');
-  if(!card || !listEl) return;
-  // Everyone sees which deals are urgent (the countdown is not private), but
-  // renderHistoryTable's restrictOthers keeps each deal's details and
-  // actions to its owner / BD in-charge / tagged BD and admins — anyone
-  // else only gets the read-only summary row, same as All confirmations.
-  const source = historyGroupsCache.admin;
-  const urgent = (source || []).filter(g => {
+  const source = historyGroupsCache.admin || [];
+  // Urgent = due today or within the next 7 days. Overdue (days < 0) has its
+  // own tab so the two lists never overlap.
+  const urgent = source.filter(g => {
     const u = deliveryUrgency(g);
-    return u && u.level === 'red';
+    return u && u.level === 'red' && u.days >= 0;
   }).sort(compareGroupsByDeliveryEnd);
-  const badge = document.getElementById('urgent-count-badge');
-  if(badge) badge.textContent = urgent.length ? ' (' + urgent.length + ')' : '';
-  if(!urgent.length){
-    listEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);margin:0;">No urgent deliveries right now — nothing is overdue or due within the next 7 days.</p>';
+  const overdue = source.filter(g => {
+    const u = deliveryUrgency(g);
+    return u && u.days < 0;
+  }).sort(compareGroupsByDeliveryEnd);
+  renderDeliveryList({
+    groups: urgent, listId: 'urgent-deliveries-list', badgeId: 'urgent-count-badge',
+    titleId: 'urgent-deliveries-title', titleText: '🔴 Urgent deliveries',
+    emptyText: 'No urgent deliveries right now — nothing is due within the next 7 days.'
+  });
+  renderDeliveryList({
+    groups: overdue, listId: 'overdue-deliveries-list', badgeId: 'overdue-count-badge',
+    titleId: 'overdue-deliveries-title', titleText: '⏰ Overdue deliveries',
+    emptyText: 'Nothing is overdue right now.'
+  });
+}
+function renderDeliveryList(cfg){
+  const listEl = document.getElementById(cfg.listId);
+  if(!listEl) return;
+  // Everyone sees which deals are urgent/overdue (the countdown is not
+  // private), but renderHistoryTable's restrictOthers keeps each deal's
+  // details and actions to its owner / BD in-charge / tagged BD and admins —
+  // anyone else only gets the read-only summary row, same as All confirmations.
+  const badge = document.getElementById(cfg.badgeId);
+  if(badge) badge.textContent = cfg.groups.length ? ' (' + cfg.groups.length + ')' : '';
+  const title = document.getElementById(cfg.titleId);
+  if(title) title.textContent = cfg.titleText + (cfg.groups.length ? ' (' + cfg.groups.length + ')' : '');
+  if(!cfg.groups.length){
+    listEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);margin:0;">' + cfg.emptyText + '</p>';
     return;
   }
-  const title = document.getElementById('urgent-deliveries-title');
-  if(title) title.textContent = '🔴 Urgent deliveries (' + urgent.length + ')';
-  renderHistoryTable(listEl, urgent, isAdmin
+  renderHistoryTable(listEl, cfg.groups, isAdmin
     ? Object.assign({}, CONFIRMATION_FILTER_OPTS.queue)
     : {showOwner:true, showActions:false, showRequestEdit:true, showFullEdit:true, restrictOthers:true});
 }
