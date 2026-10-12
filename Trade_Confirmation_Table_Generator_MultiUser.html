@@ -722,13 +722,13 @@
 
   <div class="card" id="urgent-deliveries-card" style="display:block;">
     <p class="card-title" id="urgent-deliveries-title">🔴 Urgent deliveries</p>
-    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Pending confirmations whose Delivery Start Date is today or within the next 7 days — earliest first. Past-due deals are listed under the Overdue tab. Full details are only shown for deals you're involved in (and to admins); other deals show as a summary row.</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Pending confirmations whose Delivery Start Date is today or within the next 7 days — earliest first. Past-due deals are listed under the Overdue tab. Admins see all deals; everyone else sees only their own.</p>
     <div id="urgent-deliveries-list"></div>
   </div>
 
   <div class="card" id="overdue-deliveries-card" style="display:none;">
     <p class="card-title" id="overdue-deliveries-title">⏰ Overdue deliveries</p>
-    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Pending confirmations whose Delivery Start Date has already passed — most overdue first. Full details are only shown for deals you're involved in (and to admins); other deals show as a summary row.</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Pending confirmations whose Delivery Start Date has already passed — most overdue first. Admins see all deals; everyone else sees only their own.</p>
     <div id="overdue-deliveries-list"></div>
   </div>
 
@@ -5377,7 +5377,9 @@ function wireConfirmationFilterBar(key, listElId, searchElId, statusElId, typeEl
 // inside are only shown to the deal's related users and admins (see below).
 // Hidden when there are none.
 function renderUrgentDeliveries(){
-  const source = historyGroupsCache.admin || [];
+  // Admins / Superadmin see every deal. Everyone else only sees deals they own,
+  // are BD in-charge of, or are tagged on (same set as My Saved Confirmations).
+  const source = (isAdmin ? historyGroupsCache.admin : historyGroupsCache.mine) || [];
   // Urgent = due today or within the next 7 days. Overdue (days < 0) has its
   // own tab so the two lists never overlap.
   const urgent = source.filter(g => {
