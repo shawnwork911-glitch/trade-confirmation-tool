@@ -6638,8 +6638,7 @@ function editRequestDealFieldHtml(key, storedValue, rowUid){
       whichDealOptionsHtml(OWN_RECS_OPTIONS, parsed.option)+'</select>'};
   }
   if(parsed.source === 'proceed'){
-    return {own:false, proceed:true, fieldHtml: '<select id="er-'+key+'-whichdeal" class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+'>'+
-      whichDealOptionsHtml(PROCEED_SHARE_OPTIONS, parsed.option)+'</select>'};
+    return {own:false, proceed:true, fieldHtml: '<input type="text" id="er-'+key+'-whichdeal" class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+' placeholder="Deal ID (required)" value="'+escapeHtml(parsed.option)+'"/>'};
   }
   return {own:false, proceed:false, fieldHtml: '<input type="text" id="er-'+key+'-whichdeal" class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+' placeholder="Deal Recap ID" value="'+escapeHtml(storedValue||'')+'"/>'};
 }
@@ -6751,8 +6750,7 @@ function updateEditRequestDealField(key){
     target.innerHTML = '<select id="er-'+key+'-whichdeal" class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+'>'+
       whichDealOptionsHtml(OWN_RECS_OPTIONS, '')+'</select>';
   } else if(proceed.checked){
-    target.innerHTML = '<select id="er-'+key+'-whichdeal" class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+'>'+
-      whichDealOptionsHtml(PROCEED_SHARE_OPTIONS, '')+'</select>';
+    target.innerHTML = '<input type="text" id="er-'+key+'-whichdeal" class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+' placeholder="Deal ID (required)"/>';
   } else {
     target.innerHTML = '<input type="text" id="er-'+key+'-whichdeal" class="edit-request-whichdeal" data-idx="'+idx+'"'+uidAttr+' placeholder="Deal Recap ID"/>';
   }
@@ -7060,6 +7058,12 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
       if(!dealVal || !dealVal.trim()){
         const sourceLabel = srcIdx === 0 ? '' : ' (Source '+(srcIdx+1)+')';
         whichDealErrors.push('Enter "From which deal" for ' + productLabel + sourceLabel + '.');
+      } else if(dealLogTableName() !== CC_LOG_TABLE_NAME){
+        const ownEl = document.getElementById('er-'+key+'-own');
+        if(!(ownEl && ownEl.checked) && isNAValue(dealVal.trim())){
+          const sourceLabel = srcIdx === 0 ? '' : ' (Source '+(srcIdx+1)+')';
+          whichDealErrors.push('Enter the Deal ID for "From which deal" (NA not accepted) for ' + productLabel + sourceLabel + '.');
+        }
       }
     });
   });
@@ -9094,7 +9098,7 @@ function updateDealField(n){
   if(own.checked){
     target.innerHTML = '<select id="t'+n+'-m-deal">'+whichDealOptionsHtml(OWN_RECS_OPTIONS, '')+'</select>';
   } else if(proceed.checked){
-    target.innerHTML = '<select id="t'+n+'-m-deal">'+whichDealOptionsHtml(PROCEED_SHARE_OPTIONS, '')+'</select>';
+    target.innerHTML = textHtml('t'+n+'-m-deal','Deal ID (required)');
   } else {
     target.innerHTML = textHtml('t'+n+'-m-deal','Deal Recap ID');
   }
@@ -10513,8 +10517,7 @@ function fullEditDealFieldHtml(key, storedValue, rowUid){
       whichDealOptionsHtml(OWN_RECS_OPTIONS, parsed.option)+'</select>'};
   }
   if(parsed.source === 'proceed'){
-    return {own:false, proceed:true, fieldHtml: '<select id="fe-bd-'+key+'-whichdeal" class="full-edit-whichdeal"'+uidAttr+'>'+
-      whichDealOptionsHtml(PROCEED_SHARE_OPTIONS, parsed.option)+'</select>'};
+    return {own:false, proceed:true, fieldHtml: '<input type="text" id="fe-bd-'+key+'-whichdeal" class="full-edit-whichdeal"'+uidAttr+' placeholder="Deal ID (required)" value="'+escapeHtml(parsed.option)+'"/>'};
   }
   return {own:false, proceed:false, fieldHtml: '<input type="text" id="fe-bd-'+key+'-whichdeal" class="full-edit-whichdeal"'+uidAttr+' placeholder="Deal Recap ID" value="'+escapeHtml(storedValue||'')+'"/>'};
 }
@@ -10608,8 +10611,7 @@ function updateFullEditDealField(key){
     target.innerHTML = '<select id="fe-bd-'+key+'-whichdeal" class="full-edit-whichdeal">'+
       whichDealOptionsHtml(OWN_RECS_OPTIONS, '')+'</select>';
   } else if(proceed.checked){
-    target.innerHTML = '<select id="fe-bd-'+key+'-whichdeal" class="full-edit-whichdeal">'+
-      whichDealOptionsHtml(PROCEED_SHARE_OPTIONS, '')+'</select>';
+    target.innerHTML = '<input type="text" id="fe-bd-'+key+'-whichdeal" class="full-edit-whichdeal" placeholder="Deal ID (required)"/>';
   } else {
     target.innerHTML = '<input type="text" id="fe-bd-'+key+'-whichdeal" class="full-edit-whichdeal" placeholder="Deal Recap ID"/>';
   }
@@ -10911,6 +10913,12 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
         if(!dealVal || !dealVal.trim()){
           const sourceLabel = srcIdx === 0 ? '' : ' (Source '+(srcIdx+1)+')';
           bdWhichDealErrors.push('Enter "From which deal" for ' + productLabel + sourceLabel + ', or set its Matching to Open Position.');
+        } else if(!((liveGroup[0]._sourceTable || STANDARD_LOG_TABLE_NAME) === CC_LOG_TABLE_NAME)){
+          const ownEl = document.getElementById('fe-bd-'+key+'-own');
+          if(!(ownEl && ownEl.checked) && isNAValue(dealVal.trim())){
+            const sourceLabel = srcIdx === 0 ? '' : ' (Source '+(srcIdx+1)+')';
+            bdWhichDealErrors.push('Enter the Deal ID for "From which deal" (NA not accepted) for ' + productLabel + sourceLabel + '.');
+          }
         }
       });
     });
@@ -11277,7 +11285,19 @@ function tradeFieldDefs(i){
     const sourceLabel = srcIdx === 0 ? '' : ' (Source '+(srcIdx+1)+')';
     matchDefs.push({ids:['t'+key+'-m-name'], label:'1. Buyer/Seller name'+sourceLabel});
     matchDefs.push({ids:['t'+key+'-m-recs'], label:'2. No of RECs'+sourceLabel});
-    matchDefs.push({ids:['t'+key+'-m-deal'], label:'3. From which deal'+sourceLabel});
+    matchDefs.push({
+      ids:['t'+key+'-m-deal'],
+      label:'3. From which deal (Deal ID required, NA not accepted)'+sourceLabel,
+      validate:()=>{
+        const v = val('t'+key+'-m-deal').trim();
+        if(!v) return false;
+        if(currentProductMode !== 'carboncredit'){
+          const own = document.getElementById('t'+key+'-m-own');
+          if(!(own && own.checked) && isNAValue(v)) return false;
+        }
+        return true;
+      }
+    });
   });
   return baseDefs.concat(matchDefs);
 }
