@@ -10367,7 +10367,7 @@ async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
    "approval" is the fact that it now has to go through the approval chain
    again). What happens to Status and the approval trail depends on exactly
    which of the four situations above this is (see
-   fullEditTargetForLiveStatus/fullEditChangedOnlyBdMatching in
+   fullEditTargetForLiveStatus/fullEditChangedKeyTerms in
    saveFullEditAndResubmit for the precise rules):
      - STATUS_REVERTED_1, or a plain STATUS_PENDING_2 edit that touches
        anything besides BD source matching: full reset — Status back to
@@ -10722,7 +10722,7 @@ function fullEditFormHtml(dealId, sortedGroup){
   });
   html += '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;">'+
       '<label style="margin:0;font-size:13px;font-weight:600;" for="fe-justification">Justification for this correction</label>'+
-      '<p style="margin:0;font-size:12px;color:var(--text-secondary);">Required — explain why the details need to change. This is shown alongside the field-by-field changes below to whichever approval level reviews this next (Admin Level 1, unless the only thing changed is BD source matching — see above).</p>'+
+      '<p style="margin:0;font-size:12px;color:var(--text-secondary);">Required — explain why the details need to change. This is shown alongside the field-by-field changes below to whichever approval level reviews this next (Admin Level 1 if volume, price or vintage changed, otherwise Admin Level 2).</p>'+
       '<textarea id="fe-justification" rows="3" placeholder="e.g. Buyer confirmed the volume was entered incorrectly at submission"></textarea>'+
     '</div>'+
     '<div id="full-edit-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>'+
@@ -10756,7 +10756,7 @@ function openFullEditModal(dealId){
     introEl.innerHTML = 'Admin Level ' + revertInfo.level + ' sent this back for changes instead of approving it — it has <strong>not</strong> been rejected, and ' + standing + '. Fix whatever needs fixing below and it goes straight back to Pending Level ' + revertInfo.resubmitTo + ' for Admin Level ' + revertInfo.level + ' to look at again, along with your note.' +
       (revertComment ? '<br><br><strong>Admin Level ' + revertInfo.level + '’s comment:</strong> ' + escapeHtml(revertComment) : '');
   } else {
-    introEl.innerHTML = 'Admin Level 1 has already signed off on this deal. If you change anything here besides BD source matching (Matching, Buyer/Seller, No of RECs, Which deal) — e.g. Registry, Tech, Volume, Price, dates — it sends the deal back through the approval chain: the Status resets to <strong>Pending Level 1</strong>, any Level 2 sign-off already recorded (and the Level 2 agreement attachment) is cleared, and Admin Level 1 gets a fresh approval email along with your justification below. If you ONLY correct BD source matching and nothing else, Level 1\'s sign-off is left alone: the deal stays at <strong>Pending Level 2</strong> and Admin Level 2 is simply notified of the updated matching along with your justification. The Deal ID itself does not change either way. This full edit is only available before Level 2 acts — once Level 2 or Level 3 has approved, only Registry, Tech, Volume, and BD source matching can still be corrected, via "Request edit" (which needs a fresh Level 3 sign-off instead of restarting from Level 1).';
+    introEl.innerHTML = 'Admin Level 1 has already signed off on this deal. If you change the <strong>volume, price (or currency) or vintage</strong>, the deal goes back through approval: the Status resets to <strong>Pending Level 1</strong>, any Level 2 sign-off already recorded (and the Level 2 agreement attachment) is cleared, and Admin Level 1 gets a fresh approval email along with your justification below. Any other change (e.g. BD source matching, registry, tech, dates) keeps Level 1\'s sign-off: the deal stays at <strong>Pending Level 2</strong> and Admin Level 2 is notified of the update. The Deal ID does not change either way. This full edit is only available before Level 2 acts. Once Level 2 or Level 3 has approved, use "Request edit" instead.';
   }
   document.getElementById('full-edit-modal-fields').innerHTML = fullEditFormHtml(dealId, group);
   syncAllTagBdChecklists(document.getElementById('full-edit-modal-fields'));
@@ -10796,7 +10796,7 @@ const FULL_EDIT_TRAIL_COLS = new Set([
 // The BD source matching fields themselves (see requestBdMatchChange for
 // the equivalent post-approval definition) — the one set of fields this
 // full-edit modal is allowed to change without forcing the deal back
-// through Level 1, per fullEditChangedOnlyBdMatching below.
+// through Level 1, per fullEditChangedKeyTerms below.
 const FULL_EDIT_BD_MATCHING_COLS = new Set([MC.matching, MC.buyerSeller, MC.noOfRecs, MC.whichDeal]);
 // True if, across every product row, nothing differs between the live
 // pre-edit values and what's about to be saved except the BD source
@@ -10805,27 +10805,30 @@ const FULL_EDIT_BD_MATCHING_COLS = new Set([MC.matching, MC.buyerSeller, MC.noOf
 // changed. Compares raw stored values column-by-column rather than
 // re-deriving each field, so it can't drift out of sync with whatever
 // fields this modal actually exposes for editing.
-function fullEditChangedOnlyBdMatching(liveGroup, updatedRows){
+function fullEditChangedKeyTerms(liveGroup, updatedRows){
+  // Fields that force a full re-approval from Level 1 when changed:
+  // volume, price (incl. currency) and vintage. Vintage month columns only
+  // exist for RECs; for Carbon Credit, vFromMM/vToMM hold Project Type /
+  // Methodology, so only the year columns count there.
+  const norm = (v) => {
+    const t = String(v === undefined || v === null ? '' : v).trim().replace(/,/g, '');
+    return /^-?\d+(\.\d+)?$/.test(t) ? String(Number(t)) : t.toUpperCase();
+  };
   for(let idx = 0; idx < liveGroup.length; idx++){
-    const oldValues = liveGroup[idx].values[0];
-    const newValues = updatedRows[idx].values[0];
-    const len = Math.max(oldValues.length, newValues.length);
-    // (The view-only tag travels as values.__tagBdWrite, not a column
-    // here, so changing only the tag never counts as a deal-term change.)
-    const tagIdx = liveGroup[idx]._sourceTable === CC_LOG_TABLE_NAME ? -1 : tagBdColumnIndex(STANDARD_LOG_TABLE_NAME);
-    for(let col = 0; col < len; col++){
-      if(FULL_EDIT_TRAIL_COLS.has(col)) continue;
-      if(col === tagIdx) continue;
-      const a = oldValues[col] === undefined || oldValues[col] === null ? '' : oldValues[col];
-      const b = newValues[col] === undefined || newValues[col] === null ? '' : newValues[col];
-      if(String(a) !== String(b) && !FULL_EDIT_BD_MATCHING_COLS.has(col)) return false;
+    const isCC = (liveGroup[idx]._sourceTable || STANDARD_LOG_TABLE_NAME) === CC_LOG_TABLE_NAME;
+    const cols = [MC.volume, MC.unitPrice, MC.currency, MC.vFromYY, MC.vToYY];
+    if(!isCC) cols.push(MC.vFromMM, MC.vToMM);
+    const o = liveGroup[idx].values[0];
+    const n = updatedRows[idx].values[0];
+    for(const col of cols){
+      if(norm(o[col]) !== norm(n[col])) return true;
     }
   }
-  return true;
+  return false;
 }
 // True if any product row's Matching/Buyer-Seller/No of RECs/Which deal
 // actually differs from its live pre-edit value — unlike
-// fullEditChangedOnlyBdMatching above, this doesn't care whether anything
+// fullEditChangedKeyTerms above, this doesn't care whether anything
 // ELSE also changed; it's purely "did BD source matching change at all",
 // used to decide whether Admin Level 1 needs the separate heads-up email
 // (see notifyAdminLevel1BdMatchChange) after a full "Edit & resend" save.
@@ -11024,15 +11027,13 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
     //    original revert case): nothing has approved this yet either way,
     //    so resubmit always goes back to Pending Level 1.
     //  - liveStatus is plain STATUS_PENDING_2 (a proactive edit, not
-    //    resolving any revert): if literally the only thing that changed
-    //    across every product versus the live, pre-edit rows is BD source
-    //    matching (Matching, Buyer/Seller, No of RECs, Which deal), don't
-    //    send the deal all the way back to Pending Level 1 for a correction
-    //    Level 1 never needed to re-review — stay at Pending Level 2 with
-    //    Level 1's sign-off untouched. Otherwise, retrigger approval from
-    //    Level 1 (see fullEditChangedOnlyBdMatching below).
+    //    resolving any revert): if volume, price (incl. currency) or vintage
+    //    changed on any product versus the live, pre-edit rows, retrigger
+    //    approval from Level 1 (see fullEditChangedKeyTerms above).
+    //    Anything else (BD matching, registry, tech, dates, remarks...)
+    //    stays at Pending Level 2 with Level 1's sign-off untouched.
     const skipLevelReset = !revertInfo && liveStatus === STATUS_PENDING_2
-      && fullEditChangedOnlyBdMatching(liveGroup, updatedRows);
+      && !fullEditChangedKeyTerms(liveGroup, updatedRows);
     let finalStatus;
     if(liveStatus === STATUS_REVERTED_2) finalStatus = STATUS_PENDING_2;
     else if(liveStatus === STATUS_REVERTED_3) finalStatus = STATUS_PENDING_3;
@@ -11077,7 +11078,7 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
     const nowForLabel = new Date();
     const timestampLabel = String(nowForLabel.getUTCDate()).padStart(2,'0')+'/'+String(nowForLabel.getUTCMonth()+1).padStart(2,'0')+'/'+nowForLabel.getUTCFullYear()+' '+String(nowForLabel.getUTCHours()).padStart(2,'0')+':'+String(nowForLabel.getUTCMinutes()).padStart(2,'0')+' UTC';
     const roundLabel = (revertInfo ? ('Edit after Admin Level ' + revertInfo.level + ' sent this back, on ')
-      : (skipLevelReset ? 'BD source matching edit (kept at Pending Level 2, Level 1 sign-off untouched) on ' : 'Edit on ')) + timestampLabel + ' by ' + (currentAccount.username || 'unknown');
+      : (skipLevelReset ? 'Edit (kept at Pending Level 2, Level 1 sign-off untouched) on ' : 'Edit on ')) + timestampLabel + ' by ' + (currentAccount.username || 'unknown');
     // If this edit is resolving a revert (at any level), carry the admin's own
     // comment along with the diff so it stays on the permanent edit history
     // even after rejectReason itself gets cleared above.
