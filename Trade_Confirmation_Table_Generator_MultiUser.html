@@ -2556,6 +2556,40 @@ function buildBdMatchingCompiled(values){
   }
   return blocks.join('; ');
 }
+// REC "Approved" list version of the per-source BD matching data: instead of
+// one compiled "BD Source Matching" string, returns the pieces for the
+// dedicated columns -
+//   buyerSeller -> "Buyer/Seller"   (list column Y)
+//   noOfRecs    -> "No of RECs"     (list column Z)
+//   whichDeal   -> "Which deal"     (list column AA)
+//   vintage     -> "BD Source Vintage" (list column AN), "Jan 2026-Feb 2027"
+//                  = Vintage Start (month year) + "-" + Vintage End (month year)
+// Several BD sources are "; "-joined within each column, in the same source
+// order, so the Nth entry of every column belongs to the same source.
+function buildBdMatchingParts(values){
+  const names = splitBdSourceValue(values[MC.buyerSeller]);
+  const recs = splitBdSourceValue(values[MC.noOfRecs]);
+  const deals = splitBdSourceValue(values[MC.whichDeal]).map(d => dealLabelForStoredValue(d) || d);
+  const vstarts = splitBdSourceValue(values[MC.sourceVintageStart]).map(formatStoredVintage);
+  const vends = splitBdSourceValue(values[MC.sourceVintageEnd]).map(formatStoredVintage);
+  const count = Math.max(names.length, recs.length, deals.length, vstarts.length, vends.length, 1);
+  const out = {buyerSeller:[], noOfRecs:[], whichDeal:[], vintage:[]};
+  for(let i=0;i<count;i++){
+    const name = names[i] || '', rec = recs[i] || '', deal = deals[i] || '',
+          vs = vstarts[i] || '', ve = vends[i] || '';
+    if(!(name || rec || deal || vs || ve)) continue; // blank slot (e.g. Open Position)
+    out.buyerSeller.push(name);
+    out.noOfRecs.push(rec);
+    out.whichDeal.push(deal);
+    out.vintage.push(vs && ve ? vs + '-' + ve : (vs || ve));
+  }
+  return {
+    buyerSeller: out.buyerSeller.join('; '),
+    noOfRecs: out.noOfRecs.join('; '),
+    whichDeal: out.whichDeal.join('; '),
+    vintage: out.vintage.join('; ')
+  };
+}
 // changeNote is optional context describing WHY this entry was added —
 // e.g. the specific Matching/Buyer-Seller/Which-deal diff for a BD source
 // matching change — so the "Approved" list reads as a proper audit log
@@ -2563,7 +2597,10 @@ function buildBdMatchingCompiled(values){
 // otherwise-identical "Approved" snapshots. Defaults to describing the
 // initial final sign-off when not given.
 // NOTE for whoever maintains the "BD Agreement Record Approved" SharePoint
-// list: BOTH branches below (REC and Carbon Credit) now send ONE
+// list: BOTH branches (REC and Carbon Credit) now write Buyer/Seller, No of
+// RECs (No of VCUs for Carbon Credit), Which deal and "BD Source Vintage"
+// into their own columns (see buildBdMatchingParts) and no longer touch
+// "BD Source Matching". The older note that follows is historical: BOTH branches below (REC and Carbon Credit) now send ONE
 // "BD Source Matching" column (see buildBdMatchingCompiled) instead of the
 // old separate "Buyer/Seller" / "No of RECs" (or "No of VCUs") / "Which
 // deal" / "Delivery Date" / "Source Vintage Start" / "Source Vintage End" /
@@ -2575,6 +2612,7 @@ async function addApprovedDealToList(values, changeNote){
     const ctx = await getApprovedListContext();
     const columnMap = ctx.columnMap;
 
+    const recMatch = buildBdMatchingParts(values); // used by both REC and Carbon Credit
     const desiredByDisplayName = ctx.isCC ? {
         'Title': values[MC.salesPic],
         'Entity': values[MC.entity],
@@ -2609,7 +2647,12 @@ async function addApprovedDealToList(values, changeNote){
         // (see bdSourceBlockHtml), so both branches send the same shape.
         // There's no separate "Delivery Date" column any more either — BD
         // source matching no longer captures one at all, for either mode.
-        'BD Source Matching': buildBdMatchingCompiled(values),
+        // Same layout as the REC branch: dedicated columns instead of the
+        // old compiled "BD Source Matching" column.
+        'Buyer/Seller': recMatch.buyerSeller,
+        'No of VCUs': recMatch.noOfRecs,
+        'Which deal': recMatch.whichDeal,
+        'BD Source Vintage': recMatch.vintage,
         'Status': values[MC.status],
         'Submitted By': values[MC.submittedBy],
         'Submitted Date': values[MC.submittedDate],
@@ -2652,7 +2695,13 @@ async function addApprovedDealToList(values, changeNote){
         // columns; only the "Approved" list gets the compiled form. There's
         // no separate "Delivery Date" column any more — RECs BD source
         // matching no longer captures one at all.
-        'BD Source Matching': buildBdMatchingCompiled(values),
+        // BD source matching goes into its own columns (NOT the old
+        // compiled "BD Source Matching" column): Buyer/Seller, No of
+        // RECs, Which deal, and the combined "BD Source Vintage".
+        'Buyer/Seller': recMatch.buyerSeller,
+        'No of RECs': recMatch.noOfRecs,
+        'Which deal': recMatch.whichDeal,
+        'BD Source Vintage': recMatch.vintage,
         'Status': values[MC.status],
         'Submitted By': values[MC.submittedBy],
         'Submitted Date': values[MC.submittedDate],
@@ -2667,7 +2716,17 @@ async function addApprovedDealToList(values, changeNote){
     Object.keys(desiredByDisplayName).forEach(displayName => {
         const col = columnMap[displayName];
         if(col){
-            fields[col.name] = coerceForColumnType(desiredByDisplayName[displayName], col.type);
+            let raw = desiredByDisplayName[displayName];
+            // If "No of RECs" is a Number column, it can't hold a
+            // "; "-joined list: strip thousands commas and, for a
+            // multi-source deal, send the total (make the column
+            // "Single line of text" to keep the per-source breakdown).
+            if(col.type === 'number' && (displayName === 'No of RECs' || displayName === 'No of VCUs') && raw){
+                const nums = String(raw).split(';').map(x => Number(x.replace(/,/g,'').trim())).filter(x => !isNaN(x));
+                if(nums.length > 1) console.warn('\"' + displayName + '\" is a Number column — sent the total of ' + nums.length + ' sources. Change it to Single line of text to keep each source.');
+                raw = nums.length ? String(nums.reduce((a,b)=>a+b,0)) : raw;
+            }
+            fields[col.name] = coerceForColumnType(raw, col.type);
         } else {
             skipped.push(displayName);
         }
