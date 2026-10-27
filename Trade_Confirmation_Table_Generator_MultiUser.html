@@ -73,6 +73,35 @@
     box-shadow:0 1px 4px rgba(0,0,0,.15);
   }
   #theme-toggle-btn:hover{background:var(--surface-2);}
+  #notif-bell-btn{
+    position:fixed;top:16px;right:64px;z-index:1200;width:40px;height:40px;padding:0;
+    border-radius:50%;background:var(--surface);color:var(--text);
+    border:1px solid var(--border-strong);font-size:17px;line-height:1;
+    display:none;align-items:center;justify-content:center;cursor:pointer;
+    box-shadow:0 1px 4px rgba(0,0,0,.15);
+  }
+  #notif-bell-btn:hover{background:var(--surface-2);}
+  #notif-badge{
+    position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;padding:0 4px;
+    border-radius:9px;background:#c0392b;color:#fff;font-size:11px;font-weight:600;
+    display:none;align-items:center;justify-content:center;box-sizing:border-box;
+  }
+  #notif-panel{
+    position:fixed;top:64px;right:16px;z-index:1200;width:380px;max-width:calc(100vw - 32px);
+    max-height:70vh;overflow:auto;background:var(--surface);color:var(--text);
+    border:1px solid var(--border-strong);border-radius:10px;
+    box-shadow:0 6px 24px rgba(0,0,0,.25);display:none;
+  }
+  #notif-panel .np-head{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border);font-weight:600;font-size:14px;}
+  #notif-panel .np-sec{padding:6px 14px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted,#888);background:var(--surface-2);}
+  #notif-panel .np-item{padding:10px 14px;border-bottom:1px solid var(--border);font-size:13px;line-height:1.45;cursor:pointer;}
+  #notif-panel .np-item.unread{background:rgba(52,120,246,.08);border-left:3px solid #3478f6;}
+  #notif-panel .np-meta{font-size:11px;opacity:.65;margin-top:3px;}
+  #notif-panel .np-actions{margin-top:6px;display:flex;gap:6px;align-items:center;}
+  #notif-panel .np-actions button{font-size:12px;padding:3px 10px;}
+  #notif-panel .np-ok{color:#1e8449;font-weight:600;font-size:12px;}
+  #notif-panel .np-wait{color:#b9770e;font-size:12px;}
+  #notif-panel .np-empty{padding:18px 14px;font-size:13px;opacity:.7;text-align:center;}
   .wrap{
     max-width:960px;
     margin:0 auto;
@@ -617,6 +646,8 @@
 <body>
 
 <button type="button" id="theme-toggle-btn" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+<button type="button" id="notif-bell-btn" title="Notifications" aria-label="Notifications">🔔<span id="notif-badge"></span></button>
+<div id="notif-panel" role="dialog" aria-label="Notifications"></div>
 
 <div id="login-overlay">
   <div id="login-card">
@@ -1554,6 +1585,7 @@ async function onSignedIn(){
     await loadUserRoles();
     await loadDealIdSettings();
     applyRoleUi();
+    try{ initNotifications(); }catch(e){ console.warn('Notifications init failed', e); }
     await loadDraftAndHistory();
   }catch(err){
     console.error('Could not connect to the workbook', err);
@@ -1870,6 +1902,9 @@ async function notifyNextApprover(status, dealId, description, changeSummary){
     descBlock +
     changeBlock +
     '<p><a href="' + link + '">Open it in the Trade Confirmation app</a></p>';
+  if(status !== STATUS_PENDING_CHANGE_3){
+    addNotification(toEmails, 'approval_needed', dealId, displayId + ' is waiting on your ' + levelLabel + ' approval.', {}).catch(()=>{});
+  }
   try{
     await sendMailGraph(toEmails, 'Approval needed — ' + (isPendingDealId(dealId) ? levelLabel : displayId + ' (' + levelLabel + ')'), html);
   }catch(err){
@@ -1945,6 +1980,8 @@ async function notifySubmitter(status, dealId, submitterEmail, reason){
     : '<p>' + label + ' has been rejected.</p>' +
       (reason ? '<p><strong>Reason:</strong> ' + escapeHtml(reason) + '</p>' : '') +
       '<p><a href="' + link + '">View it in the Trade Confirmation app</a></p>';
+  addNotification([email], isReverted ? 'reverted' : 'rejected', dealId,
+    (isReverted ? 'Changes requested on ' : 'Rejected: ') + displayId + (reason ? ' — ' + reason : ''), {}).catch(()=>{});
   try{
     await sendMailGraph([email], subject, html);
   }catch(err){
@@ -4947,6 +4984,7 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
     await finishTagWrite();
     const notifyBody = changeLines.join('\n') + (matchNote ? '\n\nNote: ' + matchNote : '');
     await notifyNextApprover(STATUS_PENDING_CHANGE_3, dealId, matching[0].values[0][MC.description], notifyBody);
+    await notifyAdmin3OfBdChange(dealId, matching[0].values[0][MC.description], changeLines, matchNote, 'pending', false);
     if(bdMatchingChanged){
       try{
         await notifyAdminLevel1BdMatchChange(dealId, matching[0].values[0][MC.description], changeLines, 'requested for Level 3 review', currentAccount.username);
@@ -5005,6 +5043,7 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
   }
   await finishTagWrite();
   await notifyOperationsBdMatchChange(dealId, matching[0].values[0][MC.description], changeLines, matchNote, currentAccount.username);
+  await notifyAdmin3OfBdChange(dealId, matching[0].values[0][MC.description], changeLines, matchNote, 'approved', false);
   if(bdMatchingChanged){
     try{
       await notifyAdminLevel1BdMatchChange(dealId, matching[0].values[0][MC.description], changeLines, 'already Approved deal, no approval needed', currentAccount.username);
@@ -11666,6 +11705,210 @@ document.getElementById('save-agreement-btn').addEventListener('click', async ()
     btn.disabled = false;
   }
 });
+
+/* ---- Notification bell + Admin Level 3 "Noted" acknowledgement ----
+   Backed by an Excel Table named TradeNotifications (one row per recipient).
+   Columns, in this exact order: Id, Recipient Email, Type, Deal ID, Message,
+   Created Date, Read, Needs Ack, Acked By, Acked Date, From Email.
+   If the table doesn't exist yet the bell simply stays hidden and nothing
+   else in the app is affected. */
+const NOTIF_TABLE_NAME = "TradeNotifications";
+const NC = { id:0, to:1, type:2, dealId:3, message:4, created:5, read:6, needsAck:7, ackedBy:8, ackedDate:9, from:10 };
+let notifRows = [];
+let notifAvailable = false;
+let notifTimer = null;
+function notifMe(){ return ((currentAccount && currentAccount.username) || '').toLowerCase(); }
+async function addNotification(recipients, type, dealId, message, opts){
+  opts = opts || {};
+  const seen = new Set();
+  const rows = [];
+  const batchIso = new Date().toISOString();
+  (recipients || []).forEach(e => {
+    const k = String(e || '').trim().toLowerCase();
+    if(!k || seen.has(k)) return;
+    seen.add(k);
+    rows.push([
+      'N' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), k, type, dealId || '',
+      message || '', batchIso, '', opts.needsAck ? 'Yes' : '', '', '', notifMe()
+    ]);
+  });
+  if(!rows.length) return;
+  try{
+    await addTableRows(NOTIF_TABLE_NAME, rows);
+  }catch(err){
+    console.warn('Could not write in-app notification (is the "' + NOTIF_TABLE_NAME + '" table created?):', err);
+  }
+}
+async function notifyAdmin3OfBdChange(dealId, description, changeLines, matchNote, state, alsoEmail){
+  try{
+    const toEmails = emailsForRole('admin3');
+    const displayId = friendlyDealId(dealId);
+    const summary = changeLines.join('; ') + (matchNote ? ' (Note: ' + matchNote + ')' : '');
+    const msg = (state === 'pending' ? 'BD change awaiting your approval' : 'BD change applied to an Approved deal') +
+      ' — ' + displayId + ': ' + summary;
+    await addNotification(toEmails, 'bd_change', dealId, msg, { needsAck: true });
+    if(alsoEmail && toEmails.length){
+      const link = dealDeepLink(dealId);
+      const html = '<p>' + escapeHtml(currentAccount.username) + ' (BD in-charge) changed Deal ID <strong>' + escapeHtml(displayId) + '</strong>' +
+        (description ? ' (' + escapeHtml(description) + ')' : '') + ' after it was Approved. No approval was required; this is for your information.</p>' +
+        '<p><strong>Changes:</strong><br>' + escapeHtml(changeLines.join('\n')).replace(/\n/g, '<br>') + '</p>' +
+        (matchNote ? '<p><strong>Note:</strong> ' + escapeHtml(matchNote) + '</p>' : '') +
+        '<p>Open the app and click <strong>Noted</strong> in the notification bell to let the BD know you have seen it.</p>' +
+        '<p><a href="' + link + '">Open this deal</a></p>';
+      await sendMailGraph(toEmails, 'BD change on Approved deal ' + displayId, html);
+    }
+  }catch(err){ console.warn('Admin Level 3 BD-change notification failed:', err); }
+}
+async function loadNotifications(){
+  try{
+    notifRows = await getTableRows(NOTIF_TABLE_NAME);
+    notifAvailable = true;
+  }catch(err){
+    notifAvailable = false; notifRows = [];
+  }
+  renderNotifications();
+}
+function initNotifications(){
+  const bell = document.getElementById('notif-bell-btn');
+  const panel = document.getElementById('notif-panel');
+  if(!bell.dataset.wired){
+    bell.dataset.wired = '1';
+    bell.addEventListener('click', e => {
+      e.stopPropagation();
+      panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+      if(panel.style.display === 'block') loadNotifications();
+    });
+    document.addEventListener('click', e => {
+      if(!panel.contains(e.target) && e.target !== bell) panel.style.display = 'none';
+    });
+    panel.addEventListener('click', onNotifPanelClick);
+  }
+  loadNotifications().then(() => { if(notifAvailable) bell.style.display = 'flex'; });
+  if(notifTimer) clearInterval(notifTimer);
+  notifTimer = setInterval(() => { if(!document.hidden) loadNotifications(); }, 60000);
+}
+function notifAgo(iso){
+  const t = Date.parse(iso); if(!t) return '';
+  const m = Math.round((Date.now() - t) / 60000);
+  if(m < 1) return 'just now'; if(m < 60) return m + ' min ago';
+  if(m < 1440) return Math.round(m/60) + ' h ago';
+  return new Date(t).toLocaleDateString();
+}
+function renderNotifications(){
+  const bell = document.getElementById('notif-bell-btn');
+  const panel = document.getElementById('notif-panel');
+  const badge = document.getElementById('notif-badge');
+  if(!bell) return;
+  bell.style.display = notifAvailable ? 'flex' : 'none';
+  const me = notifMe();
+  const mine = notifRows.filter(r => String(r.values[0][NC.to]||'').toLowerCase() === me)
+    .sort((a,b) => String(b.values[0][NC.created]).localeCompare(String(a.values[0][NC.created])));
+  // BD side: changes I sent that need Level 3 to acknowledge
+  const sent = notifRows.filter(r => String(r.values[0][NC.from]||'').toLowerCase() === me &&
+      r.values[0][NC.type] === 'bd_change' && String(r.values[0][NC.to]||'').toLowerCase() !== me)
+    .sort((a,b) => String(b.values[0][NC.created]).localeCompare(String(a.values[0][NC.created])));
+  const sentSeen = {};
+  const sentGroups = [];
+  sent.forEach(r => {
+    const v = r.values[0];
+    const k = v[NC.dealId] + '|' + v[NC.created];
+    if(!sentSeen[k]){ sentSeen[k] = r; sentGroups.push(r); }
+    else if(v[NC.ackedBy] && !sentSeen[k].values[0][NC.ackedBy]){ sentGroups[sentGroups.indexOf(sentSeen[k])] = r; sentSeen[k] = r; }
+  });
+  sent.length = 0; sentGroups.slice(0, 15).forEach(r => sent.push(r));
+  const unread = mine.filter(r => !r.values[0][NC.read]).length;
+  badge.textContent = unread > 99 ? '99+' : String(unread);
+  badge.style.display = unread ? 'flex' : 'none';
+  let h = '<div class="np-head"><span>Notifications</span>' +
+    (unread ? '<button type="button" class="secondary" data-np="readall" style="font-size:12px;padding:3px 10px;">Mark all read</button>' : '') + '</div>';
+  if(!mine.length && !sent.length) h += '<div class="np-empty">No notifications yet.</div>';
+  mine.slice(0, 40).forEach(r => {
+    const v = r.values[0];
+    const canNote = v[NC.needsAck] === 'Yes' && !v[NC.ackedBy];
+    h += '<div class="np-item' + (v[NC.read] ? '' : ' unread') + '" data-np="open" data-id="' + escapeHtml(v[NC.id]) + '" data-deal="' + escapeHtml(v[NC.dealId]) + '">' +
+      escapeHtml(v[NC.message]) +
+      '<div class="np-meta">' + escapeHtml(notifAgo(v[NC.created])) + (v[NC.from] ? ' · from ' + escapeHtml(v[NC.from]) : '') + '</div>' +
+      (v[NC.needsAck] === 'Yes' ? '<div class="np-actions">' + (canNote
+          ? '<button type="button" data-np="noted" data-id="' + escapeHtml(v[NC.id]) + '">Noted</button>'
+          : '<span class="np-ok">✓ Noted' + (v[NC.ackedDate] ? ' ' + escapeHtml(notifAgo(v[NC.ackedDate])) : '') + '</span>') + '</div>' : '') +
+      '</div>';
+  });
+  if(sent.length){
+    h += '<div class="np-sec">Your changes — Admin Level 3 status</div>';
+    sent.forEach(r => {
+      const v = r.values[0];
+      h += '<div class="np-item" data-np="open" data-id="' + escapeHtml(v[NC.id]) + '" data-deal="' + escapeHtml(v[NC.dealId]) + '">' +
+        escapeHtml(v[NC.message]) +
+        '<div class="np-meta">To Admin Level 3 · ' + escapeHtml(notifAgo(v[NC.created])) + '</div>' +
+        '<div class="np-actions">' + (v[NC.ackedBy]
+          ? '<span class="np-ok">✓ Noted by ' + escapeHtml(v[NC.ackedBy]) + ' · ' + escapeHtml(notifAgo(v[NC.ackedDate])) + '</span>'
+          : '<span class="np-wait">⏳ Not yet noted</span>') + '</div></div>';
+    });
+  }
+  panel.innerHTML = h;
+}
+async function onNotifPanelClick(e){
+  e.stopPropagation();
+  const t = e.target.closest('[data-np]');
+  if(!t) return;
+  const kind = t.dataset.np;
+  const findRow = id => notifRows.find(r => r.values[0][NC.id] === id);
+  try{
+    if(kind === 'readall'){
+      const me = notifMe();
+      for(const r of notifRows){
+        const v = r.values[0].slice();
+        if(String(v[NC.to]||'').toLowerCase() !== me || v[NC.read]) continue;
+        v[NC.read] = new Date().toISOString();
+        await updateTableRow(NOTIF_TABLE_NAME, r.index, v);
+      }
+      await loadNotifications();
+    }else if(kind === 'noted'){
+      const r = findRow(t.dataset.id); if(!r) return;
+      t.disabled = true;
+      const v = r.values[0].slice();
+      const ackIso = new Date().toISOString();
+      // One Admin Level 3 pressing Noted counts for every Admin Level 3 who
+      // got the same change (same sender, deal, type and batch timestamp).
+      const siblings = notifRows.filter(x => x.values[0][NC.type] === v[NC.type] && x.values[0][NC.from] === v[NC.from] &&
+        x.values[0][NC.dealId] === v[NC.dealId] && x.values[0][NC.created] === v[NC.created] && !x.values[0][NC.ackedBy]);
+      for(const x of siblings){
+        const xv = x.values[0].slice();
+        xv[NC.ackedBy] = currentAccount.username;
+        xv[NC.ackedDate] = ackIso;
+        if(!xv[NC.read] && String(xv[NC.to]).toLowerCase() === notifMe()) xv[NC.read] = ackIso;
+        await updateTableRow(NOTIF_TABLE_NAME, x.index, xv);
+      }
+      const bd = v[NC.from];
+      if(bd){
+        const msg = 'Admin Level 3 (' + currentAccount.username + ') has noted your change on ' + friendlyDealId(v[NC.dealId]) + '.';
+        await addNotification([bd], 'noted', v[NC.dealId], msg, {});
+        try{
+          await sendMailGraph([bd], 'Noted: your change on ' + friendlyDealId(v[NC.dealId]),
+            '<p>' + escapeHtml(msg) + '</p><p><a href="' + dealDeepLink(v[NC.dealId]) + '">Open this deal</a></p>');
+        }catch(err){ console.warn('Noted email failed:', err); }
+      }
+      await loadNotifications();
+    }else if(kind === 'open'){
+      const r = findRow(t.dataset.id);
+      if(r && String(r.values[0][NC.to]||'').toLowerCase() === notifMe() && !r.values[0][NC.read]){
+        const v = r.values[0].slice(); v[NC.read] = new Date().toISOString();
+        updateTableRow(NOTIF_TABLE_NAME, r.index, v).then(loadNotifications).catch(()=>{});
+      }
+      const dealId = t.dataset.deal;
+      if(dealId){
+        document.getElementById('notif-panel').style.display = 'none';
+        urlDealOpened = false;
+        try{ history.replaceState(null, '', '?deal=' + encodeURIComponent(dealId)); }catch(_){}
+        tryOpenDealFromUrl();
+      }
+    }
+  }catch(err){
+    console.error('Notification action failed', err);
+    alert('Could not update the notification: ' + err.message);
+    loadNotifications();
+  }
+}
 
 /* ---- Dark mode toggle ---- */
 (function(){
