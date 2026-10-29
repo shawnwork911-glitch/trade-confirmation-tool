@@ -4380,18 +4380,56 @@ document.addEventListener('change', ()=>{
 // nothing is being lost, the just-submitted agreement is safely saved and
 // still visible in Saved agreements).
 async function resetToBlankForm(){
+  clearTimeout(draftSaveTimer);
+  suppressAutosave = true; // don't let a pending autosave re-create the draft
+  // Delete this user's draft row in BOTH draft tables (RECs and Carbon Credit),
+  // looking the row up fresh by email instead of trusting a cached row index
+  // (which goes stale after other deletes). Verify it is really gone, because
+  // a surviving draft is exactly what makes the old data reappear on reload.
+  let draftCleared = true;
   try{
-    const tableName = draftTableName();
-    let rowIndex = (draftRowTableName === tableName) ? draftRowIndex : null;
-    if(rowIndex === null && currentAccount){
-      const rows = await getTableRows(tableName);
-      const myEmail = (currentAccount.username || '').toLowerCase();
-      const mine = rows.find(r => (r.values[0][0] || '').toLowerCase() === myEmail);
-      if(mine) rowIndex = mine.index;
+    const myEmail = ((currentAccount && currentAccount.username) || '').toLowerCase();
+    const tables = Array.from(new Set([draftTableForMode('standard'), draftTableForMode('carboncredit')]));
+    const mineIn = async (tableName)=> (await getTableRows(tableName))
+      .filter(r => (r.values[0][0] || '').toLowerCase() === myEmail)
+      .sort((x,y)=> y.index - x.index);
+    for(const tableName of tables){
+      // 1) Try to delete the draft row(s).
+      try{
+        for(let pass = 0; pass < 3; pass++){
+          const mine = await mineIn(tableName);
+          if(!mine.length) break;
+          for(const r of mine) await deleteTableRow(tableName, r.index);
+        }
+      }catch(err){ console.error('Draft delete failed, will overwrite with a blank draft', err); }
+      // 2) If anything is still there, overwrite it with a brand-new EMPTY
+      //    draft so the next load starts with everything blank.
+      const left = await mineIn(tableName);
+      if(left.length){
+        const blank = JSON.stringify({ tradeCount:'1', allValues:{}, checkedIds:[], dealId:null,
+          submittedDate:null, productMode: tableName === draftTableForMode('carboncredit') ? 'carboncredit' : 'standard' });
+        for(const r of left) await updateTableRow(tableName, r.index, [currentAccount.username, blank, new Date().toISOString()]);
+      }
     }
-    if(rowIndex !== null) await deleteTableRow(tableName, rowIndex);
-  }catch(err){ console.error('Could not clear draft row', err); }
-  location.reload();
+    draftRowIndex = null;
+  }catch(err){
+    console.error('Could not clear draft row', err);
+    draftCleared = false;
+  }
+  if(!draftCleared){
+    suppressAutosave = false;
+    alert('Reset could not clear your saved draft, so the old data would come back. Please try Reset data again.');
+    return;
+  }
+  // Stop the browser from restoring old values into the form on reload.
+  document.querySelectorAll('input, select, textarea').forEach(el=>{
+    el.setAttribute('autocomplete','off');
+    if(el.disabled || el.readOnly || el.type==='hidden') return;
+    if(el.type==='checkbox' || el.type==='radio') el.checked = false;
+    else if(el.tagName==='SELECT') el.selectedIndex = -1;
+    else el.value = '';
+  });
+  location.replace(location.href.split('#')[0]);
 }
 document.getElementById('new-confirmation-btn').addEventListener('click', async ()=>{
   if(!currentAccount) return;
@@ -8510,8 +8548,8 @@ function lockableField(label, inputHtml, ids){
 // Back-compat aliases — same thing, different names used historically.
 function headerField(label, inputHtml, id){ return lockableField(label, inputHtml, id); }
 function field(label, inputHtml, id){ return lockableField(label, inputHtml, id); }
-function selectHtml(id, options, def){
-  let o = options.map(v => '<option value="'+v+'"'+(v===def?' selected':'')+'>'+v+'</option>').join('');
+function selectHtml(id, options, def, blankLabel){
+  let o = (blankLabel !== undefined ? '<option value=""'+(!def?' selected':'')+' disabled hidden>'+blankLabel+'</option>' : '') + options.map(v => '<option value="'+v+'"'+(v===def?' selected':'')+'>'+v+'</option>').join('');
   return '<select id="'+id+'">'+o+'</select>';
 }
 function textHtml(id, placeholder, val){
@@ -8821,10 +8859,10 @@ document.getElementById('header-fields').innerHTML =
     '<input type="text" id="h-dealid-num" maxlength="5" inputmode="numeric" placeholder="auto-assigned" readonly/>',
     'h-dealid-num') +
   headerField('Deal Date', dateHtml('h-date'),'h-date') +
-  headerField('Entity', selectHtml('h-entity',['MY','SG'],'MY'),'h-entity') +
-  headerField('BD in-charge', selectHtml('h-bd',BD_NAMES,BD_NAMES[0]),'h-bd') +
+  headerField('Entity', selectHtml('h-entity',['MY','SG'],'','Select entity'),'h-entity') +
+  headerField('BD in-charge', selectHtml('h-bd',BD_NAMES,'','Select BD in-charge'),'h-bd') +
   '<div style="grid-column:1 / -1;">'+headerField('Tag BD in-charge (optional — view only)', tagBdChecklistHtml('h-tag-bd','','h-bd'),'h-tag-bd')+'</div>' +
-  headerField('Order type', selectHtml('h-order',ORDER_TYPES,'Stock-In (T)'),'h-order') +
+  headerField('Order type', selectHtml('h-order',ORDER_TYPES,'','Select order type'),'h-order') +
   '<div id="h-role-wrap"><label for="h-role">Buyer or Seller</label>'+
   '<input type="text" id="h-role" value="Seller" readonly/></div>' +
   headerField('Buyer/Seller Full Name', textHtml('h-buyer','Company name'),'h-buyer') +
@@ -9012,7 +9050,9 @@ function initLocksIn(container){
       const ids = key.split(',');
       ids.forEach(id=>{
         const el = document.getElementById(id);
-        if(el && saved.values && saved.values[id] !== undefined) el.value = saved.values[id];
+        // Only LOCKED fields get their stored value back. Unlocked fields
+        // must come up empty (otherwise "Reset data" appears to do nothing).
+        if(el && saved.locked && saved.values && saved.values[id] !== undefined) el.value = saved.values[id];
         if(el && /-remarks$/.test(id) && el.value.trim().toUpperCase() === 'NA') el.value = 'N/A';
       });
       applyFieldLockUi(key, !!saved.locked);
