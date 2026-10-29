@@ -8400,9 +8400,8 @@ function dealFlagItemsFromEdit(oldRows, newFlagsList, newValuesList){
   });
   return items;
 }
-// Emails every Admin Level 3 plus the deal's BD in-charge about the flagged
-// product(s): items = [{no, values, flags, added}]. Best-effort: a failed
-// email never undoes the save. The person who ticked is not emailed.
+// Email Operations, Admin Level 3 and the BD in-charge for newly ticked product flags.
+// Also create bell alerts for the actor and all Level 3 admins. Best effort.
 async function notifyDealFlags(dealId, description, items, bdInChargeName, actorEmail, isNewDeal){
   if(!items || !items.length) return;
   try{
@@ -8414,10 +8413,10 @@ async function notifyDealFlags(dealId, description, items, bdInChargeName, actor
       if(!k || k === me || seen.has(k)) return;
       seen.add(k); toEmails.push(k);
     };
+    add('operations@saxonrenewables.com');
     emailsForRole('admin3').forEach(add);
     const bdEmail = bdInChargeEmail(bdInChargeName);
     if(bdEmail) add(bdEmail); else if(bdInChargeName) console.warn('No email on file (BD_NAME_EMAILS) for BD in-charge ' + bdInChargeName + ' — skipping them for the deal-flag email on Deal ID ' + dealId);
-    if(!toEmails.length) return;
     const union = { hourly:false, newDevice:false };
     items.forEach(it => { const a = it.added || it.flags || {}; union.hourly = union.hourly || !!a.hourly; union.newDevice = union.newDevice || !!a.newDevice; });
     const labels = dealFlagLabels(union);
@@ -8435,7 +8434,16 @@ async function notifyDealFlags(dealId, description, items, bdInChargeName, actor
       ((description && String(description).trim()) ? '<p><strong>Description:</strong> ' + escapeHtml(description) + '</p>' : '') +
       table +
       '<p><a href="' + dealDeepLink(dealId) + '">Open it in the Trade Confirmation app</a></p>';
-    await sendMailGraph(toEmails, '[' + labels.join(' + ') + ']' + (isNewDeal ? ' New confirmation — ' : ' Deal flagged — ') + (pending ? 'new agreement' : displayId), html);
+    // The bell is for the submitting user and every Level 3 admin. One bell
+    // entry per recipient for this save, even if several products/flags changed.
+    const bellRecipients = [...new Set([me, ...emailsForRole('admin3').map(e => String(e || '').trim().toLowerCase())].filter(Boolean))];
+    const productSummary = items.map(it => 'Product ' + it.no + ': ' + dealFlagLabels(it.added || it.flags).join(' + ')).join('; ');
+    const bellMessage = (isNewDeal ? 'New confirmation flagged' : 'Product flag added') +
+      ' — ' + (pending ? 'Deal ID pending L1 approval' : displayId) + ' — ' + productSummary;
+    await addNotification(bellRecipients, 'deal_flag', dealId, bellMessage, { needsAck: false });
+    if(toEmails.length){
+      await sendMailGraph(toEmails, '[' + labels.join(' + ') + ']' + (isNewDeal ? ' New confirmation — ' : ' Deal flagged — ') + (pending ? 'new agreement' : displayId), html);
+    }
   }catch(err){
     console.error('Deal flag notification email failed', err);
   }
