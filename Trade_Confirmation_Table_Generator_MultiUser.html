@@ -620,8 +620,19 @@
   .delivery-urgency.green{color:#1f7a4d;}
   #urgent-deliveries-card,#overdue-deliveries-card{border:1px solid #d9534f;border-left:5px solid #d9534f;}
   #urgent-deliveries-card .card-title,#overdue-deliveries-card .card-title{color:#a32018;}
-  #urgent-deliveries-list table,#overdue-deliveries-list table{width:100%;border-collapse:collapse;}
-  #urgent-deliveries-list th,#overdue-deliveries-list th{font-size:12px;color:var(--text-secondary);border-bottom:1px solid var(--border);}
+  #urgent-deliveries-list table,#overdue-deliveries-list table,#hourly-deals-list table,#newdevice-deals-list table{width:100%;border-collapse:collapse;}
+  #urgent-deliveries-list th,#overdue-deliveries-list th,#hourly-deals-list th,#newdevice-deals-list th{font-size:12px;color:var(--text-secondary);border-bottom:1px solid var(--border);}
+  #hourly-deals-card{border:1px solid #d98a1f;border-left:5px solid #d98a1f;}
+  #hourly-deals-card .card-title{color:#a8650b;}
+  #newdevice-deals-card{border:1px solid #2f7bbf;border-left:5px solid #2f7bbf;}
+  #newdevice-deals-card .card-title{color:#1f5f99;}
+  .deal-flag-badge{display:inline-block;font-size:11px;font-weight:600;border-radius:10px;padding:1px 8px;margin:2px 4px 0 0;white-space:nowrap;}
+  .deal-flag-note{display:none;font-size:12px;color:#8a5a00;background:#fff6e0;border:1px solid #e9c46a;border-radius:6px;padding:6px 9px;margin-top:6px;}
+  html[data-theme="dark"] .deal-flag-note{background:#3b2f14;color:#f0cf86;border-color:#7a6125;}
+  .deal-flag-badge.hourly{background:#fdf0dc;color:#a8650b;border:1px solid #e9b96f;}
+  .deal-flag-badge.newdevice{background:#e3f0fb;color:#1f5f99;border:1px solid #8fbce3;}
+  html[data-theme="dark"] .deal-flag-badge.hourly{background:#3b2c14;color:#f0b866;border-color:#7a5a25;}
+  html[data-theme="dark"] .deal-flag-badge.newdevice{background:#14293b;color:#8fc4f0;border-color:#2f5f8a;}
   .confirmation-section-selector{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px;}
   .confirmation-section-selector button{background:transparent;color:var(--text);border:1px solid var(--border-strong);padding:8px 14px;font-size:13px;}
   .confirmation-section-selector button:hover{background:var(--surface-2);}
@@ -746,6 +757,8 @@
   <div class="confirmation-section-selector" id="confirmation-section-selector">
     <button type="button" id="confirmation-section-urgent" data-confirmation-section="urgent">🔴 Urgent Deliveries<span id="urgent-count-badge"></span></button>
     <button type="button" id="confirmation-section-overdue" data-confirmation-section="overdue">⏰ Overdue<span id="overdue-count-badge"></span></button>
+    <button type="button" id="confirmation-section-hourly" data-confirmation-section="hourly">⚡ Hourly Deal<span id="hourly-count-badge"></span></button>
+    <button type="button" id="confirmation-section-newdevice" data-confirmation-section="newdevice">🔧 New Device<span id="newdevice-count-badge"></span></button>
     <button type="button" id="confirmation-section-my" data-confirmation-section="my">My Saved Confirmations</button>
     <button type="button" id="confirmation-section-queue" data-confirmation-section="queue">Approval Queue</button>
     <button type="button" id="confirmation-section-all" data-confirmation-section="all">All Confirmations</button>
@@ -761,6 +774,18 @@
     <p class="card-title" id="overdue-deliveries-title">⏰ Overdue deliveries</p>
     <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Pending confirmations whose Delivery Start Date has already passed — most overdue first. Admins see all deals; everyone else sees only their own.</p>
     <div id="overdue-deliveries-list"></div>
+  </div>
+
+  <div class="card" id="hourly-deals-card" style="display:none;">
+    <p class="card-title" id="hourly-deals-title">⚡ Hourly Deals</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Pending confirmations with at least one product flagged as an Hourly Deal — earliest delivery first. Admins see all deals; everyone else sees only their own.</p>
+    <div id="hourly-deals-list"></div>
+  </div>
+
+  <div class="card" id="newdevice-deals-card" style="display:none;">
+    <p class="card-title" id="newdevice-deals-title">🔧 New Device deals</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Pending confirmations with at least one product flagged as a New Device — earliest delivery first. Admins see all deals; everyone else sees only their own.</p>
+    <div id="newdevice-deals-list"></div>
   </div>
 
   <div class="card" id="my-history-card">
@@ -1306,6 +1331,14 @@ const L2_CLEAR = { reason:'', remark:'', by:'', date:'' };
 // __tagBdWrite property on the canonical values array (see applyTagBdWrite);
 // when absent, the cell is written back exactly as last read. See tagBdColumnIndex / dealTaggedBd / isTaggedBdViewer.
 const TAG_BD_COLUMN_NAME = 'Tagged BD In-charge';
+// ---- Deal flags: Hourly Deal / New Device (RECs only, deal-level) ----
+// Two tickboxes on the RECs form. Stored on EVERY row of the deal as "Yes"
+// (or blank) in two columns located by HEADER NAME, same approach as the
+// Tagged BD In-charge column — add "Hourly Deal" and "New Device" to the
+// TradeDealLog (RECs) Excel Table (the end is safest). Ticking either one
+// emails every Admin Level 3 plus the deal's BD in-charge (see
+// notifyDealFlags) and lists the deal under the matching Confirmations tab.
+const DEAL_FLAG_COLUMN_NAMES = { hourly:'Hourly Deal', newDevice:'New Device' };
 // ---- Redemption Docs request (admin-initiated) ----
 // Redemption Documents are no longer required automatically the moment a
 // Stock-Out (R)/Stock-In (R) REC deal reaches Level 3 Approved. Instead an
@@ -1688,7 +1721,7 @@ function canBuildAgreement(){
 
 let activeConfirmationSection = null;
 function confirmationSectionAllowed(section){
-  if(section === 'urgent' || section === 'overdue') return true;
+  if(section === 'urgent' || section === 'overdue' || section === 'hourly' || section === 'newdevice') return true;
   if(section === 'my') return canBuildAgreement();
   if(section === 'queue') return isAdmin;
   if(section === 'all') return true;
@@ -1703,6 +1736,10 @@ function setConfirmationSection(section){
   if(urgentCard) urgentCard.style.display = section === 'urgent' ? 'block' : 'none';
   const overdueCard = document.getElementById('overdue-deliveries-card');
   if(overdueCard) overdueCard.style.display = section === 'overdue' ? 'block' : 'none';
+  const hourlyCard = document.getElementById('hourly-deals-card');
+  if(hourlyCard) hourlyCard.style.display = section === 'hourly' ? 'block' : 'none';
+  const newDeviceCard = document.getElementById('newdevice-deals-card');
+  if(newDeviceCard) newDeviceCard.style.display = section === 'newdevice' ? 'block' : 'none';
   const myCard = document.getElementById('my-history-card');
   const queueCard = document.getElementById('approval-queue-card');
   const allCard = document.getElementById('admin-history-card');
@@ -1724,6 +1761,10 @@ function refreshConfirmationSectionSelector(){
   if(urgentBtn) urgentBtn.style.display = 'inline-block';
   const overdueBtn = document.getElementById('confirmation-section-overdue');
   if(overdueBtn) overdueBtn.style.display = 'inline-block';
+  const hourlyBtn = document.getElementById('confirmation-section-hourly');
+  if(hourlyBtn) hourlyBtn.style.display = 'inline-block';
+  const newDeviceBtn = document.getElementById('confirmation-section-newdevice');
+  if(newDeviceBtn) newDeviceBtn.style.display = 'inline-block';
   const fallback = 'urgent';
   setConfirmationSection(activeConfirmationSection && confirmationSectionAllowed(activeConfirmationSection) ? activeConfirmationSection : fallback);
 }
@@ -2849,6 +2890,16 @@ function tagBdColumnIndex(tableName){
   if(!names) return -1;
   return names.map(normalizeHeaderName).indexOf(normalizeHeaderName(TAG_BD_COLUMN_NAME));
 }
+// 0-based positions of the "Hourly Deal" / "New Device" columns in this
+// table's raw row (-1 each when the column isn't there).
+function dealFlagColumnIndexes(tableName){
+  const names = (tableColumnNamesCache[tableName] || []).map(normalizeHeaderName);
+  return {
+    hourly: names.indexOf(normalizeHeaderName(DEAL_FLAG_COLUMN_NAMES.hourly)),
+    newDevice: names.indexOf(normalizeHeaderName(DEAL_FLAG_COLUMN_NAMES.newDevice))
+  };
+}
+function isDealFlagOn(v){ return /^(yes|y|true|1)$/i.test(String(v ?? '').trim()); }
 function missingRedReturnColumnNames(tableName){
   const norm = (tableColumnNamesCache[tableName] || []).map(normalizeHeaderName);
   return Object.values(REDEMPTION_RETURN_COLUMN_NAMES).filter(n => norm.indexOf(normalizeHeaderName(n)) === -1);
@@ -3151,6 +3202,7 @@ async function getCanonicalTableRows(tableName){
   const idx = l2ColumnIndexes(tableName);
   const redIdx = redReqColumnIndexes(tableName);
   const tagIdx = tagBdColumnIndex(tableName);
+  const flagIdx = dealFlagColumnIndexes(tableName);
   const cache = rawLogRowCache[tableName] = {};
   rawLogRowCacheHeaders[tableName] = tableHeaderSignature(tableName);
   return rows.map(r => {
@@ -3165,14 +3217,28 @@ async function getCanonicalTableRows(tableName){
     if(out.values && out.values[0]) out.values[0].__redReq = readRedReqFromRaw(raw, redIdx);
     // Tagged BD In-charge (RECs and Carbon Credit) — read via dealTaggedBd.
     if(out.values && out.values[0]) out.values[0].__tagBd = tagIdx >= 0 ? String(raw[tagIdx] ?? '').trim() : '';
+    // Hourly Deal / New Device flags (RECs) — read via dealFlags.
+    if(out.values && out.values[0]) out.values[0].__flags = {
+      hourly: flagIdx.hourly >= 0 && isDealFlagOn(raw[flagIdx.hourly]),
+      newDevice: flagIdx.newDevice >= 0 && isDealFlagOn(raw[flagIdx.newDevice])
+    };
     return out;
   });
 }
 async function addCanonicalTableRows(tableName, rowsArray){
   await getTableColumnCount(tableName, true); // fresh header names before mapping
   const tagIdx = tagBdColumnIndex(tableName);
+  const flagIdx = dealFlagColumnIndexes(tableName);
   const rawRows = rowsArray.map(v => {
     const raw = canonicalToTableRaw(v, tableName);
+    if(v.__flagsWrite){
+      ['hourly','newDevice'].forEach(k => {
+        const i = flagIdx[k];
+        if(i < 0) return;
+        while(raw.length <= i) raw.push('');
+        raw[i] = v.__flagsWrite[k] ? 'Yes' : '';
+      });
+    }
     if(tagIdx >= 0 && ('__tagBdWrite' in v)){
       while(raw.length <= tagIdx) raw.push('');
       raw[tagIdx] = v.__tagBdWrite;
@@ -3225,6 +3291,17 @@ async function updateCanonicalTableRow(tableName, rowIndex, values, l2Override, 
     while(raw.length <= tagIdx) raw.push('');
     raw[tagIdx] = v;
   }
+  // Hourly Deal / New Device — written back exactly as last read unless
+  // this save carries a new __flagsWrite, so no other write can wipe them.
+  const flagIdx = dealFlagColumnIndexes(tableName);
+  ['hourly','newDevice'].forEach(k => {
+    const i = flagIdx[k];
+    if(i < 0) return;
+    const cached = (rawLogRowCache[tableName] || {})[rowIndex];
+    const v = values.__flagsWrite ? (values.__flagsWrite[k] ? 'Yes' : '') : (cached ? (cached[i] ?? '') : (raw[i] ?? ''));
+    while(raw.length <= i) raw.push('');
+    raw[i] = v;
+  });
   return updateTableRow(tableName, rowIndex, raw);
 }
 async function getAllCanonicalDealRows(){
@@ -4155,6 +4232,7 @@ function applyDraftData(data){
   }
   refreshRoleDependentUi();
   syncAllTagBdChecklists();
+  syncDealFlagNotes();
   currentDealDocId = data.dealId || val('h-dealid-num') || null;
   currentSubmittedDate = data.submittedDate || null;
   suppressAutosave = false;
@@ -4361,6 +4439,19 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
   if(tagBdValue && tagBdColumnIndex(dealLogTableName()) < 0){
     throw new Error('The ' + (currentProductMode === 'carboncredit' ? 'CCDealLog' : 'TradeDealLog') + ' table in SharePoint is missing the "' + TAG_BD_COLUMN_NAME + '" column needed for "Tag BD in-charge". Ask an admin to add it at the end of the table, or clear "Tag BD in-charge" and try again.');
   }
+  // Hourly Deal / New Device (RECs only, per product) — only needs the columns
+  // when a box is ticked, and the product's Special remarks must carry details.
+  const flagsPerProduct = [];
+  for(let n = 1; n <= tradeCount; n++){
+    flagsPerProduct.push(currentProductMode === 'carboncredit' ? {hourly:false,newDevice:false} : readDealFlagsFromForm('t'+n+'-'));
+    const pf = flagsPerProduct[n-1];
+    if((pf.hourly || pf.newDevice) && !flagRemarksOk(val('t'+n+'-remarks'))){
+      throw new Error('Product ' + n + ': please write the details in Special remarks (required when ' + dealFlagLabels(pf).join(' / ') + ' is ticked).');
+    }
+  }
+  const flagsAgg = { hourly: flagsPerProduct.some(f => f.hourly), newDevice: flagsPerProduct.some(f => f.newDevice) };
+  const flagsCheck = await resolveDealFlagsWrite(dealLogTableName(), flagsAgg);
+  if(flagsCheck.error) throw new Error(flagsCheck.error);
   const rowsToWrite = [];
   for(let n = 1; n <= tradeCount; n++){
     const matching = val('t'+n+'-m-matching');
@@ -4465,6 +4556,7 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
       row[MC.regTechReminderSentDate] = row[MC.deliveryEnd];
     }
     row.__tagBdWrite = tagBdValue; // written by addCanonicalTableRows
+    applyDealFlagsWrite(row, flagsPerProduct[n-1]);
     rowsToWrite.push(row);
   }
   await addCanonicalTableRows(dealLogTableName(), rowsToWrite);
@@ -4472,6 +4564,10 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
   if(tagBdValue){
     try{ await notifyTaggedBds(dealId, val('h-description'), parseTagBdList(tagBdValue), currentAccount.username, val('h-bd')); }
     catch(err){ console.warn('Tag BD notification failed:', err); }
+  }
+  const flagItems = rowsToWrite.map((row, k) => ({ no: k+1, values: row, flags: flagsPerProduct[k], added: flagsPerProduct[k] })).filter(it => it.flags.hourly || it.flags.newDevice);
+  if(flagItems.length){
+    await notifyDealFlags(dealId, val('h-description'), flagItems, val('h-bd'), currentAccount.username, true);
   }
 }
 /* Advances a deal one step through the approval chain, writing the
@@ -5498,6 +5594,20 @@ function renderUrgentDeliveries(){
     titleId: 'overdue-deliveries-title', titleText: '⏰ Overdue deliveries',
     emptyText: 'Nothing is overdue right now.'
   });
+  // Deal flags (Hourly Deal / New Device): same visibility rule as above,
+  // pending/reverted deals only (tier 0), earliest delivery first.
+  const hourlyDeals = source.filter(g => groupSortTier(g) === 0 && dealFlags(g.rows).hourly).sort(compareGroupsByDeliveryEnd);
+  const newDeviceDeals = source.filter(g => groupSortTier(g) === 0 && dealFlags(g.rows).newDevice).sort(compareGroupsByDeliveryEnd);
+  renderDeliveryList({
+    groups: hourlyDeals, listId: 'hourly-deals-list', badgeId: 'hourly-count-badge',
+    titleId: 'hourly-deals-title', titleText: '⚡ Hourly Deals',
+    emptyText: 'No pending Hourly Deals right now.'
+  });
+  renderDeliveryList({
+    groups: newDeviceDeals, listId: 'newdevice-deals-list', badgeId: 'newdevice-count-badge',
+    titleId: 'newdevice-deals-title', titleText: '🔧 New Device deals',
+    emptyText: 'No pending New Device deals right now.'
+  });
 }
 function renderDeliveryList(cfg){
   const listEl = document.getElementById(cfg.listId);
@@ -6212,6 +6322,7 @@ function renderHistoryTable(el, groups, opts){
         (trail ? '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">'+trail+'</div>' : '')+
         agreementLink+
         redemptionBadge+
+        dealFlagBadgesHtml(g.rows)+
         (isTaggedViewer
           ? '<div style="font-size:11px;color:#4a2d63;margin-top:2px;">👁 You\'re tagged on this deal — view only</div>'
           : (taggedBdName ? '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">Tagged: '+escapeHtml(taggedBdName)+' (view only)</div>' : ''))+
@@ -8194,6 +8305,138 @@ function applyTagBdWrite(values, tag){
   if(!tag || tag.error || tag.idx === undefined) return;
   values.__tagBdWrite = tag.value;
 }
+
+/* ---- Deal flags: Hourly Deal / New Device (per product) ---- */
+// Each product (= one log row) carries its own two flags. dealFlags() is
+// the deal-wide roll-up (any product flagged) used for the tabs.
+function dealFlags(rows){
+  let hourly = false, newDevice = false;
+  for(const r of (rows || [])){
+    const f = r && r.values && r.values[0] && r.values[0].__flags;
+    if(!f) continue;
+    hourly = hourly || !!f.hourly;
+    newDevice = newDevice || !!f.newDevice;
+  }
+  return { hourly, newDevice };
+}
+function dealFlagLabels(f){
+  const out = [];
+  if(f && f.hourly) out.push('Hourly Deal');
+  if(f && f.newDevice) out.push('New Device');
+  return out;
+}
+// Badges for a deal row, with the product numbers when the deal has several.
+function dealFlagBadgesHtml(rows){
+  rows = rows || [];
+  const nums = key => rows.map((r, i) => (r && r.values && r.values[0] && r.values[0].__flags && r.values[0].__flags[key]) ? (i+1) : 0).filter(Boolean);
+  const suffix = key => rows.length > 1 ? ' (P' + nums(key).join(', P') + ')' : '';
+  const h = nums('hourly').length, n = nums('newDevice').length;
+  return (h ? '<span class="deal-flag-badge hourly">⚡ Hourly Deal'+suffix('hourly')+'</span>' : '') +
+         (n ? '<span class="deal-flag-badge newdevice">🔧 New Device'+suffix('newDevice')+'</span>' : '');
+}
+// Two tickboxes for ONE product. `prefix` keeps ids unique ('t1-', 're-t1-', 'fe-t1-').
+// Plain checkboxes with ids, so drafts save/restore them automatically.
+function dealFlagsCheckboxesHtml(prefix, flags){
+  flags = flags || {};
+  const on = !!(flags.hourly || flags.newDevice);
+  const lbl = 'display:inline-flex;align-items:center;gap:6px;margin:0;font-size:13px;font-weight:normal;text-transform:none;letter-spacing:normal;cursor:pointer;';
+  return '<div style="display:flex;gap:6px 22px;flex-wrap:wrap;">' +
+    '<label style="'+lbl+'"><input type="checkbox" class="deal-flag-cb" data-prefix="'+prefix+'" id="'+prefix+'hourly-deal"'+(flags.hourly?' checked':'')+' style="width:auto;margin:0;"/> <span>⚡ Hourly Deal</span></label>' +
+    '<label style="'+lbl+'"><input type="checkbox" class="deal-flag-cb" data-prefix="'+prefix+'" id="'+prefix+'new-device"'+(flags.newDevice?' checked':'')+' style="width:auto;margin:0;"/> <span>🔧 New Device</span></label>' +
+  '</div>' +
+  '<div class="deal-flag-note" id="'+prefix+'flag-note"'+(on?' style="display:block;"':'')+'>Please write the details in this product's <strong>Special remarks</strong> (required when Hourly Deal or New Device is ticked).</div>';
+}
+function dealFlagsProductHtml(n){
+  return '<div id="t'+n+'-deal-flags-wrap" style="grid-column:1 / -1;"><div class="field-label-row"><label>Deal flags (Admin Level 3 and BD in-charge are emailed when ticked)</label></div>' +
+    dealFlagsCheckboxesHtml('t'+n+'-') + '</div>';
+}
+function readDealFlagsFromForm(prefix){
+  const h = document.getElementById(prefix+'hourly-deal');
+  const n = document.getElementById(prefix+'new-device');
+  return { hourly: !!(h && h.checked), newDevice: !!(n && n.checked) };
+}
+// Special remarks must carry real details when a product is flagged: not blank, not N/A.
+function flagRemarksOk(text){
+  const t = String(text || '').trim();
+  return !!t && !/^n\/?a$/i.test(t);
+}
+function syncDealFlagNotes(){
+  document.querySelectorAll('.deal-flag-cb').forEach(cb => {
+    const note = document.getElementById(cb.getAttribute('data-prefix') + 'flag-note');
+    if(!note) return;
+    const f = readDealFlagsFromForm(cb.getAttribute('data-prefix'));
+    note.style.display = (f.hourly || f.newDevice) ? 'block' : 'none';
+  });
+}
+document.addEventListener('change', e => {
+  if(e.target && e.target.classList && e.target.classList.contains('deal-flag-cb')) syncDealFlagNotes();
+});
+// Column check: {error} when a ticked flag has no column in the table, else {ok:true}.
+async function resolveDealFlagsWrite(tableName, newAgg){
+  await getTableColumnCount(tableName, true);
+  const idx = dealFlagColumnIndexes(tableName);
+  const missing = [];
+  if(newAgg.hourly && idx.hourly < 0) missing.push(DEAL_FLAG_COLUMN_NAMES.hourly);
+  if(newAgg.newDevice && idx.newDevice < 0) missing.push(DEAL_FLAG_COLUMN_NAMES.newDevice);
+  if(missing.length){
+    return { error: 'The TradeDealLog table in SharePoint is missing the \"' + missing.join('\" / \"') + '\" column(s) needed for these deal flags. Ask an admin to add them at the end of the table, or untick the flag(s) and try again.' };
+  }
+  return { ok: true };
+}
+function applyDealFlagsWrite(values, flags){
+  if(!flags) return;
+  values.__flagsWrite = { hourly: !!flags.hourly, newDevice: !!flags.newDevice };
+}
+// Which products were newly flagged by an edit: [{no, values, flags, added}]
+function dealFlagItemsFromEdit(oldRows, newFlagsList, newValuesList){
+  const items = [];
+  newFlagsList.forEach((nf, idx) => {
+    const of = (oldRows[idx] && oldRows[idx].values[0] && oldRows[idx].values[0].__flags) || {};
+    const added = { hourly: !!nf.hourly && !of.hourly, newDevice: !!nf.newDevice && !of.newDevice };
+    if(added.hourly || added.newDevice) items.push({ no: idx+1, values: newValuesList[idx], flags: nf, added });
+  });
+  return items;
+}
+// Emails every Admin Level 3 plus the deal's BD in-charge about the flagged
+// product(s): items = [{no, values, flags, added}]. Best-effort: a failed
+// email never undoes the save. The person who ticked is not emailed.
+async function notifyDealFlags(dealId, description, items, bdInChargeName, actorEmail, isNewDeal){
+  if(!items || !items.length) return;
+  try{
+    const me = String(actorEmail || '').trim().toLowerCase();
+    const seen = new Set();
+    const toEmails = [];
+    const add = e => {
+      const k = String(e || '').trim().toLowerCase();
+      if(!k || k === me || seen.has(k)) return;
+      seen.add(k); toEmails.push(k);
+    };
+    emailsForRole('admin3').forEach(add);
+    const bdEmail = bdInChargeEmail(bdInChargeName);
+    if(bdEmail) add(bdEmail); else if(bdInChargeName) console.warn('No email on file (BD_NAME_EMAILS) for BD in-charge ' + bdInChargeName + ' — skipping them for the deal-flag email on Deal ID ' + dealId);
+    if(!toEmails.length) return;
+    const union = { hourly:false, newDevice:false };
+    items.forEach(it => { const a = it.added || it.flags || {}; union.hourly = union.hourly || !!a.hourly; union.newDevice = union.newDevice || !!a.newDevice; });
+    const labels = dealFlagLabels(union);
+    const pending = isPendingDealId(dealId);
+    const displayId = friendlyDealId(dealId);
+    const idLabel = pending ? 'new agreement (Deal ID pending Level 1 approval)' : 'Deal ID ' + displayId;
+    const th = 'style="text-align:left;padding:4px 10px;border-bottom:1px solid #ccc;font-size:12px;"';
+    const td = 'style="padding:4px 10px;border-bottom:1px solid #eee;font-size:13px;vertical-align:top;"';
+    const prodRows = items.map(it => { const v = it.values || []; return '<tr><td '+td+'>'+it.no+'</td><td '+td+'>'+escapeHtml(dealFlagLabels(it.flags).join(' + '))+'</td><td '+td+'>'+escapeHtml(v[MC.country]||'')+'</td><td '+td+'>'+escapeHtml(v[MC.tech]||'')+'</td>' +
+      '<td '+td+'>'+escapeHtml(v[MC.volume]||'')+'</td><td '+td+'>'+escapeHtml(formatStoredDate(v[MC.deliveryStart])||'')+' – '+escapeHtml(formatStoredDate(v[MC.deliveryEnd])||'')+'</td>' +
+      '<td '+td+'>'+escapeHtml((v[MC.currency]||'')+' '+(v[MC.unitPrice]||''))+'</td><td '+td+'>'+escapeHtml(v[MC.specialReq]||'')+'</td></tr>'; }).join('');
+    const table = '<table style="border-collapse:collapse;margin:8px 0;"><tr><th '+th+'>Product</th><th '+th+'>Flag</th><th '+th+'>Country</th><th '+th+'>Tech</th><th '+th+'>Volume</th><th '+th+'>Delivery</th><th '+th+'>Price</th><th '+th+'>Special remarks</th></tr>' + prodRows + '</table>';
+    const html = '<p>' + escapeHtml(actorEmail || 'Someone') + (isNewDeal ? ' has submitted a ' : ' has flagged product(s) on a ') + idLabel + ' as <strong>' + escapeHtml(labels.join(' + ')) + '</strong> in the Trade Confirmation app.</p>' +
+      (bdInChargeName ? '<p><strong>BD in-charge:</strong> ' + escapeHtml(bdInChargeName) + '</p>' : '') +
+      ((description && String(description).trim()) ? '<p><strong>Description:</strong> ' + escapeHtml(description) + '</p>' : '') +
+      table +
+      '<p><a href="' + dealDeepLink(dealId) + '">Open it in the Trade Confirmation app</a></p>';
+    await sendMailGraph(toEmails, '[' + labels.join(' + ') + ']' + (isNewDeal ? ' New confirmation — ' : ' Deal flagged — ') + (pending ? 'new agreement' : displayId), html);
+  }catch(err){
+    console.error('Deal flag notification email failed', err);
+  }
+}
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const YEARS = ["2025","2026","2027","2028","2029","2030"];
 
@@ -8929,6 +9172,7 @@ function tradeBlockHtml(n){
     // Custom label text is updated programmatically to reflect Buyer/Seller dynamically
     lockableField('Transfer account name', textHtml('t'+n+'-transfer','Required — type NA if not yet known'),'t'+n+'-transfer')+
     (currentProductMode === 'carboncredit' ? lockableField('Prepayment', '<textarea id="t'+n+'-prepayment" placeholder="Enter prepayment details"></textarea>', 't'+n+'-prepayment').replace('<div id=','<div style="grid-column:1 / -1;" id=') : '')+
+    (currentProductMode === 'carboncredit' ? '' : dealFlagsProductHtml(n))+
     lockableField('Special remarks', '<textarea id="t'+n+'-remarks" placeholder="N/A">N/A</textarea>', 't'+n+'-remarks')
       .replace('<div id=','<div style="grid-column:1 / -1;" id=')+
     '</div>'+
@@ -10298,6 +10542,7 @@ function recapEditFormHtml(dealId, sortedGroup){
       recapEditFieldHtml('Delivery start date', '<input type="date" id="'+idp+'dstart" value="'+escapeHtml(toDateInputValue(v[MC.deliveryStart]))+'"/>')+
       recapEditFieldHtml('Delivery end date', '<input type="date" id="'+idp+'dend" value="'+escapeHtml(toDateInputValue(v[MC.deliveryEnd]))+'"/>')+
       (isCC ? recapEditFieldHtml('Prepayment', '<textarea id="'+idp+'prepayment">'+escapeHtml(v[MC.prepayment]||'')+'</textarea>') : recapEditFieldHtml('COD (if applicable)', '<input type="text" id="'+idp+'cod" value="'+escapeHtml(v[MC.cod]||'')+'"/>'))+
+      (isCC ? '' : '<div style="grid-column:1 / -1;">'+recapEditFieldHtml('Deal flags', dealFlagsCheckboxesHtml(idp, v.__flags))+'</div>')+
       recapEditFieldHtml('Special remarks', '<textarea id="'+idp+'remarks">'+escapeHtml(v[MC.specialReq]||'')+'</textarea>')+
     '</div></div>';
   });
@@ -10341,6 +10586,17 @@ async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
   const isCC = (sortedGroup[0]._sourceTable || STANDARD_LOG_TABLE_NAME) === CC_LOG_TABLE_NAME;
   const reTag = await resolveTagBdWrite(dealLogTableName(), rv('re-h-tag-bd'), dealTaggedBd(sortedGroup), hBd);
   if(reTag && reTag.error){ errEl.textContent = reTag.error; errEl.style.display = 'block'; return; }
+  const reFlagList = isCC ? [] : sortedGroup.map((_, k) => readDealFlagsFromForm('re-t'+(k+1)+'-'));
+  for(let k = 0; k < reFlagList.length; k++){
+    if((reFlagList[k].hourly || reFlagList[k].newDevice) && !flagRemarksOk(rv('re-t'+(k+1)+'-remarks'))){
+      errEl.textContent = 'Product '+(k+1)+': please write the details in Special remarks (required when '+dealFlagLabels(reFlagList[k]).join(' / ')+' is ticked).';
+      errEl.style.display = 'block'; return;
+    }
+  }
+  if(!isCC){
+    const reFlagCheck = await resolveDealFlagsWrite(dealLogTableName(), { hourly: reFlagList.some(f => f.hourly), newDevice: reFlagList.some(f => f.newDevice) });
+    if(reFlagCheck.error){ errEl.textContent = reFlagCheck.error; errEl.style.display = 'block'; return; }
+  }
   const updatedRows = [];
   for(let idx = 0; idx < sortedGroup.length; idx++){
     const i = idx + 1;
@@ -10365,6 +10621,7 @@ async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
     values[MC.tech] = isCC ? 'CC' : rv(idp+'tech');
     values[MC.country] = rv(idp+'country');
     applyTagBdWrite(values, reTag);
+    if(!isCC) applyDealFlagsWrite(values, reFlagList[idx]);
     if(isCC){
       values[MC.projectName] = rv('re-h-project-name');
       values[MC.projectId] = rv('re-h-project-id');
@@ -10420,6 +10677,9 @@ async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
     if(reTag && reTag.changed){
       try{ await notifyTaggedBds(dealId, sortedGroup[0].values[0][MC.description], newlyTaggedBdNames(dealTaggedBd(sortedGroup), reTag.value), currentAccount.username, hBd); }
       catch(err){ console.warn('Tag BD notification failed:', err); }
+    }
+    if(!isCC){
+      await notifyDealFlags(dealId, sortedGroup[0].values[0][MC.description], dealFlagItemsFromEdit(sortedGroup, reFlagList, updatedRows.map(r => r.values[0])), hBd, currentAccount.username, false);
     }
     const refreshedGroup = logRowsCache
       .filter(r => String(r.values[0][MC.dealId]||'').trim() === dealId)
@@ -10563,6 +10823,7 @@ function buildFullEditChangeSummary(oldGroup, updatedRows, role){
     pdiff('Delivery Start', formatStoredDate(ov[MC.deliveryStart]), formatStoredDate(nv[MC.deliveryStart]));
     pdiff('Delivery End', formatStoredDate(ov[MC.deliveryEnd]), formatStoredDate(nv[MC.deliveryEnd]));
     if(!isCC) pdiff('COD', ov[MC.cod], nv[MC.cod]);
+    if(!isCC && nv.__flagsWrite) pdiff('Deal flags', dealFlagLabels(ov.__flags).join(', '), dealFlagLabels(nv.__flagsWrite).join(', '));
     pdiff('Special Remarks', ov[MC.specialReq], nv[MC.specialReq]);
     // BD source matching — now editable in this same modal (see
     // fullEditBdMatchingSectionHtml/saveFullEditAndResubmit), so diff it the
@@ -10813,6 +11074,7 @@ function fullEditFormHtml(dealId, sortedGroup){
       recapEditFieldHtml('Delivery start date', '<input type="date" id="'+idp+'dstart" value="'+escapeHtml(toDateInputValue(v[MC.deliveryStart]))+'"/>')+
       recapEditFieldHtml('Delivery end date', '<input type="date" id="'+idp+'dend" value="'+escapeHtml(toDateInputValue(v[MC.deliveryEnd]))+'"/>')+
       (isCC ? recapEditFieldHtml('Prepayment', '<textarea id="'+idp+'prepayment">'+escapeHtml(v[MC.prepayment]||'')+'</textarea>') : recapEditFieldHtml('COD (if applicable)', '<input type="text" id="'+idp+'cod" value="'+escapeHtml(v[MC.cod]||'')+'"/>'))+
+      (isCC ? '' : '<div style="grid-column:1 / -1;">'+recapEditFieldHtml('Deal flags', dealFlagsCheckboxesHtml(idp, v.__flags))+'</div>')+
       recapEditFieldHtml('Special remarks', '<textarea id="'+idp+'remarks">'+escapeHtml(v[MC.specialReq]||'')+'</textarea>')+
     '</div>'+
     fullEditBdMatchingSectionHtml(idx, v, isCC)+
@@ -11030,6 +11292,16 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
     const isCC = (liveGroup[0]._sourceTable || STANDARD_LOG_TABLE_NAME) === CC_LOG_TABLE_NAME;
     const feTag = await resolveTagBdWrite(dealLogTableName(), rv('fe-h-tag-bd'), dealTaggedBd(liveGroup), hBd);
     if(feTag && feTag.error) throw new Error(feTag.error);
+    const feFlagList = isCC ? [] : liveGroup.map((_, k) => readDealFlagsFromForm('fe-t'+(k+1)+'-'));
+    for(let k = 0; k < feFlagList.length; k++){
+      if((feFlagList[k].hourly || feFlagList[k].newDevice) && !flagRemarksOk(rv('fe-t'+(k+1)+'-remarks'))){
+        throw new Error('Product '+(k+1)+': please write the details in Special remarks (required when '+dealFlagLabels(feFlagList[k]).join(' / ')+' is ticked).');
+      }
+    }
+    if(!isCC){
+      const feFlagCheck = await resolveDealFlagsWrite(dealLogTableName(), { hourly: feFlagList.some(f => f.hourly), newDevice: feFlagList.some(f => f.newDevice) });
+      if(feFlagCheck.error) throw new Error(feFlagCheck.error);
+    }
     const updatedRows = [];
 
     for(let idx = 0; idx < liveGroup.length; idx++){
@@ -11055,6 +11327,7 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
       values[MC.tech] = isCC ? 'CC' : rv(idp+'tech');
       values[MC.country] = rv(idp+'country');
       applyTagBdWrite(values, feTag);
+      if(!isCC) applyDealFlagsWrite(values, feFlagList[idx]);
 
       if(isCC){
         values[MC.projectName] = rv('fe-h-project-name');
@@ -11248,6 +11521,9 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
       try{ await notifyTaggedBds(dealId, updatedRows[0].values[0][MC.description], newlyTaggedBdNames(dealTaggedBd(liveGroup), feTag.value), currentAccount.username, hBd); }
       catch(err){ console.warn('Tag BD notification failed:', err); }
     }
+    if(!isCC){
+      await notifyDealFlags(dealId, updatedRows[0].values[0][MC.description], dealFlagItemsFromEdit(liveGroup, feFlagList, updatedRows.map(r => r.values[0])), hBd, currentAccount.username, false);
+    }
 
     // Refresh the queue. If refresh fails, the workbook is still saved correctly.
     try{
@@ -11368,6 +11644,18 @@ function tradeFieldDefs(i){
     });
   }
 
+  // Hourly Deal / New Device ticked on this product -> its Special remarks
+  // must carry the details (not blank, not N/A).
+  if(currentProductMode !== 'carboncredit'){
+    const pf = readDealFlagsFromForm('t'+i+'-');
+    if(pf.hourly || pf.newDevice){
+      baseDefs.push({
+        ids:['t'+i+'-remarks'],
+        label:'Special remarks — please write the details (required when ' + dealFlagLabels(pf).join(' / ') + ' is ticked)',
+        validate:()=> flagRemarksOk(val('t'+i+'-remarks'))
+      });
+    }
+  }
   const matchingValue = val('t'+i+'-m-matching');
   if (matchingValue === 'Open Position') {
     // If Open Position is selected, we do not require the hidden dependent matching fields (1-4).
