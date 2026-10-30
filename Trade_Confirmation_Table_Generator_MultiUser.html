@@ -1331,6 +1331,21 @@ const L2_CLEAR = { reason:'', remark:'', by:'', date:'' };
 // __tagBdWrite property on the canonical values array (see applyTagBdWrite);
 // when absent, the cell is written back exactly as last read. See tagBdColumnIndex / dealTaggedBd / isTaggedBdViewer.
 const TAG_BD_COLUMN_NAME = 'Tagged BD In-charge';
+// ---- Pending per-source Vintage / Matching note (RECs and Carbon Credit) ----
+// "Request edit" on a Pending Level 3 deal (or any volume change — see
+// requestBdMatchChange) is staged for Level 3 approval instead of written
+// live. Buyer/Seller, No of RECs, Which deal etc. already have their own
+// Pending columns; the per-source Vintage Start / Vintage End / Matching
+// note didn't, so they couldn't be edited there at all. They're staged
+// together as one JSON value ({"vstart":"…","vend":"…","note":"…"}, each
+// "; "-joined per source exactly like the live columns) in ONE column found
+// by HEADER NAME, same mechanism as Tagged BD In-charge — add "Pending
+// Source Vintage/Note" at the end of BOTH TradeDealLog and CCDealLog. Only
+// needed when someone actually changes a vintage or note on a request that
+// goes to Level 3; without the column, that one case shows a clear error.
+// Read as values.__pendingSrc (raw text, '' when nothing staged); written
+// via values.__pendingSrcWrite, otherwise preserved exactly as last read.
+const PENDING_SRC_COLUMN_NAME = 'Pending Source Vintage/Note';
 // ---- Product flags: Hourly Deal / New Device (RECs only, per product) ----
 // Two tickboxes for EACH RECs product. Stored on that product row as "Yes"
 // (or blank) in two columns located by HEADER NAME, same approach as the
@@ -2090,6 +2105,107 @@ function trimEditHistoryToFit(combinedSummary, maxChars){
   }
   const trimmed = NOTICE + rounds.join('\n\n---\n\n');
   return trimmed.length <= maxChars ? trimmed : trimmed.slice(0, maxChars);
+}
+
+// ---- Complete audit trail (Edit Change Summary) ----
+// Every path that changes a saved deal now appends an entry to the deal's
+// Edit Change Summary column (first row of the deal, same place "Edit &
+// resend" has always written to) — not just "Edit & resend":
+//   - "Request edit" submitted for Level 3 (Pending Level 3 deals)
+//   - "Request edit" applied immediately (already-Approved deals)
+//   - Level 3 approving or rejecting a pending "Request edit" change
+//   - Tag BD in-charge changes made via "Request edit"
+//   - Super Admin "Edit details" (recap editor), with a required reason
+// Each entry uses the same shape as an "Edit & resend" round: a header line
+// (what happened, when, by whom), optional Justification/Note/Reason, then
+// one line per changed field. Entries are separated by "\n\n---\n\n" so
+// trimEditHistoryToFit/notifyEditHistoryLimit keep working unchanged.
+function auditTimestampLabel(d){
+  const dt = d instanceof Date ? d : (d ? new Date(d) : new Date());
+  if(isNaN(dt.getTime())) return String(d || '');
+  return String(dt.getUTCDate()).padStart(2,'0')+'/'+String(dt.getUTCMonth()+1).padStart(2,'0')+'/'+dt.getUTCFullYear()+' '+
+    String(dt.getUTCHours()).padStart(2,'0')+':'+String(dt.getUTCMinutes()).padStart(2,'0')+' UTC';
+}
+// Re-reads the deal's LIVE rows and appends entryText to the first row's
+// Edit Change Summary. Always call this AFTER every other write in the same
+// action has finished — those writes carry the row's pre-action summary
+// value, so appending first would get overwritten. Never throws: the
+// underlying change has already been saved by the time this runs, so a
+// failure here is reported to the user (alert) rather than undoing it.
+async function appendDealAuditEntry(dealId, entryText){
+  if(!dealId || !entryText) return false;
+  const tableName = dealLogTableName();
+  try{
+    const rows = await getCanonicalTableRows(tableName);
+    const group = rows
+      .filter(r => String(r.values[0][MC.dealId] || '').trim() === String(dealId).trim())
+      .sort((a,b)=> a.index - b.index);
+    if(!group.length) throw new Error('deal row not found');
+    const first = group[0];
+    const values = first.values[0].slice();
+    if(values.length <= MC.editChangeSummary){
+      throw new Error('the ' + (tableName === CC_LOG_TABLE_NAME ? 'CCDealLog' : 'TradeDealLog') + ' table has no "Edit Change Summary" column');
+    }
+    const prior = values[MC.editChangeSummary] || '';
+    const combined = prior ? (prior + '\n\n---\n\n' + entryText) : entryText;
+    let toSave = combined;
+    if(combined.length > EDIT_HISTORY_MAX_CHARS){
+      toSave = trimEditHistoryToFit(combined, EDIT_HISTORY_MAX_CHARS);
+      try{ notifyEditHistoryLimit(dealId, combined, true); }catch(e){ console.warn('Edit history limit notification failed:', e); }
+    }else if(combined.length > EDIT_HISTORY_WARN_CHARS){
+      try{ notifyEditHistoryLimit(dealId, combined, false); }catch(e){ console.warn('Edit history warning notification failed:', e); }
+    }
+    values[MC.editChangeSummary] = toSave;
+    await updateCanonicalTableRow(tableName, first.index, values);
+    return true;
+  }catch(err){
+    console.error('Audit trail (Edit Change Summary) write failed for Deal ID ' + dealId, err);
+    alert('The change was saved, but it could not be recorded in the Edit Change Summary audit trail (' +
+      (err && err.message ? err.message : String(err)) + '). Please tell a Super Admin so it can be logged manually.');
+    return false;
+  }
+}
+// "Tag BD in-charge: A → A, B" line for audit entries, or '' if unchanged.
+function auditTagLine(oldTagValue, tagWrite){
+  if(!tagWrite || !tagWrite.changed) return '';
+  const a = parseTagBdList(oldTagValue).join(', ') || '(none)';
+  const b = parseTagBdList(tagWrite.value).join(', ') || '(none)';
+  return 'Tag BD in-charge: ' + a + ' → ' + b;
+}
+// Live vs staged (pending*) values on one row awaiting "Pending Change -
+// Level 3" — the same comparison approveBdMatchChange uses for its
+// Approved-list note, shared here so approve and reject log identical diffs.
+function pendingChangeDiffLines(values){
+  const out = [];
+  const d = (label, a, b) => { if((a||'') !== (b||'')) out.push(label + ': ' + (a||'(blank)') + ' → ' + (b||'(blank)')); };
+  if((values[MC.matching]||'') !== (values[MC.pendingMatching]||'')){
+    out.push('Matching: ' + matchingDisplayLabel(values[MC.matching]) + ' → ' + matchingDisplayLabel(values[MC.pendingMatching]));
+  }
+  d('Buyer/Seller', values[MC.buyerSeller], values[MC.pendingBuyerSeller]);
+  d('Which deal', values[MC.whichDeal], values[MC.pendingWhichDeal]);
+  d('No of RECs', values[MC.noOfRecs], values[MC.pendingNoOfRecs]);
+  if(values[MC.pendingRegistry] && (values[MC.registry]||'') !== values[MC.pendingRegistry]){
+    out.push('Registry: ' + registryDisplayName(values[MC.registry]) + ' → ' + registryDisplayName(values[MC.pendingRegistry]));
+  }
+  if(values[MC.pendingTech] && (values[MC.tech]||'') !== values[MC.pendingTech]){
+    out.push('Tech: ' + techFullName(values[MC.tech]) + ' → ' + techFullName(values[MC.pendingTech]));
+  }
+  if(values.length > MC.pendingVolume && values[MC.pendingVolume] && String(values[MC.volume] ?? '').trim() !== String(values[MC.pendingVolume]).trim()){
+    out.push('Volume: ' + (String(values[MC.volume] ?? '') || '(blank)') + ' → ' + values[MC.pendingVolume]);
+  }
+  // Staged per-source Vintage/Note (see PENDING_SRC_COLUMN_NAME). Must be
+  // given the ORIGINAL row values array (not a .slice()), since __pendingSrc
+  // is a property on it rather than an indexed column.
+  const ps = parsePendingSrc(values.__pendingSrc);
+  if(ps){
+    const pairs = [
+      ['Source Vintage Start', normSrcVintage(values[MC.sourceVintageStart]), normSrcVintage(ps.vstart)],
+      ['Source Vintage End', normSrcVintage(values[MC.sourceVintageEnd]), normSrcVintage(ps.vend)],
+      ['Source Matching Note', normSrcNote(values[MC.sourceMatchNote]), normSrcNote(ps.note)]
+    ];
+    pairs.forEach(([label, a, b]) => { if(a !== b) out.push(label + ': ' + (a||'(blank)') + ' → ' + (b||'(blank)')); });
+  }
+  return out;
 }
 
 async function notifyChangeSubmitter(dealId, submitterEmail, outcome, reason){
@@ -2890,6 +3006,20 @@ function tagBdColumnIndex(tableName){
   if(!names) return -1;
   return names.map(normalizeHeaderName).indexOf(normalizeHeaderName(TAG_BD_COLUMN_NAME));
 }
+function pendingSrcColumnIndex(tableName){
+  const names = tableColumnNamesCache[tableName];
+  if(!names) return -1;
+  return names.map(normalizeHeaderName).indexOf(normalizeHeaderName(PENDING_SRC_COLUMN_NAME));
+}
+// Parses a staged __pendingSrc value; null when nothing is staged.
+function parsePendingSrc(raw){
+  const s = String(raw || '').trim();
+  if(!s) return null;
+  try{
+    const o = JSON.parse(s);
+    return { vstart: String(o.vstart || ''), vend: String(o.vend || ''), note: String(o.note || '') };
+  }catch(e){ return null; }
+}
 // 0-based positions of the "Hourly Deal" / "New Device" columns in this
 // table's raw row (-1 each when the column isn't there).
 function dealFlagColumnIndexes(tableName){
@@ -3202,6 +3332,7 @@ async function getCanonicalTableRows(tableName){
   const idx = l2ColumnIndexes(tableName);
   const redIdx = redReqColumnIndexes(tableName);
   const tagIdx = tagBdColumnIndex(tableName);
+  const pendSrcIdx = pendingSrcColumnIndex(tableName);
   const flagIdx = dealFlagColumnIndexes(tableName);
   const cache = rawLogRowCache[tableName] = {};
   rawLogRowCacheHeaders[tableName] = tableHeaderSignature(tableName);
@@ -3217,6 +3348,8 @@ async function getCanonicalTableRows(tableName){
     if(out.values && out.values[0]) out.values[0].__redReq = readRedReqFromRaw(raw, redIdx);
     // Tagged BD In-charge (RECs and Carbon Credit) — read via dealTaggedBd.
     if(out.values && out.values[0]) out.values[0].__tagBd = tagIdx >= 0 ? String(raw[tagIdx] ?? '').trim() : '';
+    // Staged per-source Vintage/Note (see PENDING_SRC_COLUMN_NAME).
+    if(out.values && out.values[0]) out.values[0].__pendingSrc = pendSrcIdx >= 0 ? String(raw[pendSrcIdx] ?? '').trim() : '';
     // Hourly Deal / New Device flags (RECs) — read via dealFlags.
     if(out.values && out.values[0]) out.values[0].__flags = {
       hourly: flagIdx.hourly >= 0 && isDealFlagOn(raw[flagIdx.hourly]),
@@ -3290,6 +3423,14 @@ async function updateCanonicalTableRow(tableName, rowIndex, values, l2Override, 
     const v = ('__tagBdWrite' in values) ? values.__tagBdWrite : (cached ? (cached[tagIdx] ?? '') : (raw[tagIdx] ?? ''));
     while(raw.length <= tagIdx) raw.push('');
     raw[tagIdx] = v;
+  }
+  // Pending Source Vintage/Note — same "write if given, else preserve" rule.
+  const pendSrcIdx = pendingSrcColumnIndex(tableName);
+  if(pendSrcIdx >= 0){
+    const cached = (rawLogRowCache[tableName] || {})[rowIndex];
+    const v = ('__pendingSrcWrite' in values) ? values.__pendingSrcWrite : (cached ? (cached[pendSrcIdx] ?? '') : (raw[pendSrcIdx] ?? ''));
+    while(raw.length <= pendSrcIdx) raw.push('');
+    raw[pendSrcIdx] = v;
   }
   // Hourly Deal / New Device — written back exactly as last read unless
   // this save carries a new __flagsWrite, so no other write can wipe them.
@@ -4999,6 +5140,11 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
   // way approveBdMatchChange's per-row noteLines do.
   const rowChangeLines = new Array(matching.length).fill('');
   const rowChanged = new Array(matching.length).fill(false);
+  // Per-row: did the per-source Vintage/Note change? And did ANY product's
+  // Volume change? (A volume change always goes to Level 3 — see below.)
+  const rowSrcChanged = new Array(matching.length).fill(false);
+  let volumeChangedAny = false;
+  const isCCTable = dealLogTableName() === CC_LOG_TABLE_NAME;
   // True the moment any row actually changes one of the four real BD source
   // matching fields (Matching/Buyer-Seller/Which deal/No of RECs) \u2014 kept
   // separate from rowChanged/changeLines above because those also cover
@@ -5032,8 +5178,21 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
     if((rv[MC.tech]||'') !== (edit.tech||'')){
       lines.push('Tech: ' + techFullName(rv[MC.tech]) + ' \u2192 ' + techFullName(edit.tech));
     }
-    if(edit.volume !== undefined && (rv[MC.volume]||'') !== (edit.volume||'')){
-      lines.push('Volume (RECs): ' + (rv[MC.volume]||'(blank)') + ' \u2192 ' + (edit.volume||'(blank)'));
+    // String()-compared: Excel hands numbers back as numbers (96) while the
+    // modal field is text ("96") \u2014 without this every request would look
+    // like a volume change.
+    if(edit.volume !== undefined && String(rv[MC.volume] ?? '').trim() !== String(edit.volume ?? '').trim()){
+      lines.push((isCCTable ? 'Volume (VCUs): ' : 'Volume (RECs): ') + (String(rv[MC.volume] ?? '') || '(blank)') + ' \u2192 ' + (edit.volume||'(blank)'));
+      volumeChangedAny = true;
+    }
+    // Per-source Vintage / Matching note (see srcVintageNoteFieldsHtml).
+    if(edit.vstart !== undefined){
+      const before = { vs: normSrcVintage(rv[MC.sourceVintageStart]), ve: normSrcVintage(rv[MC.sourceVintageEnd]), nt: normSrcNote(rv[MC.sourceMatchNote]) };
+      const after = { vs: normSrcVintage(edit.vstart), ve: normSrcVintage(edit.vend), nt: normSrcNote(edit.note) };
+      if(before.vs !== after.vs){ lines.push('Source Vintage Start: ' + (before.vs||'(blank)') + ' \u2192 ' + (after.vs||'(blank)')); rowSrcChanged[i] = true; }
+      if(before.ve !== after.ve){ lines.push('Source Vintage End: ' + (before.ve||'(blank)') + ' \u2192 ' + (after.ve||'(blank)')); rowSrcChanged[i] = true; }
+      if(before.nt !== after.nt){ lines.push('Source Matching Note: ' + (before.nt||'(blank)') + ' \u2192 ' + (after.nt||'(blank)')); rowSrcChanged[i] = true; }
+      if(rowSrcChanged[i]) bdMatchingChanged = true;
     }
     if(lines.length){
       rowChanged[i] = true;
@@ -5069,17 +5228,36 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
     try{ await notifyTaggedBds(dealId, matching[0].values[0][MC.description], newlyTaggedBdNames(oldTag, tagWrite.value), currentAccount.username, dealBd); }
     catch(err){ console.warn('Tag BD notification failed:', err); }
   };
+  // Audit trail entry for this request (see appendDealAuditEntry) — written
+  // after every other write below, in whichever branch runs.
+  const auditTag = auditTagLine(oldTag, tagWrite);
+  const buildAuditEntry = (header) => header + ' on ' + auditTimestampLabel() + ' by ' + (currentAccount.username || 'unknown') +
+    (matchNote ? '\nNote: ' + matchNote : '') +
+    (changeLines.length ? '\n' + changeLines.join('\n') : '') +
+    (auditTag ? '\n' + auditTag : '');
   if(!changeLines.length){
     // Tag-only change: no status change, no approval, no operations email.
     await finishTagWrite();
+    await appendDealAuditEntry(dealId, buildAuditEntry('Tag BD in-charge updated via "Request edit" (view-only access, no approval needed)'));
     await loadHistory();
     return;
   }
   const nowIso = new Date().toISOString();
-  if(currentStatus === STATUS_PENDING_3){
-    // Deal hasn't had its first-ever Level 3 review yet — unchanged
-    // behavior: stage the edit and let Level 3 pick it up as a normal
-    // pending stage. Only the product(s) that actually changed get staged
+  // Route to Level 3 when the deal hasn't finished Level 3 yet (unchanged
+  // behaviour) OR when any product's Volume changed — a quantity change is
+  // never applied without Level 3 sign-off, even on an Approved deal.
+  const stageForLevel3 = currentStatus === STATUS_PENDING_3 || volumeChangedAny;
+  if(volumeChangedAny && matching[0].values[0].length <= MC.pendingVolume){
+    throw new Error('Volume can\'t be changed yet: the ' + (isCCTable ? 'CCDealLog' : 'TradeDealLog') + ' table is missing its "Pending Volume" column. Ask an admin to add it, then try again.');
+  }
+  const pendSrcColIdx = pendingSrcColumnIndex(dealLogTableName());
+  if(stageForLevel3 && rowSrcChanged.some(Boolean) && pendSrcColIdx < 0){
+    throw new Error('Vintage / Matching note changes that need Level 3 approval can\'t be staged yet: the ' + (isCCTable ? 'CCDealLog' : 'TradeDealLog') + ' table is missing the "' + PENDING_SRC_COLUMN_NAME + '" column. Ask an admin to add it at the end of the table, then try again.');
+  }
+  if(stageForLevel3){
+    // Stage the edit and let Level 3 pick it up as a normal pending stage
+    // (STATUS_PENDING_3 deals, plus any Volume change — see above).
+    // Only the product(s) that actually changed get staged
     // and flipped to "Pending Change - Level 3" — an unchanged product in
     // the same deal is left completely untouched (no write at all), so it
     // isn't re-queued or re-copied into the "Approved" list alongside the
@@ -5103,6 +5281,12 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
       // live table actually has it; a workbook that hasn't added it yet
       // just won't carry a Volume fix through this flow.
       if(values.length > MC.pendingVolume) values[MC.pendingVolume] = edit.volume || '';
+      // Per-source Vintage/Note staged as JSON (see PENDING_SRC_COLUMN_NAME)
+      // whenever the column exists, so approval re-aligns them with the
+      // staged Buyer/Seller/No of RECs/Which deal in the same source order.
+      if(pendSrcColIdx >= 0 && edit.vstart !== undefined){
+        values.__pendingSrcWrite = JSON.stringify({ vstart: edit.vstart || '', vend: edit.vend || '', note: edit.note || '' });
+      }
       values[MC.pendingMatchNote] = matchNote || '';
       values[MC.pendingRequestedBy] = currentAccount.username;
       values[MC.pendingRequestedDate] = nowIso;
@@ -5116,6 +5300,8 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
       await updateCanonicalTableRow(dealLogTableName(), r.index, values);
     }
     await finishTagWrite();
+    await appendDealAuditEntry(dealId, buildAuditEntry('Change REQUESTED via "Request edit" (awaiting Level 3 approval, not yet live' +
+      (currentStatus === STATUS_APPROVED ? '; sent to Level 3 because Volume changed on an Approved deal' : '') + ')'));
     const notifyBody = changeLines.join('\n') + (matchNote ? '\n\nNote: ' + matchNote : '');
     await notifyNextApprover(STATUS_PENDING_CHANGE_3, dealId, matching[0].values[0][MC.description], notifyBody);
     await notifyAdmin3OfBdChange(dealId, matching[0].values[0][MC.description], changeLines, matchNote, 'pending', false);
@@ -5153,7 +5339,16 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
     values[MC.noOfRecs] = edit.noOfRecs || '';
     if(edit.registry) values[MC.registry] = edit.registry;
     if(edit.tech) values[MC.tech] = edit.tech;
+    // (A Volume change never reaches this immediate path any more — it's
+    // always staged for Level 3 above — so this just carries it through.)
     if(values.length > MC.pendingVolume && edit.volume) values[MC.volume] = edit.volume;
+    // Per-source Vintage/Note, written in the same source order as
+    // Buyer/Seller etc. so the columns stay aligned.
+    if(edit.vstart !== undefined && values.length > MC.sourceMatchNote){
+      values[MC.sourceVintageStart] = edit.vstart || '';
+      values[MC.sourceVintageEnd] = edit.vend || '';
+      values[MC.sourceMatchNote] = edit.note || '';
+    }
     // Fixed now (or was never ambiguous) — clear any reminder-sent stamp so
     // a future, unrelated ambiguity on this row starts its own fresh
     // reminder window rather than inheriting an old timestamp. Same guard
@@ -5176,6 +5371,7 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
     }
   }
   await finishTagWrite();
+  await appendDealAuditEntry(dealId, buildAuditEntry('Post-approval edit via "Request edit" (deal already Approved, applied immediately, no approval needed)'));
   await notifyOperationsBdMatchChange(dealId, matching[0].values[0][MC.description], changeLines, matchNote, currentAccount.username);
   await notifyAdmin3OfBdChange(dealId, matching[0].values[0][MC.description], changeLines, matchNote, 'approved', false);
   if(bdMatchingChanged){
@@ -5232,6 +5428,21 @@ async function approveBdMatchChange(dealId){
   }
   const approvedListErrors = [];
   let tradeNum = 0;
+  // Audit trail (see appendDealAuditEntry): what this approval puts live,
+  // per product, plus who originally requested it — captured before the
+  // pending* columns are cleared below.
+  const sortedAll = allMatching.slice().sort((a,b)=> a.index - b.index);
+  const auditLines = [];
+  let auditRequestedBy = '', auditRequestedDate = '', auditRequestNote = '';
+  for(const r of matching){
+    const v = r.values[0];
+    const productNo = sortedAll.indexOf(r) + 1;
+    const lines = pendingChangeDiffLines(v);
+    if(lines.length) auditLines.push((sortedAll.length > 1 ? 'Product ' + productNo + ' — ' : '') + lines.join(', '));
+    if(!auditRequestedBy && v[MC.pendingRequestedBy]) auditRequestedBy = v[MC.pendingRequestedBy];
+    if(!auditRequestedDate && v[MC.pendingRequestedDate]) auditRequestedDate = v[MC.pendingRequestedDate];
+    if(!auditRequestNote && v[MC.pendingMatchNote]) auditRequestNote = v[MC.pendingMatchNote];
+  }
   for(const r of matching){
     tradeNum++;
     const values = r.values[0].slice();
@@ -5261,8 +5472,17 @@ async function approveBdMatchChange(dealId){
     if((values[MC.tech]||'') !== (values[MC.pendingTech]||'')){
       noteLines.push('Tech: ' + techFullName(values[MC.tech]) + ' \u2192 ' + techFullName(values[MC.pendingTech]));
     }
-    if(values.length > MC.pendingVolume && (values[MC.volume]||'') !== (values[MC.pendingVolume]||'')){
-      noteLines.push('Volume (RECs): ' + (values[MC.volume]||'(blank)') + ' \u2192 ' + (values[MC.pendingVolume]||'(blank)'));
+    if(values.length > MC.pendingVolume && values[MC.pendingVolume] && String(values[MC.volume] ?? '').trim() !== String(values[MC.pendingVolume]).trim()){
+      noteLines.push('Volume: ' + (String(values[MC.volume] ?? '') || '(blank)') + ' \u2192 ' + values[MC.pendingVolume]);
+    }
+    // Staged per-source Vintage/Note \u2014 same diff, read from the original
+    // row since .slice() doesn't carry __pendingSrc.
+    const stagedSrc = parsePendingSrc(r.values[0].__pendingSrc);
+    if(stagedSrc){
+      const sv = (label, a, b) => { if(a !== b) noteLines.push(label + ': ' + (a||'(blank)') + ' \u2192 ' + (b||'(blank)')); };
+      sv('Source Vintage Start', normSrcVintage(values[MC.sourceVintageStart]), normSrcVintage(stagedSrc.vstart));
+      sv('Source Vintage End', normSrcVintage(values[MC.sourceVintageEnd]), normSrcVintage(stagedSrc.vend));
+      sv('Source Matching Note', normSrcNote(values[MC.sourceMatchNote]), normSrcNote(stagedSrc.note));
     }
     const submitterNote = values[MC.pendingMatchNote] || '';
     const changeNote = 'BD source matching change' + (noteLines.length ? ': ' + noteLines.join(', ') : '') +
@@ -5286,6 +5506,19 @@ async function approveBdMatchChange(dealId){
     // Same idea, for a Volume (RECs) fix (see pendingVolume on MC) —
     // optional column, guard on values.length before reading/writing it.
     if(values.length > MC.pendingVolume && values[MC.pendingVolume]) values[MC.volume] = values[MC.pendingVolume];
+    // Staged per-source Vintage/Note (JSON in the "Pending Source
+    // Vintage/Note" column) — applied only when this request staged one;
+    // an older request staged before this column existed leaves the live
+    // vintage/note untouched. (stagedSrc was parsed above, before the
+    // Approved-list change note was built.)
+    if(stagedSrc){
+      if(values.length > MC.sourceMatchNote){
+        values[MC.sourceVintageStart] = stagedSrc.vstart;
+        values[MC.sourceVintageEnd] = stagedSrc.vend;
+        values[MC.sourceMatchNote] = stagedSrc.note;
+      }
+    }
+    values.__pendingSrcWrite = '';
     // Fixed now (or was never ambiguous) — clear any reminder-sent stamp
     // so a future, unrelated ambiguity on this row starts its own fresh
     // reminder window rather than inheriting an old timestamp. Guarded on
@@ -5324,6 +5557,11 @@ async function approveBdMatchChange(dealId){
       approvedListErrors.push('Product ' + tradeNum + ': ' + err.message);
     }
   }
+  await appendDealAuditEntry(dealId,
+    'Change APPROVED by Level 3 (now live) on ' + auditTimestampLabel() + ' by ' + (currentAccount.username || 'unknown') +
+    (auditRequestedBy ? '\nRequested by ' + auditRequestedBy + (auditRequestedDate ? ' on ' + auditTimestampLabel(auditRequestedDate) : '') : '') +
+    (auditRequestNote ? '\nNote: ' + auditRequestNote : '') +
+    (auditLines.length ? '\n' + auditLines.join('\n') : ''));
   await notifyChangeSubmitter(dealId, submitterEmail, 'applied');
   await notifyOtherApproversAtLevel('admin3', dealId, allMatching[0].values[0][MC.description], currentAccount.username);
   await loadHistory();
@@ -5350,6 +5588,17 @@ async function rejectBdMatchChange(dealId, reason){
   if(!canActOnStatus(STATUS_PENDING_CHANGE_3)) throw new Error('You are not able to reject this change.');
   const nowIso = new Date().toISOString();
   const submitterEmail = allMatching[0].values[0][MC.submittedBy];
+  // Audit trail: record what was discarded, captured before pending* is cleared.
+  const sortedAllRej = allMatching.slice().sort((a,b)=> a.index - b.index);
+  const rejAuditLines = [];
+  let rejRequestedBy = '', rejRequestedDate = '';
+  for(const r of matching){
+    const v = r.values[0];
+    const lines = pendingChangeDiffLines(v);
+    if(lines.length) rejAuditLines.push((sortedAllRej.length > 1 ? 'Product ' + (sortedAllRej.indexOf(r) + 1) + ' — ' : '') + lines.join(', '));
+    if(!rejRequestedBy && v[MC.pendingRequestedBy]) rejRequestedBy = v[MC.pendingRequestedBy];
+    if(!rejRequestedDate && v[MC.pendingRequestedDate]) rejRequestedDate = v[MC.pendingRequestedDate];
+  }
   for(const r of matching){
     const values = r.values[0].slice();
     // requestBdMatchChange never touches approvedBy3/approvedDate3 when
@@ -5367,6 +5616,7 @@ async function rejectBdMatchChange(dealId, reason){
     values[MC.pendingRegistry] = '';
     values[MC.pendingTech] = '';
     if(values.length > MC.pendingVolume) values[MC.pendingVolume] = '';
+    values.__pendingSrcWrite = ''; // discard any staged per-source Vintage/Note
     values[MC.pendingMatchNote] = '';
     values[MC.pendingRequestedBy] = '';
     values[MC.pendingRequestedDate] = '';
@@ -5375,6 +5625,11 @@ async function rejectBdMatchChange(dealId, reason){
     values[MC.rejectReason] = trimmedReason;
     await updateCanonicalTableRow(dealLogTableName(), r.index, values);
   }
+  await appendDealAuditEntry(dealId,
+    'Change REJECTED by Level 3 (discarded, live values unchanged) on ' + auditTimestampLabel() + ' by ' + (currentAccount.username || 'unknown') +
+    (rejRequestedBy ? '\nRequested by ' + rejRequestedBy + (rejRequestedDate ? ' on ' + auditTimestampLabel(rejRequestedDate) : '') : '') +
+    '\nReason: ' + trimmedReason +
+    (rejAuditLines.length ? '\nDiscarded: ' + rejAuditLines.join('\nDiscarded: ') : ''));
   await notifyChangeSubmitter(dealId, submitterEmail, 'rejected', trimmedReason);
   await loadHistory();
 }
@@ -6444,9 +6699,21 @@ function renderHistoryTable(el, groups, opts){
         if((rv[MC.tech]||'') !== (rv[MC.pendingTech]||'')){
           lines.push('Tech: <s>'+escapeHtml(techFullName(rv[MC.tech])||'(blank)')+'</s> → <strong>'+escapeHtml(techFullName(rv[MC.pendingTech])||'(blank)')+'</strong>');
         }
-        if(rv.length > MC.pendingVolume && (rv[MC.volume]||'') !== (rv[MC.pendingVolume]||'')){
-          lines.push('Volume (RECs): <s>'+escapeHtml(rv[MC.volume]||'(blank)')+'</s> → <strong>'+escapeHtml(rv[MC.pendingVolume]||'(blank)')+'</strong>');
+        if(rv.length > MC.pendingVolume && rv[MC.pendingVolume] && String(rv[MC.volume] ?? '').trim() !== String(rv[MC.pendingVolume]).trim()){
+          lines.push('<strong style="color:#8a2d1f;">Volume</strong>: <s>'+escapeHtml(String(rv[MC.volume] ?? '')||'(blank)')+'</s> → <strong>'+escapeHtml(rv[MC.pendingVolume])+'</strong>');
         }
+        // Staged per-source Vintage/Note (see PENDING_SRC_COLUMN_NAME).
+        const psr = parsePendingSrc(rv.__pendingSrc);
+        if(psr){
+          [['Source Vintage Start', normSrcVintage(rv[MC.sourceVintageStart]), normSrcVintage(psr.vstart)],
+           ['Source Vintage End', normSrcVintage(rv[MC.sourceVintageEnd]), normSrcVintage(psr.vend)],
+           ['Source Matching Note', normSrcNote(rv[MC.sourceMatchNote]), normSrcNote(psr.note)]].forEach(([label, a, b])=>{
+            if(a !== b) lines.push(label+': <s>'+escapeHtml(a||'(blank)')+'</s> → <strong>'+escapeHtml(b||'(blank)')+'</strong>');
+          });
+        }
+        // A sibling product that isn't part of this request has blank
+        // pending* columns — don't show those as "changes".
+        if(rv[MC.status] !== STATUS_PENDING_CHANGE_3) return '';
         if(!lines.length) return '';
         return '<div style="margin-top:'+(idx>0?'6px':'0')+';">'+(g.rows.length>1?'<strong>Product '+(idx+1)+':</strong> ':'')+lines.join(' · ')+'</div>';
       }).join('');
@@ -6509,10 +6776,13 @@ function renderHistoryTable(el, groups, opts){
     // actually still being reviewed against this edit. Optional column —
     // v[MC.editChangeSummary] is simply undefined on a workbook that hasn't
     // added it yet, so this block just doesn't render.
-    if(v[MC.editChangeSummary] && [STATUS_PENDING_1, STATUS_REVERTED_1, STATUS_PENDING_2, STATUS_REVERTED_2, STATUS_PENDING_3, STATUS_REVERTED_3].includes(status)){
+    // Now shown at EVERY status (incl. Approved / Pending Change - Level 3),
+    // since Edit Change Summary is the deal's complete audit trail — see
+    // appendDealAuditEntry. Newest entry is at the bottom.
+    if(v[MC.editChangeSummary]){
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
         '<details style="background:#eaf1fb;border:1px solid #b8cdec;color:#1f3a63;border-radius:6px;padding:8px 10px;font-size:12px;">' +
-        '<summary class="box-toggle"><strong>What changed in the latest edit</strong> <span class="box-toggle-hint">(click to view)</span></summary>' +
+        '<summary class="box-toggle"><strong>Edit history (audit trail), latest at bottom</strong> <span class="box-toggle-hint">(click to view)</span></summary>' +
         '<div style="margin-top:6px;">' + escapeHtml(v[MC.editChangeSummary]).replace(/\n/g,'<br>') + '</div>' +
         '</details></td></tr>';
     }
@@ -6865,13 +7135,66 @@ function erInitialSourcesFor(v){
   const nr = splitBdSourceValue(v[MC.noOfRecs]);
   const wd = splitBdSourceValue(v[MC.whichDeal]);
   const dd = splitBdSourceValue(v[MC.deliveryDateM]);
-  const count = Math.max(bs.length, nr.length, wd.length, dd.length, 1);
+  // Per-source Vintage Start/End and Matching note (see MC.sourceVintageStart)
+  // — same "; "-per-source order, so entry i belongs to source i. Vintage is
+  // run through formatStoredVintage since Excel may hand it back as a serial
+  // date number rather than the "MMM YYYY" text that was written.
+  const vs = splitBdSourceValue(v[MC.sourceVintageStart]).map(formatStoredVintage);
+  const ve = splitBdSourceValue(v[MC.sourceVintageEnd]).map(formatStoredVintage);
+  const nt = splitBdSourceValue(v[MC.sourceMatchNote]);
+  const count = Math.max(bs.length, nr.length, wd.length, dd.length, vs.length, ve.length, nt.length, 1);
   const out = [];
   for(let i=0;i<count;i++){
-    out.push({ buyerSeller: bs[i]||'', noOfRecs: nr[i]||'', whichDeal: wd[i]||'', deliveryDateM: dd[i]||'' });
+    out.push({ buyerSeller: bs[i]||'', noOfRecs: nr[i]||'', whichDeal: wd[i]||'', deliveryDateM: dd[i]||'',
+      vstart: vs[i]||'', vend: ve[i]||'', note: nt[i]||'' });
   }
   return out;
 }
+// ---- Per-source Vintage & Matching note fields for BOTH edit modals ----
+// ("Request edit" uses idPrefix "er-", "Edit & resend" uses "fe-bd-").
+// Laid out compactly: one row "Vintage [Mon][Year] to [Mon][Year]" and one
+// single-line "Matching note" — so each source grows by ~2 short rows, and
+// wraps naturally on a narrow screen.
+function splitVintageMY(s){
+  const m = String(s||'').trim().match(/^([A-Za-z]{3})\s+(\d{4})$/);
+  return m ? { m: m[1].charAt(0).toUpperCase()+m[1].slice(1,3).toLowerCase(), y: m[2] } : { m: '', y: String(s||'').trim() };
+}
+function vintageMonthSelectHtml(id, selected){
+  return '<select id="'+id+'" style="width:auto;min-width:72px;"><option value=""'+(selected?'':' selected')+'>Mon</option>'+
+    MONTHS.map(mo => '<option value="'+mo+'"'+(mo===selected?' selected':'')+'>'+mo+'</option>').join('')+'</select>';
+}
+function srcVintageNoteFieldsHtml(idPrefix, key, opts){
+  opts = opts || {};
+  const a = splitVintageMY(opts.vstart), b = splitVintageMY(opts.vend);
+  const p = idPrefix + key;
+  const yearInput = (id, val) => '<input type="text" id="'+id+'" list="'+id+'-list" value="'+escapeHtml(val||'')+'" placeholder="Year" style="width:76px;"/>'+
+    '<datalist id="'+id+'-list">'+YEARS.map(y=>'<option value="'+y+'">').join('')+'</datalist>';
+  return '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;">'+
+      '<label style="margin:0;font-size:12px;min-width:52px;">Vintage</label>'+
+      vintageMonthSelectHtml(p+'-vstart-m', a.m) + yearInput(p+'-vstart-y', a.y)+
+      '<span style="font-size:12px;color:var(--text-secondary);">to</span>'+
+      vintageMonthSelectHtml(p+'-vend-m', b.m) + yearInput(p+'-vend-y', b.y)+
+    '</div>'+
+    '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;">'+
+      '<label style="margin:0;font-size:12px;min-width:52px;">Note</label>'+
+      '<input type="text" id="'+p+'-note" value="'+escapeHtml(opts.note||'')+'" placeholder="Matching note (optional)" style="flex:1;min-width:160px;"/>'+
+    '</div>';
+}
+// Reads one source's vintage/note back as {vstart:"MMM YYYY", vend, note, error}.
+function readSrcVintageNote(idPrefix, key){
+  const p = idPrefix + key;
+  const sm = val(p+'-vstart-m').trim(), sy = val(p+'-vstart-y').trim();
+  const em = val(p+'-vend-m').trim(), ey = val(p+'-vend-y').trim();
+  let error = '';
+  if(!!sm !== !!sy || !!em !== !!ey) error = 'pick both a month and a year for each vintage (or leave both blank)';
+  else if((sy && !/^\d{4}$/.test(sy)) || (ey && !/^\d{4}$/.test(ey))) error = 'vintage year must be 4 digits';
+  return { vstart: (sm||sy) ? (sm+' '+sy).trim() : '', vend: (em||ey) ? (em+' '+ey).trim() : '', note: val(p+'-note').replace(/;/g, ',').trim(), error };
+}
+// Normalised comparison form of a stored per-source vintage/note column, so
+// "45658" (Excel serial) and "Jan 2025" compare equal and blank trailing
+// sources don't register as a change.
+function normSrcVintage(v){ return splitBdSourceValue(v).map(formatStoredVintage).join('; ').replace(/(;\s*)+$/,''); }
+function normSrcNote(v){ return splitBdSourceValue(v).join('; ').replace(/(;\s*)+$/,''); }
 // Builds the "Which deal" field for one source - a free-text Deal Recap ID
 // box by default, or (mirroring the main form's t{n}-m-own/t{n}-m-proceed
 // tickboxes) a dropdown of Own RECs or Proceed Share options when that
@@ -6918,14 +7241,18 @@ function erSourceBlockHtml(idx, s, opts){
         '<span style="font-size:12px;font-weight:600;color:var(--text-secondary);">Source '+s+'</span>'+
         '<button type="button" class="secondary er-remove-source-btn" data-idx="'+idx+'" data-source="'+s+'" style="padding:2px 8px;font-size:11px;color:#8a2d1f;border-color:#c1493a;">Remove source</button>'+
       '</div>' : '')+
-    '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Buyer/Seller</label>'+
-      '<input type="text" id="er-'+key+'-buyerseller" class="edit-request-buyerseller" data-idx="'+idx+'" value="'+escapeHtml(opts.buyerSeller||'')+'"/></div>'+
-    '<div><label style="margin:0 0 4px;display:block;font-size:12px;">'+escapeHtml(noOfRecsLabel)+'</label>'+
-      '<input type="text" id="er-'+key+'-norecs" class="edit-request-norecs" data-idx="'+idx+'" value="'+escapeHtml(opts.noOfRecs||'')+'"/></div>'+
-    '<div>'+
+    // Compact layout: Buyer/Seller + No of RECs share a row; Source
+    // tickboxes + Which deal share a row; then Vintage and Note rows (see
+    // srcVintageNoteFieldsHtml). Everything wraps on a narrow screen.
+    '<div style="display:flex;flex-wrap:wrap;gap:8px;">'+
+      '<div style="flex:2 1 180px;"><label style="margin:0 0 4px;display:block;font-size:12px;">Buyer/Seller</label>'+
+        '<input type="text" id="er-'+key+'-buyerseller" class="edit-request-buyerseller" data-idx="'+idx+'" value="'+escapeHtml(opts.buyerSeller||'')+'"/></div>'+
+      '<div style="flex:1 1 110px;"><label style="margin:0 0 4px;display:block;font-size:12px;">'+escapeHtml(noOfRecsLabel)+' <span style="color:var(--text-secondary);font-weight:normal;">(matched from this source)</span></label>'+
+        '<input type="text" id="er-'+key+'-norecs" class="edit-request-norecs" data-idx="'+idx+'" value="'+escapeHtml(opts.noOfRecs||'')+'"/></div>'+
+    '</div>'+
+    '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;">'+
       (isCC ? '' :
-      '<label style="margin:0 0 6px;display:block;font-size:12px;">Source</label>'+
-      '<div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:8px;">'+
+      '<div style="display:flex;gap:14px;flex-wrap:wrap;padding-bottom:8px;">'+
         '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
           '<input type="checkbox" id="er-'+key+'-own" style="width:auto;margin:0;"'+(dealField.own?' checked':'')+'> Own RECs'+
         '</label>'+
@@ -6933,9 +7260,10 @@ function erSourceBlockHtml(idx, s, opts){
           '<input type="checkbox" id="er-'+key+'-proceed" style="width:auto;margin:0;"'+(dealField.proceed?' checked':'')+'> Proceed Share'+
         '</label>'+
       '</div>')+
-      '<label style="margin:0 0 4px;display:block;font-size:12px;">Which deal</label>'+
-      '<div id="er-'+key+'-deal-field">'+dealField.fieldHtml+'</div>'+
+      '<div style="flex:1 1 200px;"><label style="margin:0 0 4px;display:block;font-size:12px;">Which deal</label>'+
+        '<div id="er-'+key+'-deal-field">'+dealField.fieldHtml+'</div></div>'+
     '</div>'+
+    srcVintageNoteFieldsHtml('er-', key, opts)+
     // Delivery date is gone entirely now — neither RECs nor Carbon Credit
     // BD source matching captures it any more (see the deliveryDateM
     // comments elsewhere in this file: bdSourceBlockHtml,
@@ -7037,6 +7365,7 @@ document.addEventListener('change', (e)=>{
     dependent.querySelectorAll('input[type="text"]').forEach(el=>{ el.value = ''; });
     dependent.querySelectorAll('input[type="checkbox"]').forEach(cb=>{ cb.checked = false; });
     dependent.querySelectorAll('input[type="date"]').forEach(el=>{ el.value = ''; updateDateDisplay(el); });
+    dependent.querySelectorAll('select[id$="-vstart-m"], select[id$="-vend-m"]').forEach(s=>{ s.value = ''; });
     erSourceKeysFor(idx).forEach(key => updateEditRequestDealField(key));
     const sourcesContainer = document.getElementById('er-'+idx+'-sources-container');
     if(sourcesContainer){
@@ -7101,7 +7430,15 @@ function editRequestVolumeHtml(idx, volume, rowUid, isCC){
   const uidAttr = ' data-uid="'+escapeHtml(rowUid||'')+'"';
   const volumeLabel = isCC ? 'Volume (CC)' : 'Volume (RECs)';
   if(!needsVolumeFix(volume)){
-    return '<input type="hidden" class="edit-request-volume" data-idx="'+idx+'"'+uidAttr+' value="'+escapeHtml(volume||'')+'"/>';
+    // Volume is now always editable here (previously only when it was still
+    // a range). Any change to it is ALWAYS routed to Level 3 for approval —
+    // even on an already-Approved deal — see requestBdMatchChange.
+    // data-orig lets the modal flip its submit button label live.
+    return '<div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px;">' +
+        '<div style="flex:0 1 160px;"><label style="margin:0 0 4px;display:block;font-size:12px;">'+escapeHtml(volumeLabel)+'</label>' +
+          '<input type="text" class="edit-request-volume" data-idx="'+idx+'"'+uidAttr+' data-orig="'+escapeHtml(volume||'')+'" value="'+escapeHtml(volume||'')+'"/></div>' +
+        '<p style="margin:0 0 8px;font-size:11px;color:var(--text-secondary);flex:1 1 200px;">Product quantity. Changing it needs Level 3 approval before it takes effect.</p>' +
+      '</div>';
   }
   return '<div style="border:1px solid #e2a49a;background:#fdecea;border-radius:6px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;">' +
       '<p style="margin:0;font-size:12px;color:#8a2d1f;font-weight:600;">'+escapeHtml(volumeLabel)+' needs confirmation</p>' +
@@ -7133,8 +7470,8 @@ function openEditRequestModal(dealId){
   const currentStatus = group.length ? dealGroupStatus(group) : STATUS_APPROVED;
   editRequestModalStatus = currentStatus;
   document.getElementById('edit-request-modal-intro').textContent = currentStatus === STATUS_APPROVED
-    ? 'This deal is already Approved (Level 3 sign-off complete), so a BD source matching correction here needs no further approval — it\'s written to TradeDealLog as soon as you submit, and operations@saxonrenewables.com is emailed a summary of what changed.'
-    : 'Level 2 has already approved this deal, so any correction here needs a fresh Level 3 sign-off before it takes effect. The current, live values stay in place everywhere until that happens.';
+    ? 'This deal is already Approved (Level 3 sign-off complete), so a BD source matching correction here needs no further approval — it\'s written to TradeDealLog as soon as you submit, and operations@saxonrenewables.com is emailed a summary of what changed. Exception: changing a product\'s Volume sends the whole request to Level 3 for approval first. Every change is recorded in the deal\'s Edit Change Summary.'
+    : 'Level 2 has already approved this deal, so any correction here needs a fresh Level 3 sign-off before it takes effect. The current, live values stay in place everywhere until that happens. Every change is recorded in the deal\'s Edit Change Summary.';
   const submitBtn = document.getElementById('edit-request-modal-submit');
   if(submitBtn) submitBtn.textContent = currentStatus === STATUS_APPROVED ? 'Save changes' : 'Submit for Level 3 approval';
   const isCC = dealLogTableName() === CC_LOG_TABLE_NAME;
@@ -7172,10 +7509,12 @@ function openEditRequestModal(dealId){
     // of one block carrying the whole joined string.
     const sourcesHtml = erInitialSourcesFor(v).map((src, i)=> erSourceBlockHtml(idx, i+1, {
       buyerSeller: src.buyerSeller, noOfRecs: src.noOfRecs, whichDeal: src.whichDeal, deliveryDateM: src.deliveryDateM,
+      vstart: src.vstart, vend: src.vend, note: src.note,
       isCC: isCC, noOfRecsLabel: noOfRecsLabel, rowUid: v[MC.rowUid]||''
     })).join('');
     return '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;">' +
       '<p style="margin:0;font-size:13px;font-weight:600;">'+escapeHtml(label)+'</p>' +
+      volumeHtml +
       '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Matching</label>' +
         '<select class="edit-request-matching" data-idx="'+idx+'"'+uidAttr+'>'+matchOptions+'</select></div>' +
       '<div id="er-'+idx+'-dependent" style="display:flex;flex-direction:column;gap:8px;'+(active?'':'display:none;')+'">' +
@@ -7183,7 +7522,6 @@ function openEditRequestModal(dealId){
         '<button type="button" class="secondary er-add-source-btn" data-idx="'+idx+'" style="align-self:flex-start;padding:4px 10px;font-size:12px;">+ Source</button>' +
       '</div>' +
       regTechHtml +
-      volumeHtml +
       '</div>';
   }).join('') +
     // Single note shared across every product on this deal — explains WHY
@@ -7200,6 +7538,24 @@ function openEditRequestModal(dealId){
   refreshAllDateDisplays(fieldsEl);
   group.forEach((r, idx)=> erSourceKeysFor(idx).forEach(key => syncEditRequestBuyerSeller(key)));
 }
+// True when any product's Volume in the open Request-edit modal differs from
+// its saved value — such a request always goes to Level 3 (see
+// requestBdMatchChange), so the submit button says so even on an Approved deal.
+function editRequestVolumeChanged(){
+  const fields = document.getElementById('edit-request-modal-fields');
+  if(!fields) return false;
+  if(Array.from(fields.querySelectorAll('.edit-request-volume-fix')).some(el => el.value.trim())) return true;
+  return Array.from(fields.querySelectorAll('.edit-request-volume[data-orig]'))
+    .some(el => el.value.trim() !== (el.getAttribute('data-orig') || '').trim());
+}
+function editRequestSubmitLabel(){
+  return (editRequestModalStatus === STATUS_APPROVED && !editRequestVolumeChanged()) ? 'Save changes' : 'Submit for Level 3 approval';
+}
+document.addEventListener('input', (e)=>{
+  if(!e.target.classList || !e.target.classList.contains('edit-request-volume')) return;
+  const btn = document.getElementById('edit-request-modal-submit');
+  if(btn && !btn.disabled) btn.textContent = editRequestSubmitLabel();
+});
 function closeEditRequestModal(){
   document.getElementById('edit-request-modal-overlay').style.display = 'none';
   document.getElementById('edit-request-modal-fields').innerHTML = '';
@@ -7230,6 +7586,18 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
     edits[idx].buyerSeller = keys.map(key => val('er-'+key+'-buyerseller')).join('; ');
     edits[idx].noOfRecs = keys.map(key => val('er-'+key+'-norecs')).join('; ');
     edits[idx].whichDeal = keys.map(key => erDealCodeFor(key)).join('; ');
+    // Per-source Vintage Start/End + Matching note, same source order.
+    // Open Position clears them, same as Buyer/Seller etc. above.
+    const srcVN = keys.map(key => readSrcVintageNote('er-', key));
+    if(sel.value === 'Open Position'){
+      edits[idx].vstart = ''; edits[idx].vend = ''; edits[idx].note = '';
+    } else {
+      edits[idx].vstart = srcVN.map(s => s.vstart).join('; ');
+      edits[idx].vend = srcVN.map(s => s.vend).join('; ');
+      edits[idx].note = srcVN.map(s => s.note).join('; ');
+      const badIdx = srcVN.findIndex(s => s.error);
+      if(badIdx >= 0) edits[idx].srcError = (badIdx > 0 ? 'Source ' + (badIdx+1) + ': ' : '') + srcVN[badIdx].error;
+    }
     // Delivery date is gone entirely now — the field doesn't exist in the
     // DOM for any deal any more (see erSourceBlockHtml), so this is
     // deliberately left blank rather than joining a run of stray "; "s.
@@ -7317,8 +7685,23 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
       }
     });
   });
-  if(regTechErrors.length || volumeErrors.length || whichDealErrors.length){
-    errEl.textContent = regTechErrors.concat(volumeErrors).concat(whichDealErrors).join(' ');
+  // Regular (non-range) Volume field — can't be blanked or turned into a range.
+  const productCount = document.querySelectorAll('#edit-request-modal-fields .edit-request-matching').length;
+  document.querySelectorAll('#edit-request-modal-fields .edit-request-volume[data-orig]').forEach(el=>{
+    const idx = parseInt(el.getAttribute('data-idx'), 10);
+    const productLabel = productCount > 1 ? 'Product ' + (idx+1) : 'this product';
+    const v = el.value.trim();
+    if(v === (el.getAttribute('data-orig') || '').trim()) return;
+    if(!v) volumeErrors.push('Volume for ' + productLabel + ' can\'t be blank.');
+    else if(needsVolumeFix(v)) volumeErrors.push('Volume for ' + productLabel + ' looks like a range — enter a single confirmed number.');
+    else if(!/^\d[\d,]*(\.\d+)?$/.test(v)) volumeErrors.push('Volume for ' + productLabel + ' must be a number.');
+  });
+  const srcErrors = [];
+  edits.forEach((ed, idx)=>{
+    if(ed && ed.srcError) srcErrors.push((productCount > 1 ? 'Product ' + (idx+1) : 'This product') + ' — ' + ed.srcError + '.');
+  });
+  if(regTechErrors.length || volumeErrors.length || whichDealErrors.length || srcErrors.length){
+    errEl.textContent = regTechErrors.concat(volumeErrors).concat(whichDealErrors).concat(srcErrors).join(' ');
     errEl.style.display = 'block';
     return;
   }
@@ -7334,7 +7717,7 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
     errEl.style.display = 'block';
   }finally{
     btn.disabled = false;
-    btn.textContent = editRequestModalStatus === STATUS_APPROVED ? 'Save changes' : 'Submit for Level 3 approval';
+    btn.textContent = editRequestSubmitLabel();
   }
 });
 /* ---- Redemption Documents modal ----
@@ -10574,7 +10957,7 @@ function recapEditFormHtml(dealId, sortedGroup){
   const role = roleFromOrderType(head[MC.supplyDemand]);
   const isCC = (sortedGroup[0]._sourceTable || STANDARD_LOG_TABLE_NAME) === CC_LOG_TABLE_NAME;
   let html = '<div id="recap-edit-form" style="display:flex;flex-direction:column;gap:16px;">'+
-    '<p style="font-size:12px;color:var(--text-secondary);margin:0;">Superadmin edit — saves straight to the live '+(isCC?'CCDealLog':'TradeDealLog')+' row(s) and regenerates the saved recap immediately, with no separate approval step. BD source matching isn\'t editable here; use "Request edit" for that.</p>'+
+    '<p style="font-size:12px;color:var(--text-secondary);margin:0;">Superadmin edit — saves straight to the live '+(isCC?'CCDealLog':'TradeDealLog')+' row(s) and regenerates the saved recap immediately, with no separate approval step. Every save is recorded in the deal\'s Edit Change Summary (audit trail) with your reason. BD source matching isn\'t editable here; use "Request edit" for that.</p>'+
     '<div class="grid">'+
       recapEditFieldHtml('Deal Date', '<input type="date" id="re-h-date" value="'+escapeHtml(toDateInputValue(head[MC.agreementDate]))+'"/>')+
       recapEditFieldHtml('Entity', '<input type="text" id="re-h-entity" value="'+escapeHtml(head[MC.entity]||'')+'"/>')+
@@ -10596,8 +10979,8 @@ function recapEditFormHtml(dealId, sortedGroup){
       (isCC ? '' : recapEditFieldHtml('Tech', comboHtml(idp+'tech', idp+'tech-list', TECHS, v[MC.tech]||'')))+
       recapEditFieldHtml('Country', selectWithFullNamesHtml(idp+'country', isCC ? COUNTRY_CODES : REC_COUNTRY_CODES, COUNTRY_FULLNAMES, v[MC.country]||'MY'))+
       (isCC ? recapEditFieldHtml('Vintage Start Year', comboHtml(idp+'vintage-start-year', idp+'vintage-start-year-list', YEARS, v[MC.vFromYY]||''))+recapEditFieldHtml('Vintage End Year', comboHtml(idp+'vintage-end-year', idp+'vintage-end-year-list', YEARS, v[MC.vToYY]||'')) :
-        recapEditFieldHtml('Vintage start month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vstart-m', MONTHS, v[MC.vFromMM]||'Jan')+comboHtml(idp+'vstart-y', idp+'vstart-y-list', YEARS, v[MC.vFromYY]||'')+'</div>')+
-        recapEditFieldHtml('Vintage end month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vend-m', MONTHS, v[MC.vToMM]||'Dec')+comboHtml(idp+'vend-y', idp+'vend-y-list', YEARS, v[MC.vToYY]||'')+'</div>'))+
+        recapEditFieldHtml('Vintage start month & year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vstart-m', MONTHS, v[MC.vFromMM]||'Jan')+comboHtml(idp+'vstart-y', idp+'vstart-y-list', YEARS, v[MC.vFromYY]||'')+'</div>')+
+        recapEditFieldHtml('Vintage end month & year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vend-m', MONTHS, v[MC.vToMM]||'Dec')+comboHtml(idp+'vend-y', idp+'vend-y-list', YEARS, v[MC.vToYY]||'')+'</div>'))+
       recapEditFieldHtml(isCC?'Volume (VCUs)':'Volume (RECs)', '<input type="text" id="'+idp+'volume" value="'+escapeHtml(v[MC.volume]||'')+'"/>')+
       recapEditFieldHtml('Price currency', comboHtml(idp+'currency', idp+'currency-list', CURRENCIES, v[MC.currency]||''))+
       recapEditFieldHtml(isCC?'Price / VCU':'Price / REC', '<input type="text" id="'+idp+'price" value="'+escapeHtml(v[MC.unitPrice]||'')+'"/>')+
@@ -10609,7 +10992,12 @@ function recapEditFormHtml(dealId, sortedGroup){
       recapEditFieldHtml('Special remarks', '<textarea id="'+idp+'remarks">'+escapeHtml(v[MC.specialReq]||'')+'</textarea>')+
     '</div></div>';
   });
-  html += '<div id="recap-edit-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>'+
+  html += '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;">'+
+      '<label style="margin:0;font-size:13px;font-weight:600;" for="re-justification">Reason for this edit</label>'+
+      '<p style="margin:0;font-size:12px;color:var(--text-secondary);">Required. Recorded with a field-by-field list of what changed in the deal\'s Edit Change Summary (audit trail).</p>'+
+      '<textarea id="re-justification" rows="3" placeholder="e.g. BD confirmed final volume with buyer by email on 30 Oct"></textarea>'+
+    '</div>'+
+    '<div id="recap-edit-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>'+
     '<div style="display:flex;gap:8px;justify-content:flex-end;">'+
       '<button type="button" class="secondary" id="recap-edit-cancel">Cancel</button>'+
       '<button type="button" id="recap-edit-save">Save changes</button>'+
@@ -10645,9 +11033,15 @@ async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
     errEl.style.display = 'block';
     return;
   }
+  const reJustification = rv('re-justification');
+  if(!reJustification){
+    errEl.textContent = 'A reason for this edit is required. It\'s recorded in the deal\'s Edit Change Summary audit trail.';
+    errEl.style.display = 'block';
+    return;
+  }
 
   const isCC = (sortedGroup[0]._sourceTable || STANDARD_LOG_TABLE_NAME) === CC_LOG_TABLE_NAME;
-  const reTag = await resolveTagBdWrite(dealLogTableName(), rv('re-h-tag-bd'), dealTaggedBd(sortedGroup), hBd);
+  const reTag =await resolveTagBdWrite(dealLogTableName(), rv('re-h-tag-bd'), dealTaggedBd(sortedGroup), hBd);
   if(reTag && reTag.error){ errEl.textContent = reTag.error; errEl.style.display = 'block'; return; }
   const reFlagList = isCC ? [] : sortedGroup.map((_, k) => readDealFlagsFromForm('re-t'+(k+1)+'-'));
   for(let k = 0; k < reFlagList.length; k++){
@@ -10730,12 +11124,36 @@ async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
   const freshHtml = renderPointFormatHtml(buildRecapLinesFromRows(dealId, updatedRows));
   updatedRows[0].values[0][MC.generatedHtml] = freshHtml;
 
+  // Audit trail: field-by-field diff against the pre-edit rows, same format
+  // as "Edit & resend" (see buildFullEditChangeSummary).
+  const reRole = roleFromOrderType(sortedGroup[0].values[0][MC.supplyDemand]);
+  const reDiff = buildFullEditChangeSummary(sortedGroup, updatedRows, reRole);
+
   btn.disabled = true; cancelBtn.disabled = true;
   btn.textContent = 'Saving\u2026';
   try{
+    // sortedGroup came from the cached list, so its Edit Change Summary
+    // could be older than the live cell (e.g. a "Request edit" logged since
+    // this page loaded). Carry the LIVE summary through so this save never
+    // overwrites audit entries it didn't know about.
+    try{
+      const liveRows = await getCanonicalTableRows(dealLogTableName());
+      const liveByIndex = {};
+      liveRows.forEach(r => { liveByIndex[r.index] = r.values[0]; });
+      updatedRows.forEach(r => {
+        const lv = liveByIndex[r.index];
+        if(lv && lv.length > MC.editChangeSummary && r.values[0].length > MC.editChangeSummary){
+          r.values[0][MC.editChangeSummary] = lv[MC.editChangeSummary] || '';
+        }
+      });
+    }catch(e){ console.warn('Could not re-read live Edit Change Summary before Super Admin edit:', e); }
     for(const r of updatedRows){
       await updateCanonicalTableRow(dealLogTableName(), r.index, r.values[0]);
     }
+    await appendDealAuditEntry(dealId,
+      'Super Admin edit via "Edit details" (applied immediately, no approval step) on ' + auditTimestampLabel() + ' by ' + (currentAccount.username || 'unknown') +
+      '\nReason: ' + reJustification +
+      '\n' + (reDiff || '(no field values changed)'));
     await loadHistory(); // refresh logRowsCache so every other view of this deal picks up the edit too
     if(reTag && reTag.changed){
       try{ await notifyTaggedBds(dealId, sortedGroup[0].values[0][MC.description], newlyTaggedBdNames(dealTaggedBd(sortedGroup), reTag.value), currentAccount.username, hBd); }
@@ -10857,6 +11275,10 @@ function buildFullEditChangeSummary(oldGroup, updatedRows, role){
   diff('BD in-charge', oldHead[MC.salesPic], newHead[MC.salesPic]);
   if('__tagBdWrite' in newHead) diff('Tag BD in-charge', dealTaggedBdList(oldGroup).join(', '), parseTagBdList(newHead.__tagBdWrite).join(', '));
   diff(role+' Full Name', oldHead[MC.company], newHead[MC.company]);
+  if(isCC){
+    diff('Project Name', oldHead[MC.projectName], newHead[MC.projectName]);
+    diff('Project ID', oldHead[MC.projectId], newHead[MC.projectId]);
+  }
   oldGroup.forEach((r, idx)=>{
     const ov = r.values[0];
     const nv = updatedRows[idx].values[0];
@@ -10875,6 +11297,7 @@ function buildFullEditChangeSummary(oldGroup, updatedRows, role){
       pdiff('Vintage End Year', ov[MC.vToYY], nv[MC.vToYY]);
       pdiff('Registry', registryDisplayName(ov[MC.registry]), registryDisplayName(nv[MC.registry]));
       pdiff('Closing account', ov[MC.cod], nv[MC.cod]);
+      pdiff('Prepayment', ov[MC.prepayment], nv[MC.prepayment]);
     }else{
       pdiff('Tech', techFullName(ov[MC.tech])||ov[MC.tech]||'', techFullName(nv[MC.tech])||nv[MC.tech]||'');
       pdiff('Country', countryFullName(ov[MC.country])||ov[MC.country]||'', countryFullName(nv[MC.country])||nv[MC.country]||'');
@@ -10895,6 +11318,11 @@ function buildFullEditChangeSummary(oldGroup, updatedRows, role){
     pdiff('Buyer/Seller', ov[MC.buyerSeller], nv[MC.buyerSeller]);
     pdiff(isCC?'No of VCUs':'No of RECs', ov[MC.noOfRecs], nv[MC.noOfRecs]);
     pdiff('Which deal', dealLabelForStoredValueMulti(ov[MC.whichDeal]), dealLabelForStoredValueMulti(nv[MC.whichDeal]));
+    // Per-source Vintage / Matching note (normalised — Excel can return
+    // vintage as a serial number, see formatStoredVintage).
+    pdiff('Source Vintage Start', normSrcVintage(ov[MC.sourceVintageStart]), normSrcVintage(nv[MC.sourceVintageStart]));
+    pdiff('Source Vintage End', normSrcVintage(ov[MC.sourceVintageEnd]), normSrcVintage(nv[MC.sourceVintageEnd]));
+    pdiff('Source Matching Note', normSrcNote(ov[MC.sourceMatchNote]), normSrcNote(nv[MC.sourceMatchNote]));
   });
   return lines.join('\n');
 }
@@ -10965,14 +11393,16 @@ function feSourceBlockHtml(idx, s, opts){
         '<span style="font-size:12px;font-weight:600;color:var(--text-secondary);">Source '+s+'</span>'+
         '<button type="button" class="secondary fe-bd-remove-source-btn" data-idx="'+idx+'" data-source="'+s+'" style="padding:2px 8px;font-size:11px;color:#8a2d1f;border-color:#c1493a;">Remove source</button>'+
       '</div>' : '')+
-    '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Buyer/Seller</label>'+
-      '<input type="text" id="fe-bd-'+key+'-buyerseller" class="full-edit-buyerseller" value="'+escapeHtml(opts.buyerSeller||'')+'"/></div>'+
-    '<div><label style="margin:0 0 4px;display:block;font-size:12px;">'+escapeHtml(noOfRecsLabel)+'</label>'+
-      '<input type="text" id="fe-bd-'+key+'-norecs" class="full-edit-norecs" value="'+escapeHtml(opts.noOfRecs||'')+'"/></div>'+
-    '<div>'+
+    // Same compact layout as the Request-edit modal's erSourceBlockHtml.
+    '<div style="display:flex;flex-wrap:wrap;gap:8px;">'+
+      '<div style="flex:2 1 180px;"><label style="margin:0 0 4px;display:block;font-size:12px;">Buyer/Seller</label>'+
+        '<input type="text" id="fe-bd-'+key+'-buyerseller" class="full-edit-buyerseller" value="'+escapeHtml(opts.buyerSeller||'')+'"/></div>'+
+      '<div style="flex:1 1 110px;"><label style="margin:0 0 4px;display:block;font-size:12px;">'+escapeHtml(noOfRecsLabel)+' <span style="color:var(--text-secondary);font-weight:normal;">(matched from this source)</span></label>'+
+        '<input type="text" id="fe-bd-'+key+'-norecs" class="full-edit-norecs" value="'+escapeHtml(opts.noOfRecs||'')+'"/></div>'+
+    '</div>'+
+    '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;">'+
       (isCC ? '' :
-      '<label style="margin:0 0 6px;display:block;font-size:12px;">Source</label>'+
-      '<div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:8px;">'+
+      '<div style="display:flex;gap:14px;flex-wrap:wrap;padding-bottom:8px;">'+
         '<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;">'+
           '<input type="checkbox" id="fe-bd-'+key+'-own" style="width:auto;margin:0;"'+(dealField.own?' checked':'')+'> Own RECs'+
         '</label>'+
@@ -10980,9 +11410,10 @@ function feSourceBlockHtml(idx, s, opts){
           '<input type="checkbox" id="fe-bd-'+key+'-proceed" style="width:auto;margin:0;"'+(dealField.proceed?' checked':'')+'> Proceed Share'+
         '</label>'+
       '</div>')+
-      '<label style="margin:0 0 4px;display:block;font-size:12px;">Which deal</label>'+
-      '<div id="fe-bd-'+key+'-deal-field">'+dealField.fieldHtml+'</div>'+
+      '<div style="flex:1 1 200px;"><label style="margin:0 0 4px;display:block;font-size:12px;">Which deal</label>'+
+        '<div id="fe-bd-'+key+'-deal-field">'+dealField.fieldHtml+'</div></div>'+
     '</div>'+
+    srcVintageNoteFieldsHtml('fe-bd-', key, opts)+
   '</div>';
 }
 // "+ Source" for the Edit & resend modal — appends a new, blank source block
@@ -11066,6 +11497,7 @@ document.addEventListener('change', (e)=>{
     dependent.style.display = 'none';
     dependent.querySelectorAll('input[type="text"]').forEach(el=>{ el.value = ''; });
     dependent.querySelectorAll('input[type="checkbox"]').forEach(cb=>{ cb.checked = false; });
+    dependent.querySelectorAll('select[id$="-vstart-m"], select[id$="-vend-m"]').forEach(s=>{ s.value = ''; });
     feSourceKeysFor(idx).forEach(key => updateFullEditDealField(key));
     const sourcesContainer = document.getElementById('fe-bd-'+idx+'-sources-container');
     if(sourcesContainer){
@@ -11091,6 +11523,7 @@ function fullEditBdMatchingSectionHtml(idx, v, isCC){
   const noOfRecsLabel = isCC ? 'No of VCUs' : 'No of RECs';
   const sourcesHtml = erInitialSourcesFor(v).map((src, i)=> feSourceBlockHtml(idx, i+1, {
     buyerSeller: src.buyerSeller, noOfRecs: src.noOfRecs, whichDeal: src.whichDeal,
+    vstart: src.vstart, vend: src.vend, note: src.note,
     isCC: isCC, noOfRecsLabel: noOfRecsLabel, rowUid: v[MC.rowUid]||''
   })).join('');
   return '<p class="sub-title">BD source matching</p>'+
@@ -11129,7 +11562,7 @@ function fullEditFormHtml(dealId, sortedGroup){
       recapEditFieldHtml(transferAccountLabel(role), '<input type="text" id="'+idp+'transfer" value="'+escapeHtml(v[MC.tigrsIrecName]||'')+'"/>')+
       (isCC ? '' : recapEditFieldHtml('Tech', comboHtml(idp+'tech', idp+'tech-list', TECHS, v[MC.tech]||'')))+
       recapEditFieldHtml('Country', selectWithFullNamesHtml(idp+'country', isCC ? COUNTRY_CODES : REC_COUNTRY_CODES, COUNTRY_FULLNAMES, v[MC.country]||'MY'))+
-      (isCC ? recapEditFieldHtml('Vintage Start Year', comboHtml(idp+'vintage-start-year', idp+'vintage-start-year-list', YEARS, v[MC.vFromYY]||''))+recapEditFieldHtml('Vintage End Year', comboHtml(idp+'vintage-end-year', idp+'vintage-end-year-list', YEARS, v[MC.vToYY]||'')) : recapEditFieldHtml('Vintage start month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vstart-m', MONTHS, v[MC.vFromMM]||'Jan')+comboHtml(idp+'vstart-y', idp+'vstart-y-list', YEARS, v[MC.vFromYY]||'')+'</div>')+recapEditFieldHtml('Vintage end month &amp; year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vend-m', MONTHS, v[MC.vToMM]||'Dec')+comboHtml(idp+'vend-y', idp+'vend-y-list', YEARS, v[MC.vToYY]||'')+'</div>'))+
+      (isCC ? recapEditFieldHtml('Vintage Start Year', comboHtml(idp+'vintage-start-year', idp+'vintage-start-year-list', YEARS, v[MC.vFromYY]||''))+recapEditFieldHtml('Vintage End Year', comboHtml(idp+'vintage-end-year', idp+'vintage-end-year-list', YEARS, v[MC.vToYY]||'')) : recapEditFieldHtml('Vintage start month & year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vstart-m', MONTHS, v[MC.vFromMM]||'Jan')+comboHtml(idp+'vstart-y', idp+'vstart-y-list', YEARS, v[MC.vFromYY]||'')+'</div>')+recapEditFieldHtml('Vintage end month & year', '<div style="display:flex;gap:6px;">'+selectHtml(idp+'vend-m', MONTHS, v[MC.vToMM]||'Dec')+comboHtml(idp+'vend-y', idp+'vend-y-list', YEARS, v[MC.vToYY]||'')+'</div>'))+
       recapEditFieldHtml(isCC?'Volume (VCUs)':'Volume (RECs)', '<input type="text" id="'+idp+'volume" value="'+escapeHtml(v[MC.volume]||'')+'"/>')+
       recapEditFieldHtml('Price currency', comboHtml(idp+'currency', idp+'currency-list', CURRENCIES, v[MC.currency]||''))+
       recapEditFieldHtml(isCC?'Price / VCU':'Price / REC', '<input type="text" id="'+idp+'price" value="'+escapeHtml(v[MC.unitPrice]||'')+'"/>')+
@@ -11264,6 +11697,9 @@ function fullEditBdMatchingFieldsChanged(liveGroup, updatedRows){
       const b = newValues[col] === undefined || newValues[col] === null ? '' : newValues[col];
       if(String(a) !== String(b)) return true;
     }
+    if(normSrcVintage(oldValues[MC.sourceVintageStart]) !== normSrcVintage(newValues[MC.sourceVintageStart]) ||
+       normSrcVintage(oldValues[MC.sourceVintageEnd]) !== normSrcVintage(newValues[MC.sourceVintageEnd]) ||
+       normSrcNote(oldValues[MC.sourceMatchNote]) !== normSrcNote(newValues[MC.sourceMatchNote])) return true;
   }
   return false;
 }
@@ -11430,15 +11866,32 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
       const matchingSel = document.querySelector('.full-edit-matching[data-idx="'+idx+'"]');
       const matchingVal = matchingSel ? matchingSel.value : (liveGroup[idx].values[0][MC.matching] || 'Open Position');
       values[MC.matching] = matchingVal;
+      // Per-source Vintage Start/End + Matching note are written alongside
+      // Buyer/Seller etc. in the SAME source order, so adding/removing a
+      // source keeps every column aligned (previously they were passed
+      // through untouched and drifted out of step). Only written when the
+      // table actually has these columns.
+      const hasSrcCols = values.length > MC.sourceMatchNote;
       if(matchingVal === 'Open Position'){
         values[MC.buyerSeller] = '';
         values[MC.noOfRecs] = '';
         values[MC.whichDeal] = '';
+        if(hasSrcCols){ values[MC.sourceVintageStart] = ''; values[MC.sourceVintageEnd] = ''; values[MC.sourceMatchNote] = ''; }
       } else {
         const bdKeys = feSourceKeysFor(idx);
         values[MC.buyerSeller] = bdKeys.map(key => val('fe-bd-'+key+'-buyerseller')).join('; ');
         values[MC.noOfRecs] = bdKeys.map(key => val('fe-bd-'+key+'-norecs')).join('; ');
         values[MC.whichDeal] = bdKeys.map(key => feDealCodeFor(key)).join('; ');
+        const srcVN = bdKeys.map(key => readSrcVintageNote('fe-bd-', key));
+        const badIdx = srcVN.findIndex(s => s.error);
+        if(badIdx >= 0){
+          throw new Error((liveGroup.length > 1 ? 'Product ' + i : 'This product') + (badIdx > 0 ? ' (Source ' + (badIdx+1) + ')' : '') + ': ' + srcVN[badIdx].error + '.');
+        }
+        if(hasSrcCols){
+          values[MC.sourceVintageStart] = srcVN.map(s => s.vstart).join('; ');
+          values[MC.sourceVintageEnd] = srcVN.map(s => s.vend).join('; ');
+          values[MC.sourceMatchNote] = srcVN.map(s => s.note).join('; ');
+        }
       }
 
       // Status/approval-trail handling is decided once, below, after every
