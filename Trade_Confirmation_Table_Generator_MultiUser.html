@@ -6391,7 +6391,7 @@ function stockStatusBadgeHtml(dealId, orderType, sourceTable, storedText){
   if(!info) return '';
   const isIn = info.isIn, done = info.done;
   const word = isIn ? 'Stock received' : 'Stock delivered';
-  const notWord = isIn ? 'Stock not yet received' : 'Stock not delivered';
+  const notWord = isIn ? 'Stock not received' : 'Stock not delivered';
   const tip = 'From Master Folder › ' + STOCK_STATUS_SHEET_NAME + ' (column ' + (isIn ? STOCK_STATUS_STOCKIN_COL : STOCK_STATUS_STOCKOUT_COL) + ')';
   // Solid, high-contrast pills (white text on a strong fill) so they read
   // clearly in both light and dark mode: green = done, amber = partly done,
