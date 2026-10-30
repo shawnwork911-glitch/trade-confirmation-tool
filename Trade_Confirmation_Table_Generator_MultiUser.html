@@ -2500,6 +2500,29 @@ function auditTagLine(oldTagValue, tagWrite){
 // Live vs staged (pending*) values on one row awaiting "Pending Change -
 // Level 3" — the same comparison approveBdMatchChange uses for its
 // Approved-list note, shared here so approve and reject log identical diffs.
+// Staged product Delivery Start/End date change, kept as JSON
+// {"dstart":"YYYY-MM-DD","dend":"YYYY-MM-DD"} in the (previously unused)
+// "Pending Delivery Date" column. null when nothing is staged — including
+// any legacy non-JSON value, which is ignored.
+function parsePendingDelivery(raw){
+  const s = String(raw || '').trim();
+  if(!s || s[0] !== '{') return null;
+  try{
+    const o = JSON.parse(s);
+    if(!o || (o.dstart === undefined && o.dend === undefined)) return null;
+    return { dstart: String(o.dstart || ''), dend: String(o.dend || '') };
+  }catch(e){ return null; }
+}
+// Diff lines for a staged delivery-date change (plain text).
+function pendingDeliveryDiffLines(values){
+  const pd = parsePendingDelivery(values[MC.pendingDeliveryDateM]);
+  if(!pd) return [];
+  const out = [];
+  const a1 = toDateInputValue(values[MC.deliveryStart]), a2 = toDateInputValue(values[MC.deliveryEnd]);
+  if(a1 !== pd.dstart) out.push('Delivery Start: ' + (formatStoredDate(values[MC.deliveryStart]) || '(blank)') + ' → ' + (formatStoredDate(pd.dstart) || '(blank)'));
+  if(a2 !== pd.dend) out.push('Delivery End: ' + (formatStoredDate(values[MC.deliveryEnd]) || '(blank)') + ' → ' + (formatStoredDate(pd.dend) || '(blank)'));
+  return out;
+}
 function pendingChangeDiffLines(values){
   const out = [];
   const d = (label, a, b) => { if((a||'') !== (b||'')) out.push(label + ': ' + (a||'(blank)') + ' → ' + (b||'(blank)')); };
@@ -2530,6 +2553,7 @@ function pendingChangeDiffLines(values){
     ];
     pairs.forEach(([label, a, b]) => { if(a !== b) out.push(label + ': ' + (a||'(blank)') + ' → ' + (b||'(blank)')); });
   }
+  pendingDeliveryDiffLines(values).forEach(l => out.push(l));
   return out;
 }
 
@@ -4018,7 +4042,7 @@ async function uploadRedemptionDocument(dealId, productIndex, docIndex, file){
 // Redemption Docs can be requested as soon as Level 1 has approved — i.e.
 // while the deal is Pending Level 2, Pending Level 3, or fully Approved —
 // so Admin Level 3 doesn't have to wait for the final Level 3 sign-off.
-const REDEMPTION_ELIGIBLE_STATUSES = [STATUS_PENDING_2, STATUS_PENDING_3, STATUS_APPROVED];
+const REDEMPTION_ELIGIBLE_STATUSES = [STATUS_PENDING_2, STATUS_PENDING_3, STATUS_APPROVED, STATUS_PENDING_CHANGE_3]; // Pending Change = an already-approved deal with an edit awaiting Level 3
 function isRedemptionEligibleStatus(status){
   return REDEMPTION_ELIGIBLE_STATUSES.includes(status);
 }
@@ -5533,6 +5557,15 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
       lines.push((isCCTable ? 'Volume (VCUs): ' : 'Volume (RECs): ') + (String(rv[MC.volume] ?? '') || '(blank)') + ' \u2192 ' + (edit.volume||'(blank)'));
       volumeChangedAny = true;
     }
+    // Product Delivery Start/End dates — staged for Level 3 like everything else.
+    if(edit.dstart !== undefined || edit.dend !== undefined){
+      const curS = toDateInputValue(rv[MC.deliveryStart]), curE = toDateInputValue(rv[MC.deliveryEnd]);
+      const newS = edit.dstart !== undefined ? String(edit.dstart || '') : curS;
+      const newE = edit.dend !== undefined ? String(edit.dend || '') : curE;
+      if(curS !== newS) lines.push('Delivery Start: ' + (formatStoredDate(rv[MC.deliveryStart]) || '(blank)') + ' \u2192 ' + (formatStoredDate(newS) || '(blank)'));
+      if(curE !== newE) lines.push('Delivery End: ' + (formatStoredDate(rv[MC.deliveryEnd]) || '(blank)') + ' \u2192 ' + (formatStoredDate(newE) || '(blank)'));
+      if(curS !== newS || curE !== newE) edit.__deliveryStage = JSON.stringify({ dstart: newS, dend: newE });
+    }
     // Per-source Vintage / Matching note (see srcVintageNoteFieldsHtml).
     if(edit.vstart !== undefined){
       const before = { vs: normSrcVintage(rv[MC.sourceVintageStart]), ve: normSrcVintage(rv[MC.sourceVintageEnd]), nt: normSrcNote(rv[MC.sourceMatchNote]) };
@@ -5594,7 +5627,12 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
   // Route to Level 3 when the deal hasn't finished Level 3 yet (unchanged
   // behaviour) OR when any product's Volume changed — a quantity change is
   // never applied without Level 3 sign-off, even on an Approved deal.
-  const stageForLevel3 = currentStatus === STATUS_PENDING_3 || volumeChangedAny;
+  // EVERY change to a deal/product made after Level 2 — Pending Level 3 OR
+  // already fully Approved — is staged as "Pending Change - Level 3" and
+  // only goes live once Admin Level 3 approves it (approveBdMatchChange).
+  // (Tag BD in-charge is view-only access, not deal data, and is still
+  // saved immediately — see finishTagWrite.)
+  const stageForLevel3 = true;
   if(volumeChangedAny && matching[0].values[0].length <= MC.pendingVolume){
     throw new Error('Volume can\'t be changed yet: the ' + (isCCTable ? 'CCDealLog' : 'TradeDealLog') + ' table is missing its "Pending Volume" column. Ask an admin to add it, then try again.');
   }
@@ -5619,10 +5657,9 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
       values[MC.pendingBuyerSeller] = edit.buyerSeller || '';
       values[MC.pendingWhichDeal] = edit.whichDeal || '';
       values[MC.pendingNoOfRecs] = edit.noOfRecs || '';
-      // Delivery date is gone entirely now — never staged for any deal, so
-      // approveBdMatchChange's guard never has anything to copy into the
-      // live Delivery Date column.
-      values[MC.pendingDeliveryDateM] = '';
+      // Product Delivery Start/End change (JSON, see parsePendingDelivery),
+      // or blank when this request doesn't change the delivery dates.
+      values[MC.pendingDeliveryDateM] = edit.__deliveryStage || '';
       values[MC.pendingRegistry] = edit.registry || '';
       values[MC.pendingTech] = edit.tech || '';
       // Optional column (see pendingVolume on MC) — only stage it if the
@@ -5649,7 +5686,7 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
     }
     await finishTagWrite();
     await appendDealAuditEntry(dealId, buildAuditEntry('Change REQUESTED via "Request edit" (awaiting Level 3 approval, not yet live' +
-      (currentStatus === STATUS_APPROVED ? '; sent to Level 3 because Volume changed on an Approved deal' : '') + ')'));
+      (currentStatus === STATUS_APPROVED ? '; deal was already Approved' : '') + ')'));
     const notifyBody = changeLines.join('\n') + (matchNote ? '\n\nNote: ' + matchNote : '');
     await notifyNextApprover(STATUS_PENDING_CHANGE_3, dealId, matching[0].values[0][MC.description], notifyBody);
     await notifyAdmin3OfBdChange(dealId, matching[0].values[0][MC.description], changeLines, matchNote, 'pending', false);
@@ -5811,9 +5848,7 @@ async function approveBdMatchChange(dealId){
     if((values[MC.noOfRecs]||'') !== (values[MC.pendingNoOfRecs]||'')){
       noteLines.push('No of RECs: ' + (values[MC.noOfRecs]||'(blank)') + ' \u2192 ' + (values[MC.pendingNoOfRecs]||'(blank)'));
     }
-    // Delivery date is gone entirely now — never staged/diffed here any
-    // more (see the comment above this function); the live column, if a
-    // legacy row still has a real value in it, is left completely alone.
+    pendingDeliveryDiffLines(values).forEach(l => noteLines.push(l));
     if((values[MC.registry]||'') !== (values[MC.pendingRegistry]||'')){
       noteLines.push('Registry: ' + registryDisplayName(values[MC.registry]) + ' \u2192 ' + registryDisplayName(values[MC.pendingRegistry]));
     }
@@ -5833,15 +5868,19 @@ async function approveBdMatchChange(dealId){
       sv('Source Matching Note', normSrcNote(values[MC.sourceMatchNote]), normSrcNote(stagedSrc.note));
     }
     const submitterNote = values[MC.pendingMatchNote] || '';
-    const changeNote = 'BD source matching change' + (noteLines.length ? ': ' + noteLines.join(', ') : '') +
+    const changeNote = 'Change' + (noteLines.length ? ': ' + noteLines.join(', ') : '') +
       (submitterNote ? ' \u2014 Note: ' + submitterNote : '');
     values[MC.matching] = values[MC.pendingMatching];
     values[MC.buyerSeller] = values[MC.pendingBuyerSeller];
     values[MC.whichDeal] = values[MC.pendingWhichDeal];
     values[MC.noOfRecs] = values[MC.pendingNoOfRecs];
-    // Delivery date is gone entirely now — the live Delivery Date column is
-    // never touched here (see the comment above this function), so a
-    // legacy row that still has a real value in it keeps it untouched.
+    // Staged product Delivery Start/End (see parsePendingDelivery) — only
+    // applied when this request actually staged one.
+    const stagedDelivery = parsePendingDelivery(values[MC.pendingDeliveryDateM]);
+    if(stagedDelivery){
+      values[MC.deliveryStart] = stagedDelivery.dstart;
+      values[MC.deliveryEnd] = stagedDelivery.dend;
+    }
     // Only ever overwritten with a non-blank value when this product
     // actually went through the Registry/Tech fix flow (edits always carry
     // the product's current value through when no fix was needed — see the
@@ -7241,9 +7280,15 @@ function renderHistoryTable(el, groups, opts){
         if((rv[MC.noOfRecs]||'') !== (rv[MC.pendingNoOfRecs]||'')){
           lines.push('No of RECs: <s>'+escapeHtml(rv[MC.noOfRecs]||'(blank)')+'</s> → <strong>'+escapeHtml(rv[MC.pendingNoOfRecs]||'(blank)')+'</strong>');
         }
-        // Delivery date is gone entirely now — never staged for any deal
-        // any more (see requestBdMatchChange/approveBdMatchChange), so
-        // there's nothing to diff here.
+        {
+          const pd = parsePendingDelivery(rv[MC.pendingDeliveryDateM]);
+          if(pd){
+            if(toDateInputValue(rv[MC.deliveryStart]) !== pd.dstart)
+              lines.push('<strong style="color:#8a2d1f;">Delivery Start</strong>: <s>'+escapeHtml(formatStoredDate(rv[MC.deliveryStart])||'(blank)')+'</s> → <strong>'+escapeHtml(formatStoredDate(pd.dstart)||'(blank)')+'</strong>');
+            if(toDateInputValue(rv[MC.deliveryEnd]) !== pd.dend)
+              lines.push('<strong style="color:#8a2d1f;">Delivery End</strong>: <s>'+escapeHtml(formatStoredDate(rv[MC.deliveryEnd])||'(blank)')+'</s> → <strong>'+escapeHtml(formatStoredDate(pd.dend)||'(blank)')+'</strong>');
+          }
+        }
         if((rv[MC.registry]||'') !== (rv[MC.pendingRegistry]||'')){
           lines.push('Registry: <s>'+escapeHtml(registryDisplayName(rv[MC.registry])||'(blank)')+'</s> → <strong>'+escapeHtml(registryDisplayName(rv[MC.pendingRegistry])||'(blank)')+'</strong>');
         }
@@ -8020,11 +8065,12 @@ function openEditRequestModal(dealId){
     .sort((a,b)=> a.index - b.index);
   const currentStatus = group.length ? dealGroupStatus(group) : STATUS_APPROVED;
   editRequestModalStatus = currentStatus;
-  document.getElementById('edit-request-modal-intro').textContent = currentStatus === STATUS_APPROVED
-    ? 'This deal is already Approved (Level 3 sign-off complete), so a BD source matching correction here needs no further approval — it\'s written to TradeDealLog as soon as you submit, and operations@saxonrenewables.com is emailed a summary of what changed. Exception: changing a product\'s Volume sends the whole request to Level 3 for approval first. Every change is recorded in the deal\'s Edit Change Summary.'
-    : 'Level 2 has already approved this deal, so any correction here needs a fresh Level 3 sign-off before it takes effect. The current, live values stay in place everywhere until that happens. Every change is recorded in the deal\'s Edit Change Summary.';
+  document.getElementById('edit-request-modal-intro').textContent = (currentStatus === STATUS_APPROVED
+    ? 'This deal is already Approved. '
+    : 'Level 2 has already approved this deal. ') +
+    'Any change here (including Delivery dates) is sent to Admin Level 3 as "Pending Change - Level 3" and only goes live once Level 3 approves it. The current, live values stay in place everywhere until then. Every change is recorded in the deal\'s Edit Change Summary.';
   const submitBtn = document.getElementById('edit-request-modal-submit');
-  if(submitBtn) submitBtn.textContent = currentStatus === STATUS_APPROVED ? 'Save changes' : 'Submit for Level 3 approval';
+  if(submitBtn) submitBtn.textContent = 'Submit for Level 3 approval';
   const isCC = dealLogTableName() === CC_LOG_TABLE_NAME;
   const noOfRecsLabel = isCC ? 'No of VCUs' : 'No of RECs';
   const fieldsEl = document.getElementById('edit-request-modal-fields');
@@ -8063,9 +8109,17 @@ function openEditRequestModal(dealId){
       vstart: src.vstart, vend: src.vend, note: src.note,
       isCC: isCC, noOfRecsLabel: noOfRecsLabel, rowUid: v[MC.rowUid]||''
     })).join('');
+    const ds0 = toDateInputValue(v[MC.deliveryStart]), de0 = toDateInputValue(v[MC.deliveryEnd]);
+    const deliveryHtml = '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+      '<div style="flex:1;min-width:140px;"><label style="margin:0 0 4px;display:block;font-size:12px;">Delivery start date</label>' +
+        '<input type="date" class="edit-request-dstart" data-idx="'+idx+'"'+uidAttr+' data-orig="'+escapeHtml(ds0)+'" value="'+escapeHtml(ds0)+'"/></div>' +
+      '<div style="flex:1;min-width:140px;"><label style="margin:0 0 4px;display:block;font-size:12px;">Delivery end date</label>' +
+        '<input type="date" class="edit-request-dend" data-idx="'+idx+'"'+uidAttr+' data-orig="'+escapeHtml(de0)+'" value="'+escapeHtml(de0)+'"/></div>' +
+      '</div>';
     return '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;">' +
       '<p style="margin:0;font-size:13px;font-weight:600;">'+escapeHtml(label)+'</p>' +
       volumeHtml +
+      deliveryHtml +
       '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Matching</label>' +
         '<select class="edit-request-matching" data-idx="'+idx+'"'+uidAttr+'>'+matchOptions+'</select></div>' +
       '<div id="er-'+idx+'-dependent" style="display:flex;flex-direction:column;gap:8px;'+(active?'':'display:none;')+'">' +
@@ -8100,7 +8154,7 @@ function editRequestVolumeChanged(){
     .some(el => el.value.trim() !== (el.getAttribute('data-orig') || '').trim());
 }
 function editRequestSubmitLabel(){
-  return (editRequestModalStatus === STATUS_APPROVED && !editRequestVolumeChanged()) ? 'Save changes' : 'Submit for Level 3 approval';
+  return 'Submit for Level 3 approval'; // every change now goes to Level 3
 }
 document.addEventListener('input', (e)=>{
   if(!e.target.classList || !e.target.classList.contains('edit-request-volume')) return;
@@ -8166,6 +8220,26 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
     edits[idx].tech = el.value;
     edits[idx].rowUid = edits[idx].rowUid || el.getAttribute('data-uid') || '';
   });
+  // Product Delivery Start/End dates (staged for Level 3 — see requestBdMatchChange).
+  const deliveryErrors = [];
+  const erDeliveryProductCount = document.querySelectorAll("#edit-request-modal-fields .edit-request-matching").length;
+  document.querySelectorAll('#edit-request-modal-fields .edit-request-dstart').forEach(el=>{
+    const idx = parseInt(el.getAttribute('data-idx'), 10);
+    const endEl = document.querySelector('#edit-request-modal-fields .edit-request-dend[data-idx="'+idx+'"]');
+    edits[idx] = edits[idx] || {};
+    edits[idx].dstart = el.value || '';
+    edits[idx].dend = endEl ? (endEl.value || '') : '';
+    edits[idx].rowUid = edits[idx].rowUid || el.getAttribute('data-uid') || '';
+    const pl = erDeliveryProductCount > 1 ? 'Product ' + (idx+1) : 'this product';
+    if((el.getAttribute('data-orig') || '') && !edits[idx].dstart) deliveryErrors.push('Enter a Delivery start date for ' + pl + '.');
+    if(endEl && (endEl.getAttribute('data-orig') || '') && !edits[idx].dend) deliveryErrors.push('Enter a Delivery end date for ' + pl + '.');
+    if(edits[idx].dstart && edits[idx].dend && edits[idx].dend < edits[idx].dstart) deliveryErrors.push('Delivery end date can\'t be before the start date for ' + pl + '.');
+  });
+  if(deliveryErrors.length){
+    errEl.textContent = deliveryErrors.join(' ');
+    errEl.style.display = 'block';
+    return;
+  }
   document.querySelectorAll('#edit-request-modal-fields .edit-request-volume').forEach(el=>{
     const idx = parseInt(el.getAttribute('data-idx'), 10);
     edits[idx] = edits[idx] || {};
