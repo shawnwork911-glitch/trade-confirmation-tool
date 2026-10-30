@@ -1394,7 +1394,7 @@ const SP_FILE_SHARE_URL = "https://saxonrenewables.sharepoint.com/:x:/s/Operatio
 // tickbox (ticked = stock received) and column Y is the Stock-Out tickbox
 // (ticked = stock delivered). Read only — the app never writes to this file.
 // If the file moves or the sheet/columns change, update these constants.
-const STOCK_STATUS_FILE_SHARE_URL = "https://saxonrenewables.sharepoint.com/:x:/s/Operations/IQCXRJ_rEm9gRKIx8nwKuQBAARaPrsxRzhjRjJ7zlU_jo0g?e=obnpky";
+const STOCK_STATUS_FILE_SHARE_URL = "https://saxonrenewables.sharepoint.com/:x:/s/Operations/IQAkTmEx0W7_Rbf6Pmu57HuGAf2Z1k5VGW3lvd68_BBecpE?e=ic09wm";
 const STOCK_STATUS_SHEET_NAME = "Single Trade (SO)";
 const STOCK_STATUS_DEALID_COL = "G";
 const STOCK_STATUS_STOCKIN_COL = "V";
@@ -6892,7 +6892,10 @@ function renderHistoryTable(el, groups, opts){
         '<td style="padding:6px;">'+escapeHtml(v[MC.company]||'')+'</td>' +
         '<td style="padding:6px;">—</td>' +
         '<td style="padding:6px;">'+escapeHtml(deliveryDatesText||'—')+deliveryUrgencyHtml(g)+'</td>' +
-        '<td style="padding:6px;">'+statusBadge(status)+'</td>' +
+        // Stock received/delivered status is shown to EVERY user, including
+        // on these summary-only rows.
+        '<td style="padding:6px;">'+statusBadge(status)+
+          stockStatusBadgeHtml(v[MC.dealId], v[MC.supplyDemand], g.sourceTable || (g.rows[0] && g.rows[0]._sourceTable) || STANDARD_LOG_TABLE_NAME)+'</td>' +
         '<td style="padding:6px;white-space:nowrap;"><span class="row-lock-note">Owner only</span></td>' +
       '</tr>';
       return;
