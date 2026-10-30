@@ -3980,8 +3980,15 @@ async function uploadRedemptionDocument(dealId, productIndex, docIndex, file){
 // NOTE: this now only means the deal is ELIGIBLE for a Redemption Docs
 // request — the upload step itself only opens once an admin has actually
 // requested the docs (see dealRedemptionRequest/requestRedemptionDocs).
+// Redemption Docs can be requested as soon as Level 1 has approved — i.e.
+// while the deal is Pending Level 2, Pending Level 3, or fully Approved —
+// so Admin Level 3 doesn't have to wait for the final Level 3 sign-off.
+const REDEMPTION_ELIGIBLE_STATUSES = [STATUS_PENDING_2, STATUS_PENDING_3, STATUS_APPROVED];
+function isRedemptionEligibleStatus(status){
+  return REDEMPTION_ELIGIBLE_STATUSES.includes(status);
+}
 function dealNeedsRedemption(status, sourceTable, orderType){
-  return status === STATUS_APPROVED && sourceTable !== CC_LOG_TABLE_NAME && isRedemptionOrderType(orderType);
+  return isRedemptionEligibleStatus(status) && sourceTable !== CC_LOG_TABLE_NAME && isRedemptionOrderType(orderType);
 }
 // The admin's Redemption Docs request stamp on one row, or null if none.
 function redemptionRequestInfo(v){
@@ -4141,8 +4148,8 @@ async function loadEditableRedemptionRow(dealId, tableName, rowUid, productIndex
   let row = rowUid ? matching.find(r => String(r.values[0][MC.rowUid] || '') === rowUid) : null;
   if(!row) row = matching[productIndex - 1];
   if(!row) throw new Error('Could not find Product ' + productIndex + ' on this deal anymore — please refresh and try again.');
-  if(row.values[0][MC.status] !== STATUS_APPROVED){
-    throw new Error('This deal is no longer Approved — please refresh.');
+  if(!isRedemptionEligibleStatus(row.values[0][MC.status])){
+    throw new Error('This deal is no longer at a stage where Redemption Documents apply (needs Level 1 approval or later) — please refresh.');
   }
   if(!dealRedemptionRequest(matching)){
     throw new Error('Redemption Documents haven\'t been requested for this deal yet — they only need to be uploaded once an Admin Level 3 requests them.');
@@ -4223,7 +4230,7 @@ async function confirmRedemptionComplete(dealId, tableName){
   const rows = await getCanonicalTableRows(tableName);
   const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
   if(!matching.length) throw new Error('Could not find this deal anymore — please refresh and try again.');
-  if(dealGroupStatus(matching) !== STATUS_APPROVED) throw new Error('This deal is no longer Approved — please refresh.');
+  if(!isRedemptionEligibleStatus(dealGroupStatus(matching))) throw new Error('This deal is no longer at a stage where Redemption Documents apply (needs Level 1 approval or later) — please refresh.');
   if(dealRedemptionConfirmation(matching)) throw new Error('This deal\'s Redemption step has already been confirmed.');
   if(dealRedemptionReturn(matching)) throw new Error('This deal is currently returned to the user — wait for them to resubmit before confirming.');
   const summary = dealRedemptionSummary(matching);
@@ -4252,7 +4259,7 @@ async function returnRedemptionToUser(dealId, tableName, comment){
   const rows = await getCanonicalTableRows(tableName);
   const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
   if(!matching.length) throw new Error('Could not find this deal anymore — please refresh and try again.');
-  if(dealGroupStatus(matching) !== STATUS_APPROVED) throw new Error('This deal is no longer Approved — please refresh.');
+  if(!isRedemptionEligibleStatus(dealGroupStatus(matching))) throw new Error('This deal is no longer at a stage where Redemption Documents apply (needs Level 1 approval or later) — please refresh.');
   if(!dealRedemptionRequest(matching)) throw new Error('Redemption Documents haven\'t been requested for this deal.');
   if(dealRedemptionConfirmation(matching)) throw new Error('This deal\'s Redemption step has already been confirmed.');
   if(dealRedemptionReturn(matching)) throw new Error('This deal is already returned to the user.');
@@ -4360,7 +4367,7 @@ async function requestRedemptionDocs(dealId, tableName, selection){
   const v = matching[0].values[0];
   const status = dealGroupStatus(matching);
   if(!dealNeedsRedemption(status, tableName, v[MC.supplyDemand])){
-    throw new Error('Redemption Documents can only be requested on a fully Approved (Level 3) Stock-Out (R)/Stock-In (R) REC deal — this deal is currently: ' + (status || 'unknown') + '.');
+    throw new Error('Redemption Documents can only be requested on a Stock-Out (R)/Stock-In (R) REC deal that has passed Level 1 approval — this deal is currently: ' + (status || 'unknown') + '.');
   }
   if(dealRedemptionConfirmation(matching)){
     throw new Error('Level 3 has already confirmed the Redemption step for this deal is complete.');
