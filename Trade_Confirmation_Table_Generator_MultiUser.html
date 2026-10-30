@@ -1400,6 +1400,12 @@ const STOCK_STATUS_DEALID_COL = "G";
 const STOCK_STATUS_STOCKIN_COL = "V";
 const STOCK_STATUS_STOCKOUT_COL = "Y";
 const STOCK_STATUS_CACHE_MS = 2 * 60 * 1000; // re-read at most every 2 minutes
+// Not everyone can open the Master Folder, so whenever someone who CAN
+// opens the app, it copies each deal's status into this column of the
+// TradeDealLog table (BD Agreement Record), which every user can read.
+// Users without Master Folder access see the status from this column.
+// Add a column with exactly this header at the end of TradeDealLog.
+const STOCK_STATUS_LOG_COLUMN_NAME = 'Stock Status';
 const STANDARD_LOG_TABLE_NAME = "TradeDealLog";
 const CC_LOG_TABLE_NAME = "TradeDealLog7"; // Excel Table on the workbook's CCDealLog sheet
 // Column layout of the restructured TradeDealLog "main list" table.
@@ -3325,6 +3331,11 @@ function tagBdColumnIndex(tableName){
   if(!names) return -1;
   return names.map(normalizeHeaderName).indexOf(normalizeHeaderName(TAG_BD_COLUMN_NAME));
 }
+function stockStatusLogColumnIndex(tableName){
+  const names = tableColumnNamesCache[tableName];
+  if(!names) return -1;
+  return names.map(normalizeHeaderName).indexOf(normalizeHeaderName(STOCK_STATUS_LOG_COLUMN_NAME));
+}
 function pendingSrcColumnIndex(tableName){
   const names = tableColumnNamesCache[tableName];
   if(!names) return -1;
@@ -3652,6 +3663,7 @@ async function getCanonicalTableRows(tableName){
   const redIdx = redReqColumnIndexes(tableName);
   const tagIdx = tagBdColumnIndex(tableName);
   const pendSrcIdx = pendingSrcColumnIndex(tableName);
+  const stockIdx = stockStatusLogColumnIndex(tableName);
   const flagIdx = dealFlagColumnIndexes(tableName);
   const cache = rawLogRowCache[tableName] = {};
   rawLogRowCacheHeaders[tableName] = tableHeaderSignature(tableName);
@@ -3667,6 +3679,8 @@ async function getCanonicalTableRows(tableName){
     if(out.values && out.values[0]) out.values[0].__redReq = readRedReqFromRaw(raw, redIdx);
     // Tagged BD In-charge (RECs and Carbon Credit) — read via dealTaggedBd.
     if(out.values && out.values[0]) out.values[0].__tagBd = tagIdx >= 0 ? String(raw[tagIdx] ?? '').trim() : '';
+    // Stock Status copied from the Master Folder (see syncStockStatusToLog).
+    if(out.values && out.values[0]) out.values[0].__stockStatus = stockIdx >= 0 ? String(raw[stockIdx] ?? '').trim() : '';
     // Staged per-source Vintage/Note (see PENDING_SRC_COLUMN_NAME).
     if(out.values && out.values[0]) out.values[0].__pendingSrc = pendSrcIdx >= 0 ? String(raw[pendSrcIdx] ?? '').trim() : '';
     // Hourly Deal / New Device flags (RECs) — read via dealFlags.
@@ -3750,6 +3764,14 @@ async function updateCanonicalTableRow(tableName, rowIndex, values, l2Override, 
     const v = ('__pendingSrcWrite' in values) ? values.__pendingSrcWrite : (cached ? (cached[pendSrcIdx] ?? '') : (raw[pendSrcIdx] ?? ''));
     while(raw.length <= pendSrcIdx) raw.push('');
     raw[pendSrcIdx] = v;
+  }
+  // Stock Status — always written back exactly as last read, so approvals
+  // and edits never wipe it (only syncStockStatusToLog changes it).
+  const stockIdx = stockStatusLogColumnIndex(tableName);
+  if(stockIdx >= 0){
+    const cached = (rawLogRowCache[tableName] || {})[rowIndex];
+    while(raw.length <= stockIdx) raw.push('');
+    raw[stockIdx] = cached ? (cached[stockIdx] ?? '') : (raw[stockIdx] ?? '');
   }
   // Hourly Deal / New Device — written back exactly as last read unless
   // this save carries a new __flagsWrite, so no other write can wipe them.
@@ -6311,7 +6333,13 @@ function refreshStockStatus(onUpdated, force){
   if(!force && stockStatusMap && (Date.now() - stockStatusLoadedAt) < STOCK_STATUS_CACHE_MS) return;
   if(stockStatusLoading) return;
   stockStatusLoading = fetchStockStatusMap()
-    .then(map => { stockStatusMap = map; stockStatusLoadedAt = Date.now(); stockStatusError = ''; if(onUpdated) onUpdated(); })
+    .then(async map => {
+      stockStatusMap = map; stockStatusLoadedAt = Date.now(); stockStatusError = '';
+      if(onUpdated) onUpdated();
+      // This user can read the Master Folder — share the status with
+      // everyone else via TradeDealLog's "Stock Status" column.
+      await syncStockStatusToLog();
+    })
     .catch(err => {
       stockStatusError = err && err.message || String(err);
       stockStatusLoadedAt = Date.now(); // don't hammer a failing file — retry after the cache window
@@ -6319,17 +6347,49 @@ function refreshStockStatus(onUpdated, force){
     })
     .finally(() => { stockStatusLoading = null; });
 }
-// Badge for one deal's status cell, or '' if not applicable / not found.
-// Stock-In deals use column V (received), Stock-Out deals column Y (delivered).
-function stockStatusBadgeHtml(dealId, orderType, sourceTable){
-  if(!stockStatusMap || sourceTable === CC_LOG_TABLE_NAME) return '';
-  if(!dealId || isPendingDealId(dealId)) return '';
+// Status for one deal from the live Master Folder map:
+// {isIn, done, rows} or null if not applicable / not found in the sheet.
+function stockStatusInfoFromMap(dealId, orderType){
+  if(!stockStatusMap || !dealId || isPendingDealId(dealId)) return null;
   const ot = String(orderType || '');
   const isIn = ot.indexOf('Stock-In') === 0, isOut = ot.indexOf('Stock-Out') === 0;
-  if(!isIn && !isOut) return '';
+  if(!isIn && !isOut) return null;
   const e = stockStatusMap[normalizeStockDealId(dealId)];
-  if(!e) return '';
-  const done = isIn ? e.stockIn : e.stockOut;
+  if(!e) return null;
+  return { isIn, done: isIn ? e.stockIn : e.stockOut, rows: e.rows };
+}
+// Text stored in the TradeDealLog "Stock Status" column for that info.
+function stockStatusText(info){
+  if(!info) return '';
+  const word = info.isIn ? 'Received' : 'Delivered';
+  if(info.done >= info.rows) return word;
+  if(info.done > 0) return word + ' ' + info.done + '/' + info.rows;
+  return info.isIn ? 'Not yet received' : 'Not yet delivered';
+}
+// Parses that stored text back into {isIn, done, rows}, or null.
+function stockStatusInfoFromText(t){
+  t = String(t || '').trim();
+  let m = t.match(/^(received|delivered)(?:\s+(\d+)\s*\/\s*(\d+))?$/i);
+  if(m){
+    const isIn = /^received$/i.test(m[1]);
+    return m[2] ? { isIn, done: +m[2], rows: +m[3] } : { isIn, done: 1, rows: 1 };
+  }
+  m = t.match(/^not yet (received|delivered)$/i);
+  if(m) return { isIn: /^received$/i.test(m[1]), done: 0, rows: 1 };
+  return null;
+}
+// Badge for one deal's status cell, or '' if not applicable / not found.
+// Uses the live Master Folder read when this user can open that file,
+// otherwise the copy stored in TradeDealLog's "Stock Status" column.
+// Stock-In deals = column V (received), Stock-Out deals = column Y (delivered).
+function stockStatusBadgeHtml(dealId, orderType, sourceTable, storedText){
+  if(sourceTable === CC_LOG_TABLE_NAME) return '';
+  if(!dealId || isPendingDealId(dealId)) return '';
+  const ot = String(orderType || '');
+  if(ot.indexOf('Stock-In') !== 0 && ot.indexOf('Stock-Out') !== 0) return '';
+  const info = stockStatusMap ? stockStatusInfoFromMap(dealId, orderType) : stockStatusInfoFromText(storedText);
+  if(!info) return '';
+  const isIn = info.isIn, done = info.done;
   const word = isIn ? 'Stock received' : 'Stock delivered';
   const notWord = isIn ? 'Stock not yet received' : 'Stock not yet delivered';
   const tip = 'From Master Folder › ' + STOCK_STATUS_SHEET_NAME + ' (column ' + (isIn ? STOCK_STATUS_STOCKIN_COL : STOCK_STATUS_STOCKOUT_COL) + ')';
@@ -6339,9 +6399,76 @@ function stockStatusBadgeHtml(dealId, orderType, sourceTable){
   const pill = (bg, icon, text) =>
     '<div style="margin-top:4px;"><span title="' + escapeHtml(tip) + '" style="display:inline-block;padding:2px 8px;border-radius:999px;' +
     'font-size:11px;font-weight:700;line-height:1.5;white-space:nowrap;color:#fff;background:' + bg + ';">' + icon + ' ' + escapeHtml(text) + '</span></div>';
-  if(done >= e.rows) return pill('#1a7f37', '✓', word);
-  if(done > 0) return pill('#b45309', '◐', word + ': ' + done + ' of ' + e.rows);
+  if(done >= info.rows) return pill('#1a7f37', '✓', word);
+  if(done > 0) return pill('#b45309', '◐', word + ': ' + done + ' of ' + info.rows);
   return pill('#c62828', '✕', notWord);
+}
+// Copies the live Master Folder status into TradeDealLog's "Stock Status"
+// column so users without Master Folder access can see it. Runs only for a
+// user whose app could read the Master Folder. Re-reads the table fresh,
+// and writes the whole column in ONE call — only if something changed.
+// Only ever touches the "Stock Status" column.
+let stockStatusSyncing = false;
+let stockStatusMissingColumnWarned = false;
+async function syncStockStatusToLog(){
+  if(!stockStatusMap || stockStatusSyncing) return false;
+  stockStatusSyncing = true;
+  try{
+    const tableName = STANDARD_LOG_TABLE_NAME;
+    await ensureFreshWorkbookSession();
+    const rows = (await getCanonicalTableRows(tableName)).slice().sort((a,b) => a.index - b.index);
+    const col = stockStatusLogColumnIndex(tableName);
+    if(col < 0){
+      if(!stockStatusMissingColumnWarned){
+        stockStatusMissingColumnWarned = true;
+        console.warn('TradeDealLog has no "' + STOCK_STATUS_LOG_COLUMN_NAME + '" column — add it so users without Master Folder access can see the stock status.');
+      }
+      return false;
+    }
+    if(!rows.length) return false;
+    let changed = false;
+    const newValues = rows.map(r => {
+      const v = r.values[0];
+      const want = stockStatusText(stockStatusInfoFromMap(v[MC.dealId], v[MC.supplyDemand]));
+      if(want !== (v.__stockStatus || '')) changed = true;
+      return [want];
+    });
+    if(!changed) return false;
+    // Work out the sheet cells for the column: table range address is like
+    // "Sheet!A1:BZ300" (header in the first row, then one row per index).
+    const tr = await graphFetch(workbookTablePath(tableName) + '/range?$select=address');
+    const m = String(tr && tr.address || '').match(/^(.*)!\$?([A-Z]+)\$?(\d+)(?::\$?[A-Z]+\$?\d+)?$/);
+    if(!m) throw new Error('Could not read the TradeDealLog table address.');
+    let sheet = m[1];
+    if(/^'.*'$/.test(sheet)) sheet = sheet.slice(1, -1).replace(/''/g, "'");
+    const colToNum = c => c.split('').reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0);
+    const numToCol = n => { let c = ''; while(n > 0){ const r = (n - 1) % 26; c = String.fromCharCode(65 + r) + c; n = Math.floor((n - 1) / 26); } return c; };
+    const letter = numToCol(colToNum(m[2]) + col);
+    const headerRow = parseInt(m[3], 10);
+    // Rows are written by their table index so the cells line up exactly.
+    const first = headerRow + 1 + rows[0].index;
+    const last = headerRow + 1 + rows[rows.length - 1].index;
+    if(last - first + 1 !== rows.length) throw new Error('TradeDealLog rows are not contiguous — skipped Stock Status sync.');
+    await graphFetch(
+      '/drives/' + driveId + '/items/' + fileItemId + "/workbook/worksheets('" + encodeURIComponent(sheet.replace(/'/g, "''")) + "')" +
+      "/range(address='" + letter + first + ':' + letter + last + "')",
+      { method: 'PATCH', body: JSON.stringify({ values: newValues }) }
+    );
+    // Keep the in-memory rows in step with what was just written.
+    const byIdx = {};
+    rows.forEach((r, i) => { byIdx[r.index] = newValues[i][0]; });
+    const cache = rawLogRowCache[tableName] || {};
+    Object.keys(byIdx).forEach(i => { if(cache[i]){ while(cache[i].length <= col) cache[i].push(''); cache[i][col] = byIdx[i]; } });
+    (logRowsCache || []).forEach(r => {
+      if(r._sourceTable === tableName && (r.index in byIdx) && r.values && r.values[0]) r.values[0].__stockStatus = byIdx[r.index];
+    });
+    return true;
+  }catch(err){
+    console.warn('Could not copy stock status into TradeDealLog', err);
+    return false;
+  }finally{
+    stockStatusSyncing = false;
+  }
 }
 function rerenderConfirmationLists(){
   applyConfirmationFilter('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-type', 'history-filter-order', 'history-filter-delivery-from', 'history-filter-delivery-to', 'history-filter-count');
@@ -6895,7 +7022,7 @@ function renderHistoryTable(el, groups, opts){
         // Stock received/delivered status is shown to EVERY user, including
         // on these summary-only rows.
         '<td style="padding:6px;">'+statusBadge(status)+
-          stockStatusBadgeHtml(v[MC.dealId], v[MC.supplyDemand], g.sourceTable || (g.rows[0] && g.rows[0]._sourceTable) || STANDARD_LOG_TABLE_NAME)+'</td>' +
+          stockStatusBadgeHtml(v[MC.dealId], v[MC.supplyDemand], g.sourceTable || (g.rows[0] && g.rows[0]._sourceTable) || STANDARD_LOG_TABLE_NAME, v.__stockStatus)+'</td>' +
         '<td style="padding:6px;white-space:nowrap;"><span class="row-lock-note">Owner only</span></td>' +
       '</tr>';
       return;
@@ -7041,7 +7168,7 @@ function renderHistoryTable(el, groups, opts){
         (trail ? '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">'+trail+'</div>' : '')+
         agreementLink+
         redemptionBadge+
-        stockStatusBadgeHtml(v[MC.dealId], v[MC.supplyDemand], rowSourceTable)+
+        stockStatusBadgeHtml(v[MC.dealId], v[MC.supplyDemand], rowSourceTable, v.__stockStatus)+
         dealFlagBadgesHtml(g.rows)+
         (isTaggedViewer
           ? '<div style="font-size:11px;color:#4a2d63;margin-top:2px;">👁 You\'re tagged on this deal — view only</div>'
