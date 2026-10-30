@@ -1387,6 +1387,19 @@ const SP_FILE_NAME = "BD Agreement Record.xlsx";
 // grab its "Copy link" URL again and paste it in here — nothing else in
 // resolveWorkbook needs to change.
 const SP_FILE_SHARE_URL = "https://saxonrenewables.sharepoint.com/:x:/s/Operations/IQCIkW5tgJWPQJB1t7KiWT7KAaDp_pqoAmZigGQ9UbvBQME?e=dquVG0";
+// ---- Stock delivery status (read-only, from the Master Folder workbook) ----
+// Each deal's Received/Delivered status is read from the "Single Trade (SO)"
+// sheet of the Master Folder workbook (a DIFFERENT file from the BD
+// Agreement Record). Column G holds the Deal ID, column V is the Stock-In
+// tickbox (ticked = stock received) and column Y is the Stock-Out tickbox
+// (ticked = stock delivered). Read only — the app never writes to this file.
+// If the file moves or the sheet/columns change, update these constants.
+const STOCK_STATUS_FILE_SHARE_URL = "https://saxonrenewables.sharepoint.com/:x:/s/Operations/IQCXRJ_rEm9gRKIx8nwKuQBAARaPrsxRzhjRjJ7zlU_jo0g?e=obnpky";
+const STOCK_STATUS_SHEET_NAME = "Single Trade (SO)";
+const STOCK_STATUS_DEALID_COL = "G";
+const STOCK_STATUS_STOCKIN_COL = "V";
+const STOCK_STATUS_STOCKOUT_COL = "Y";
+const STOCK_STATUS_CACHE_MS = 2 * 60 * 1000; // re-read at most every 2 minutes
 const STANDARD_LOG_TABLE_NAME = "TradeDealLog";
 const CC_LOG_TABLE_NAME = "TradeDealLog7"; // Excel Table on the workbook's CCDealLog sheet
 // Column layout of the restructured TradeDealLog "main list" table.
@@ -2763,7 +2776,7 @@ async function graphFetch(path, options){
   for(let attempt = 0; attempt < maxAttempts; attempt++){
     const token = await getAccessToken(options.scopes);
     const headers = Object.assign({ 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, options.headers || {});
-    if(isWorkbookCall && workbookSessionId) headers['workbook-session-id'] = workbookSessionId;
+    if(isWorkbookCall && workbookSessionId && !options.noWorkbookSession) headers['workbook-session-id'] = workbookSessionId;
     const res = await fetch('https://graph.microsoft.com/v1.0' + path, {
       method: options.method || 'GET',
       body: options.body,
@@ -2779,7 +2792,7 @@ async function graphFetch(path, options){
     // Excel sessions expire after ~5 min idle (or a longer hard cap) — if a
     // workbook call reports the session is gone, get a fresh one and retry
     // rather than surfacing an error the person can't do anything about.
-    const sessionExpired = isWorkbookCall && /InvalidSession|SessionNotFound|invalidSessionReCreatable|DeploymentInvalidEditSession/i.test(text);
+    const sessionExpired = isWorkbookCall && !options.noWorkbookSession && /InvalidSession|SessionNotFound|invalidSessionReCreatable|DeploymentInvalidEditSession/i.test(text);
     if(sessionExpired && !isLastAttempt){
       await createWorkbookSession();
       continue;
@@ -6244,6 +6257,93 @@ function wireConfirmationFilterBars(){
   wireConfirmationFilterBar('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-type', 'queue-filter-order', 'queue-filter-delivery-from', 'queue-filter-delivery-to', 'queue-filter-count');
 }
 
+/* ---- Stock delivery status (Master Folder > Single Trade (SO)) ----
+   Builds stockStatusMap: normalized Deal ID -> {rows, stockIn, stockOut}
+   (number of sheet rows for that Deal ID, and how many have V / Y ticked).
+   Best-effort: any failure (no access to the file, sheet renamed, etc.)
+   just leaves the map empty and logs a warning — the rest of the app is
+   unaffected and no delivery status is shown. */
+let stockStatusMap = null;
+let stockStatusLoadedAt = 0;
+let stockStatusLoading = null;
+let stockStatusError = '';
+let stockStatusFile = null; // {driveId, itemId}
+function normalizeStockDealId(v){
+  return String(v ?? '').replace(/\u00a0/g,' ').trim().toUpperCase();
+}
+function isStockTickOn(v){
+  return v === true || /^(true|yes|y|1|✓|✔|x)$/i.test(String(v ?? '').trim());
+}
+async function stockStatusFetchColumn(base, col, lastRow){
+  const addr = col + '1:' + col + lastRow;
+  const data = await graphFetch(base + "/range(address='" + addr + "')?$select=values", { noWorkbookSession: true });
+  return ((data && data.values) || []).map(r => r[0]);
+}
+async function fetchStockStatusMap(){
+  if(!stockStatusFile){
+    const item = await graphFetch('/shares/' + encodeShareUrl(STOCK_STATUS_FILE_SHARE_URL) + '/driveItem?$select=id,parentReference');
+    stockStatusFile = { driveId: item.parentReference.driveId, itemId: item.id };
+  }
+  const base = '/drives/' + stockStatusFile.driveId + '/items/' + stockStatusFile.itemId +
+    "/workbook/worksheets('" + encodeURIComponent(STOCK_STATUS_SHEET_NAME.replace(/'/g, "''")) + "')";
+  const used = await graphFetch(base + '/usedRange(valuesOnly=true)?$select=rowIndex,rowCount', { noWorkbookSession: true });
+  const lastRow = Math.max(1, ((used && used.rowIndex) || 0) + ((used && used.rowCount) || 0));
+  const [ids, ins, outs] = await Promise.all([
+    stockStatusFetchColumn(base, STOCK_STATUS_DEALID_COL, lastRow),
+    stockStatusFetchColumn(base, STOCK_STATUS_STOCKIN_COL, lastRow),
+    stockStatusFetchColumn(base, STOCK_STATUS_STOCKOUT_COL, lastRow)
+  ]);
+  const map = {};
+  ids.forEach((raw, i) => {
+    const id = normalizeStockDealId(raw);
+    if(!id) return;
+    const e = map[id] || (map[id] = { rows:0, stockIn:0, stockOut:0 });
+    e.rows++;
+    if(isStockTickOn(ins[i])) e.stockIn++;
+    if(isStockTickOn(outs[i])) e.stockOut++;
+  });
+  return map;
+}
+// Loads (or re-uses a fresh cached copy of) the stock status map. Calls
+// onUpdated() only when a NEW map was actually fetched, so the tables can
+// re-render with the status badges without delaying the first render.
+function refreshStockStatus(onUpdated, force){
+  if(!force && stockStatusMap && (Date.now() - stockStatusLoadedAt) < STOCK_STATUS_CACHE_MS) return;
+  if(stockStatusLoading) return;
+  stockStatusLoading = fetchStockStatusMap()
+    .then(map => { stockStatusMap = map; stockStatusLoadedAt = Date.now(); stockStatusError = ''; if(onUpdated) onUpdated(); })
+    .catch(err => {
+      stockStatusError = err && err.message || String(err);
+      stockStatusLoadedAt = Date.now(); // don't hammer a failing file — retry after the cache window
+      console.warn('Could not read stock delivery status from the Master Folder workbook', err);
+    })
+    .finally(() => { stockStatusLoading = null; });
+}
+// Badge for one deal's status cell, or '' if not applicable / not found.
+// Stock-In deals use column V (received), Stock-Out deals column Y (delivered).
+function stockStatusBadgeHtml(dealId, orderType, sourceTable){
+  if(!stockStatusMap || sourceTable === CC_LOG_TABLE_NAME) return '';
+  if(!dealId || isPendingDealId(dealId)) return '';
+  const ot = String(orderType || '');
+  const isIn = ot.indexOf('Stock-In') === 0, isOut = ot.indexOf('Stock-Out') === 0;
+  if(!isIn && !isOut) return '';
+  const e = stockStatusMap[normalizeStockDealId(dealId)];
+  if(!e) return '';
+  const done = isIn ? e.stockIn : e.stockOut;
+  const word = isIn ? 'Stock received' : 'Stock delivered';
+  const notWord = isIn ? 'Stock not yet received' : 'Not yet delivered';
+  const tip = ' title="From Master Folder › ' + escapeHtml(STOCK_STATUS_SHEET_NAME) + ' (column ' + (isIn ? STOCK_STATUS_STOCKIN_COL : STOCK_STATUS_STOCKOUT_COL) + ')"';
+  if(done >= e.rows) return '<div style="font-size:11px;color:#1f7a4d;margin-top:2px;"' + tip + '>📦 ' + word + '</div>';
+  if(done > 0) return '<div style="font-size:11px;color:#8a6d1f;margin-top:2px;"' + tip + '>📦 ' + word + ': ' + done + ' of ' + e.rows + '</div>';
+  return '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;"' + tip + '>📦 ' + notWord + '</div>';
+}
+function rerenderConfirmationLists(){
+  applyConfirmationFilter('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-type', 'history-filter-order', 'history-filter-delivery-from', 'history-filter-delivery-to', 'history-filter-count');
+  applyConfirmationFilter('admin', 'admin-history-list', 'admin-filter-search', 'admin-filter-status', 'admin-filter-type', 'admin-filter-order', 'admin-filter-delivery-from', 'admin-filter-delivery-to', 'admin-filter-count');
+  if(isAdmin){
+    applyConfirmationFilter('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-type', 'queue-filter-order', 'queue-filter-delivery-from', 'queue-filter-delivery-to', 'queue-filter-count');
+  }
+}
 async function loadHistory(){
   const listEl = document.getElementById('history-list');
   listEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Loading…</p>';
@@ -6298,6 +6398,7 @@ async function loadHistory(){
     refreshAnalysisBdOptions();
     wireAnalysisFilterBar();
     renderAnalysisTab();
+    refreshStockStatus(rerenderConfirmationLists);
     tryOpenDealFromUrl();
   }catch(err){
     listEl.innerHTML = '<p style="font-size:13px;color:#8a2d1f;">Could not load: ' + escapeHtml(err.message) + '</p>';
@@ -6931,6 +7032,7 @@ function renderHistoryTable(el, groups, opts){
         (trail ? '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">'+trail+'</div>' : '')+
         agreementLink+
         redemptionBadge+
+        stockStatusBadgeHtml(v[MC.dealId], v[MC.supplyDemand], rowSourceTable)+
         dealFlagBadgesHtml(g.rows)+
         (isTaggedViewer
           ? '<div style="font-size:11px;color:#4a2d63;margin-top:2px;">👁 You\'re tagged on this deal — view only</div>'
