@@ -6331,11 +6331,17 @@ function stockStatusBadgeHtml(dealId, orderType, sourceTable){
   if(!e) return '';
   const done = isIn ? e.stockIn : e.stockOut;
   const word = isIn ? 'Stock received' : 'Stock delivered';
-  const notWord = isIn ? 'Stock not yet received' : 'Not yet delivered';
-  const tip = ' title="From Master Folder › ' + escapeHtml(STOCK_STATUS_SHEET_NAME) + ' (column ' + (isIn ? STOCK_STATUS_STOCKIN_COL : STOCK_STATUS_STOCKOUT_COL) + ')"';
-  if(done >= e.rows) return '<div style="font-size:11px;color:#1f7a4d;margin-top:2px;"' + tip + '>📦 ' + word + '</div>';
-  if(done > 0) return '<div style="font-size:11px;color:#8a6d1f;margin-top:2px;"' + tip + '>📦 ' + word + ': ' + done + ' of ' + e.rows + '</div>';
-  return '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;"' + tip + '>📦 ' + notWord + '</div>';
+  const notWord = isIn ? 'Stock not yet received' : 'Stock not yet delivered';
+  const tip = 'From Master Folder › ' + STOCK_STATUS_SHEET_NAME + ' (column ' + (isIn ? STOCK_STATUS_STOCKIN_COL : STOCK_STATUS_STOCKOUT_COL) + ')';
+  // Solid, high-contrast pills (white text on a strong fill) so they read
+  // clearly in both light and dark mode: green = done, amber = partly done,
+  // red = not yet.
+  const pill = (bg, icon, text) =>
+    '<div style="margin-top:4px;"><span title="' + escapeHtml(tip) + '" style="display:inline-block;padding:2px 8px;border-radius:999px;' +
+    'font-size:11px;font-weight:700;line-height:1.5;white-space:nowrap;color:#fff;background:' + bg + ';">' + icon + ' ' + escapeHtml(text) + '</span></div>';
+  if(done >= e.rows) return pill('#1a7f37', '✓', word);
+  if(done > 0) return pill('#b45309', '◐', word + ': ' + done + ' of ' + e.rows);
+  return pill('#c62828', '✕', notWord);
 }
 function rerenderConfirmationLists(){
   applyConfirmationFilter('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-type', 'history-filter-order', 'history-filter-delivery-from', 'history-filter-delivery-to', 'history-filter-count');
