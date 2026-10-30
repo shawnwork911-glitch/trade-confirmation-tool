@@ -103,6 +103,10 @@
   #notif-panel .np-actions button{font-size:12px;padding:3px 10px;}
   #notif-panel .np-ok{color:#1e8449;font-weight:600;font-size:12px;}
   #notif-panel .np-wait{color:#b9770e;font-size:12px;}
+  #notif-panel .np-head-actions{display:flex;gap:6px;}
+  #notif-panel .np-item{position:relative;}
+  #notif-panel .np-x{float:right;margin:-4px -6px 4px 8px;width:24px;height:24px;padding:0;border:none;border-radius:6px;background:transparent;color:var(--text-secondary);font-size:18px;line-height:1;cursor:pointer;}
+  #notif-panel .np-x:hover{background:var(--surface-2);color:var(--text);}
   #notif-panel .np-empty{padding:18px 14px;font-size:13px;opacity:.7;text-align:center;}
   .wrap{
     max-width:960px;
@@ -739,6 +743,8 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 
 .wrap > *{max-width:1400px;width:100%;}
 #brand-block h1{font-size:20px;}
 #brand-block.desk-other h1:not(#desk-page-title),#brand-block.desk-other #page-subtitle{display:none;}
+/* Reset data belongs to the create forms only (role-based show/hide by the app still applies there) */
+#brand-block.desk-noncreate #new-confirmation-btn{display:none !important;}
 #main-tabs button[style*="inline-block"]{display:flex !important;}
 #new-confirmation-btn{margin-left:auto;align-self:flex-start;flex:none;white-space:nowrap;}
 
@@ -12817,6 +12823,14 @@ document.getElementById('save-agreement-btn').addEventListener('click', async ()
    If the table doesn't exist yet the bell simply stays hidden and nothing
    else in the app is affected. */
 const NOTIF_TABLE_NAME = "TradeNotifications";
+// "Clear" hides a notification for its recipient without deleting the row:
+// the Read column is set to "Cleared <ISO date>" (still truthy, so it also
+// counts as read everywhere). Rows are never deleted, so the BD's
+// "Admin Level 3 status" view and the Noted acknowledgement keep working.
+const NOTIF_CLEARED_PREFIX = 'Cleared ';
+function notifIsCleared(v){ return String(v[NC.read]||'').indexOf(NOTIF_CLEARED_PREFIX) === 0; }
+// A notification still waiting for this person's "Noted" can't be cleared.
+function notifCanClear(v){ return !(v[NC.needsAck] === 'Yes' && !v[NC.ackedBy]); }
 const NC = { id:0, to:1, type:2, dealId:3, message:4, created:5, read:6, needsAck:7, ackedBy:8, ackedDate:9, from:10 };
 let notifRows = [];
 let notifAvailable = false;
@@ -12905,7 +12919,7 @@ function renderNotifications(){
   if(!bell) return;
   bell.style.display = notifAvailable ? 'flex' : 'none';
   const me = notifMe();
-  const mine = notifRows.filter(r => String(r.values[0][NC.to]||'').toLowerCase() === me)
+  const mine = notifRows.filter(r => String(r.values[0][NC.to]||'').toLowerCase() === me && !notifIsCleared(r.values[0]))
     .sort((a,b) => String(b.values[0][NC.created]).localeCompare(String(a.values[0][NC.created])));
   // BD side: changes I sent that need Level 3 to acknowledge
   const sent = notifRows.filter(r => String(r.values[0][NC.from]||'').toLowerCase() === me &&
@@ -12924,12 +12938,16 @@ function renderNotifications(){
   badge.textContent = unread > 99 ? '99+' : String(unread);
   badge.style.display = unread ? 'flex' : 'none';
   let h = '<div class="np-head"><span>Notifications</span>' +
-    (unread ? '<button type="button" class="secondary" data-np="readall" style="font-size:12px;padding:3px 10px;">Mark all read</button>' : '') + '</div>';
+    '<span class="np-head-actions">' +
+    (unread ? '<button type="button" class="secondary" data-np="readall" style="font-size:12px;padding:3px 10px;">Mark all read</button>' : '') +
+    (mine.some(r => notifCanClear(r.values[0])) ? '<button type="button" class="secondary" data-np="clearall" style="font-size:12px;padding:3px 10px;">Clear all</button>' : '') +
+    '</span></div>';
   if(!mine.length && !sent.length) h += '<div class="np-empty">No notifications yet.</div>';
   mine.slice(0, 40).forEach(r => {
     const v = r.values[0];
     const canNote = v[NC.needsAck] === 'Yes' && !v[NC.ackedBy];
     h += '<div class="np-item' + (v[NC.read] ? '' : ' unread') + '" data-np="open" data-id="' + escapeHtml(v[NC.id]) + '" data-deal="' + escapeHtml(v[NC.dealId]) + '">' +
+      (notifCanClear(v) ? '<button type="button" class="np-x" data-np="clear" data-id="' + escapeHtml(v[NC.id]) + '" title="Clear this notification" aria-label="Clear this notification">&times;</button>' : '') +
       escapeHtml(v[NC.message]) +
       '<div class="np-meta">' + escapeHtml(notifAgo(v[NC.created])) + (v[NC.from] ? ' · from ' + escapeHtml(v[NC.from]) : '') + '</div>' +
       (v[NC.needsAck] === 'Yes' ? '<div class="np-actions">' + (canNote
@@ -12964,6 +12982,20 @@ async function onNotifPanelClick(e){
         const v = r.values[0].slice();
         if(String(v[NC.to]||'').toLowerCase() !== me || v[NC.read]) continue;
         v[NC.read] = new Date().toISOString();
+        await updateTableRow(NOTIF_TABLE_NAME, r.index, v);
+      }
+      await loadNotifications();
+    }else if(kind === 'clear' || kind === 'clearall'){
+      const me = notifMe();
+      const targets = kind === 'clear'
+        ? [findRow(t.dataset.id)].filter(Boolean)
+        : notifRows.filter(r => String(r.values[0][NC.to]||'').toLowerCase() === me && !notifIsCleared(r.values[0]));
+      t.disabled = true;
+      const clearedIso = NOTIF_CLEARED_PREFIX + new Date().toISOString();
+      for(const r of targets){
+        const v = r.values[0].slice();
+        if(String(v[NC.to]||'').toLowerCase() !== me || notifIsCleared(v) || !notifCanClear(v)) continue;
+        v[NC.read] = clearedIso;
         await updateTableRow(NOTIF_TABLE_NAME, r.index, v);
       }
       await loadNotifications();
@@ -13534,6 +13566,8 @@ document.getElementById('redemption-refresh-btn').addEventListener('click', ()=>
   var bb=document.getElementById('brand-block'), t=document.getElementById('desk-page-title'), st=document.getElementById('desk-page-subtitle'), tabs=document.getElementById('main-tabs');
   if(!bb||!t||!st||!tabs) return;
   var INFO={
+    form:['Renewable Energy Certificate Trade','Fill in the details below and save for approval. Once approved, generate the customer version table and email it to your customer, copying Ops and Middle Office.'],
+    carboncredit:['Carbon Credit Trade','Fill in the details below and save for approval. Once approved, generate the customer version table and email it to your customer, copying Ops and Middle Office.'],
     confirmations:['Confirmations','Track saved confirmations and act on anything waiting on your approval level — urgent and overdue deliveries first.'],
     analysis:['Analysis','Status and volume breakdown of every saved confirmation. Filter, sort, and export to Excel.'],
     redemption:['Redemption Form','Download the redemption form templates from SharePoint.'],
@@ -13544,6 +13578,7 @@ document.getElementById('redemption-refresh-btn').addEventListener('click', ()=>
     var a=tabs.querySelector('button.active'), k=a ? a.getAttribute('data-tab') : 'form';
     var info=INFO[k];
     bb.classList.toggle('desk-other',!!info);
+    bb.classList.toggle('desk-noncreate', k!=='form' && k!=='carboncredit');
     t.style.display = info ? '' : 'none';
     st.style.display = info ? '' : 'none';
     if(info){ t.textContent=info[0]; st.textContent=info[1]; }
