@@ -738,6 +738,8 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 
 .wrap{max-width:none;margin:0 0 0 var(--side-w);padding:calc(var(--topbar-h) + 24px) 28px 72px;gap:20px;}
 .wrap > *{max-width:1400px;width:100%;}
 #brand-block h1{font-size:20px;}
+#brand-block.desk-other h1:not(#desk-page-title),#brand-block.desk-other #page-subtitle{display:none;}
+#main-tabs button[style*="inline-block"]{display:flex !important;}
 #new-confirmation-btn{margin-left:auto;align-self:flex-start;flex:none;white-space:nowrap;}
 
 /* ---- tables (general polish) ---- */
@@ -974,6 +976,8 @@ td.desk-pin{white-space:nowrap;}
     <img src="assets/logo.png" alt="Company logo" style="width:44px;height:44px;object-fit:contain;flex-shrink:0;">
     <div>
       <h1>Commercial Approval Form</h1>
+      <h1 id="desk-page-title" style="display:none;"></h1>
+      <p class="subtitle" id="desk-page-subtitle" style="display:none;"></p>
       <p class="subtitle" id="page-subtitle">Fill in the details below, generate the Customer version table, then copy and send to your customer.</p>
     </div>
     <button type="button" id="new-confirmation-btn" class="secondary">Reset data</button>
@@ -13522,6 +13526,30 @@ document.getElementById('redemption-refresh-btn').addEventListener('click', ()=>
     robs.observe(rfields,{childList:true});
     if(rbanner) new MutationObserver(renderRedemptionProgress).observe(rbanner,{attributes:true,attributeFilter:['style']});
   }
+})();
+</script>
+<script>
+/* Desk: page heading follows the active sidebar tab (visual only) */
+(function(){
+  var bb=document.getElementById('brand-block'), t=document.getElementById('desk-page-title'), st=document.getElementById('desk-page-subtitle'), tabs=document.getElementById('main-tabs');
+  if(!bb||!t||!st||!tabs) return;
+  var INFO={
+    confirmations:['Confirmations','Track saved confirmations and act on anything waiting on your approval level — urgent and overdue deliveries first.'],
+    analysis:['Analysis','Status and volume breakdown of every saved confirmation. Filter, sort, and export to Excel.'],
+    redemption:['Redemption Form','Download the redemption form templates from SharePoint.'],
+    usermgmt:['User Management','Assign each person their approval level.'],
+    dealid:['Deal ID Settings','Manage how Deal IDs are assigned.']
+  };
+  function sync(){
+    var a=tabs.querySelector('button.active'), k=a ? a.getAttribute('data-tab') : 'form';
+    var info=INFO[k];
+    bb.classList.toggle('desk-other',!!info);
+    t.style.display = info ? '' : 'none';
+    st.style.display = info ? '' : 'none';
+    if(info){ t.textContent=info[0]; st.textContent=info[1]; }
+  }
+  new MutationObserver(sync).observe(tabs,{attributes:true,attributeFilter:['class'],subtree:true,childList:true});
+  sync();
 })();
 </script>
 </body>
