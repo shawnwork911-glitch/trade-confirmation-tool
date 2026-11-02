@@ -13657,13 +13657,13 @@ document.getElementById('redemption-refresh-btn').addEventListener('click', ()=>
 })();
 </script>
 <script>
-/* Desk: extra tool links in the account menu — only for Admin Level 1, 2 and 3 (visual only) */
+/* Desk: extra tool links in the account menu — only for Admin Level 1, 2, 3 and Super Admin (visual only) */
 (function(){
   var label=document.getElementById('user-role-label'), links=document.querySelectorAll('.desk-admin-link');
   if(!label||!links.length) return;
   function sync(){
     var role=''; try{ role=currentUserRole; }catch(e){}
-    var show = role==='admin1' || role==='admin2' || role==='admin3';
+    var show = role==='admin1' || role==='admin2' || role==='admin3' || role==='superadmin';
     links.forEach(function(a){ a.style.display = show ? 'inline-flex' : 'none'; });
   }
   new MutationObserver(sync).observe(label,{childList:true,characterData:true,subtree:true});
