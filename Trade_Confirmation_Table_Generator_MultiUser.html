@@ -1336,6 +1336,20 @@ html.desk-nav-hidden #main-tabs{transform:translateX(-100%);visibility:hidden;}
   </div>
 </div>
 
+<div id="cancel-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
+  <div style="width:100%;max-width:420px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:10px;">
+    <h2 style="margin:0;font-size:16px;"><span id="cancel-modal-title">Reject deal</span> — <span id="cancel-modal-dealid"></span></h2>
+    <p id="cancel-modal-intro" style="margin:0;font-size:13px;color:var(--text-secondary);"></p>
+    <label id="cancel-modal-label" style="margin:4px 0 0;">Justification (required)</label>
+    <textarea id="cancel-comment" style="min-height:90px;"></textarea>
+    <div id="cancel-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
+      <button type="button" class="secondary" id="cancel-modal-cancel">Back</button>
+      <button type="button" id="cancel-modal-submit" style="background:#c1493a;">Submit</button>
+    </div>
+  </div>
+</div>
+
 <div id="revert-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
   <div style="width:100%;max-width:420px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:10px;">
     <h2 style="margin:0;font-size:16px;">Revert to submitter — <span id="revert-modal-dealid"></span></h2>
@@ -1828,7 +1842,29 @@ const STATUS_PENDING_CHANGE_3 = "Pending Change - Level 3";
 // all admin levels (1/2/3) and the superadmin see every pending deal here,
 // not just the stage they can personally act on (see canActOnStatus for
 // the separate, narrower check that gates the Approve/Reject buttons).
-const PENDING_STATUSES = [STATUS_PENDING_1, STATUS_PENDING_2, STATUS_PENDING_3, STATUS_PENDING_CHANGE_3];
+// ---- BD cancellation (before Level 2 approval) ----
+// While a deal is at Pending Level 1 or Pending Level 2, the deal's owner (submitter / BD in-charge — see
+// isDealOwnerEmail) can press "Reject deal" in "My saved confirmations" to
+// ask for the deal to be cancelled, with a required justification. That
+// moves the deal to STATUS_PENDING_CANCEL_1 (from Pending Level 1) or
+// STATUS_PENDING_CANCEL_2 (from Pending Level 2), which sits in that
+// level's (and Super Admin's) Approval queue. That level then either:
+//   - confirms the cancellation -> STATUS_CANCELLED (a dead end, like
+//     Rejected), or
+//   - declines it (with a required comment) -> back to the pending status
+//     it came from, where the deal carries on through normal approval.
+// The other level (2 or 1) gets an FYI at each step. See CANCEL_STAGES.
+// While Pending Cancel, the BD's justification is held in the same
+// rejectedBy/rejectedDate/rejectReason columns Revert/Reject use (read
+// differently depending on Status, same convention as elsewhere). Once
+// confirmed, rejectedBy/rejectedDate hold the confirming admin and
+// rejectReason keeps the BD's justification. Every step is also appended to
+// the Edit Change Summary audit trail (see appendDealAuditEntry), so who
+// requested and who confirmed/declined is always on record.
+const STATUS_PENDING_CANCEL_1 = "Pending Cancel - Level 1";
+const STATUS_PENDING_CANCEL_2 = "Pending Cancel - Level 2";
+const STATUS_CANCELLED = "Cancelled";
+const PENDING_STATUSES = [STATUS_PENDING_1, STATUS_PENDING_2, STATUS_PENDING_3, STATUS_PENDING_CHANGE_3, STATUS_PENDING_CANCEL_1, STATUS_PENDING_CANCEL_2];
 
 /* ---- Deal ID is now only assigned once Level 1 approval happens ----
    Before that, a submitted agreement is tracked internally with a temporary
@@ -2192,9 +2228,9 @@ function applyRoleUi(){
 /* Which pending status (if any) the current user's role is allowed to act
    on. Superadmin can act on any pending stage. */
 function actionableStatusesForRole(role){
-  if(role === 'superadmin') return [STATUS_PENDING_1, STATUS_PENDING_2, STATUS_PENDING_3, STATUS_PENDING_CHANGE_3];
-  if(role === 'admin1') return [STATUS_PENDING_1];
-  if(role === 'admin2') return [STATUS_PENDING_2];
+  if(role === 'superadmin') return [STATUS_PENDING_1, STATUS_PENDING_2, STATUS_PENDING_3, STATUS_PENDING_CHANGE_3, STATUS_PENDING_CANCEL_1, STATUS_PENDING_CANCEL_2];
+  if(role === 'admin1') return [STATUS_PENDING_1, STATUS_PENDING_CANCEL_1];
+  if(role === 'admin2') return [STATUS_PENDING_2, STATUS_PENDING_CANCEL_2];
   if(role === 'admin3') return [STATUS_PENDING_3, STATUS_PENDING_CHANGE_3];
   return [];
 }
@@ -5401,6 +5437,223 @@ async function revertDeal(dealId, comment){
   await notifySubmitter(revertedStatus, dealId, matching[0].values[0][MC.submittedBy], trimmedComment);
   await loadHistory();
 }
+/* ---- BD cancellation request (Pending Level 1 or Pending Level 2) ----
+   See the STATUS_PENDING_CANCEL_1/2 comment near the status constants.
+   CANCEL_STAGE describes each of the two stages BD can reject from:
+     from      — the pending status BD rejects from (and that a Decline returns to)
+     pending   — the "awaiting confirmation" status
+     level     — which admin level confirms/declines
+     role      — that level's role
+     otherRole — the other level, which only gets an FYI */
+const CANCEL_STAGES = [
+  {from: STATUS_PENDING_1, pending: STATUS_PENDING_CANCEL_1, level: 1, role: 'admin1', otherLevel: 2, otherRole: 'admin2'},
+  {from: STATUS_PENDING_2, pending: STATUS_PENDING_CANCEL_2, level: 2, role: 'admin2', otherLevel: 1, otherRole: 'admin1'}
+];
+function cancelStageFrom(status){ return CANCEL_STAGES.find(c => c.from === status) || null; }
+function cancelStagePending(status){ return CANCEL_STAGES.find(c => c.pending === status) || null; }
+function isPendingCancelStatus(status){ return !!cancelStagePending(status); }
+// Which level confirmed a Cancelled deal: if Level 1 had already approved,
+// the cancellation was raised from Pending Level 2, otherwise Pending Level 1.
+function cancelledByLevel(v){ return (v && v[MC.approvedBy1]) ? 2 : 1; }
+function canRequestDealCancellation(status, isDealOwner){
+  return !!cancelStageFrom(status) && (isDealOwner || currentUserRole === 'superadmin');
+}
+// "Deal ID X" or, before Level 1 assigns one, "an agreement (no Deal ID yet)".
+function cancelDealLabelHtml(dealId){
+  return isPendingDealId(dealId) ? 'an agreement (no Deal ID yet)' : 'Deal ID <strong>' + escapeHtml(friendlyDealId(dealId)) + '</strong>';
+}
+function cancelDealLabelText(dealId){
+  return isPendingDealId(dealId) ? 'an agreement (no Deal ID yet)' : friendlyDealId(dealId);
+}
+// Recipients for a role, plus any extra addresses, de-duplicated, never the
+// person taking the action themselves.
+function cancelRecipients(role, extras){
+  const seen = new Set();
+  const out = [];
+  const me = String((currentAccount && currentAccount.username) || '').toLowerCase();
+  (role ? emailsForRole(role) : []).concat(extras || []).forEach(e=>{
+    const em = String(e || '').trim();
+    if(!em || em.indexOf('@') === -1) return;
+    const k = em.toLowerCase();
+    if(seen.has(k) || k === me) return;
+    seen.add(k);
+    out.push(em);
+  });
+  return out;
+}
+async function requestDealCancellation(dealId, justification){
+  if(!dealId) return;
+  const trimmed = (justification || '').trim();
+  if(!trimmed) throw new Error('A justification is required so the approver knows why this deal should be cancelled.');
+  await ensureFreshWorkbookSession();
+  const rows = await getCanonicalTableRows(dealLogTableName());
+  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
+  if(!matching.length) throw new Error('Deal not found — please refresh the page.');
+  const v0 = matching[0].values[0];
+  const currentStatus = dealGroupStatus(matching);
+  const stage = cancelStageFrom(currentStatus);
+  const myEmail = (currentAccount.username || '').toLowerCase();
+  const isOwner = isDealOwnerEmail(myEmail, v0[MC.salesPic], v0[MC.submittedBy]);
+  if(!stage){
+    await loadHistory();
+    throw new Error('This deal can only be rejected by BD while it is Pending Level 1 or Pending Level 2 (before Level 2 approval). Its current status is: ' + (currentStatus || 'Unknown') + '.');
+  }
+  if(!canRequestDealCancellation(currentStatus, isOwner)) throw new Error('Only the deal\'s submitter or BD in-charge can reject this deal.');
+  const nowIso = new Date().toISOString();
+  for(const r of matching){
+    const values = r.values[0].slice();
+    values[MC.status] = stage.pending;
+    values[MC.rejectedBy] = currentAccount.username;
+    values[MC.rejectedDate] = nowIso;
+    values[MC.rejectReason] = trimmed;
+    await updateCanonicalTableRow(dealLogTableName(), r.index, values);
+  }
+  await appendDealAuditEntry(dealId,
+    'Cancellation REQUESTED by BD at Pending Level ' + stage.level + ' on ' + auditTimestampLabel() + ' by ' + (currentAccount.username || 'unknown') +
+    '\nJustification: ' + trimmed);
+  await notifyCancellationRequested(dealId, stage, v0[MC.description], trimmed, v0[MC.approvedBy1]);
+  await loadHistory();
+}
+async function resolveDealCancellation(dealId, confirmCancel, comment){
+  if(!dealId) return;
+  const trimmed = (comment || '').trim();
+  if(!confirmCancel && !trimmed) throw new Error('A comment is required so BD knows why the cancellation was declined.');
+  await ensureFreshWorkbookSession();
+  const rows = await getCanonicalTableRows(dealLogTableName());
+  const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
+  if(!matching.length) throw new Error('Deal not found — please refresh the page.');
+  const v0 = matching[0].values[0];
+  const currentStatus = dealGroupStatus(matching);
+  const stage = cancelStagePending(currentStatus);
+  if(!stage){
+    await loadHistory();
+    throw new Error('This deal is no longer awaiting a cancellation decision (current status: ' + (currentStatus || 'Unknown') + '). Please refresh the page.');
+  }
+  if(!canActOnStatus(currentStatus)) throw new Error('Only Admin Level ' + stage.level + ' (or Super Admin) can confirm or decline this cancellation.');
+  const requestedBy = v0[MC.rejectedBy] || '';
+  const requestedDate = v0[MC.rejectedDate] || '';
+  const justification = v0[MC.rejectReason] || '';
+  const nowIso = new Date().toISOString();
+  for(const r of matching){
+    const values = r.values[0].slice();
+    if(confirmCancel){
+      values[MC.status] = STATUS_CANCELLED;
+      values[MC.rejectedBy] = currentAccount.username;
+      values[MC.rejectedDate] = nowIso;
+      values[MC.rejectReason] = justification;
+      // Same as rejectDeal: a cancelled deal is a dead end, so don't leave a
+      // Reg/Tech reminder stamp pointing the external flow at it.
+      if(values.length > MC.regTechReminderSentDate) values[MC.regTechReminderSentDate] = '';
+    } else {
+      // Back to the pending stage it was rejected from — nothing else changes.
+      values[MC.status] = stage.from;
+      values[MC.rejectedBy] = '';
+      values[MC.rejectedDate] = '';
+      values[MC.rejectReason] = '';
+    }
+    await updateCanonicalTableRow(dealLogTableName(), r.index, values);
+  }
+  await appendDealAuditEntry(dealId,
+    (confirmCancel ? 'Cancellation CONFIRMED by Level ' + stage.level + ' — deal Cancelled' : 'Cancellation DECLINED by Level ' + stage.level + ' — deal back to ' + stage.from) +
+    ' on ' + auditTimestampLabel() + ' by ' + (currentAccount.username || 'unknown') +
+    (requestedBy ? '\nRequested by ' + requestedBy + (requestedDate ? ' on ' + auditTimestampLabel(requestedDate) : '') : '') +
+    (justification ? '\nBD justification: ' + justification : '') +
+    (trimmed ? '\nLevel ' + stage.level + ' comment: ' + trimmed : ''));
+  await notifyCancellationOutcome(dealId, stage, confirmCancel, requestedBy, v0[MC.submittedBy], v0[MC.salesPic], justification, trimmed);
+  await notifyOtherLevelCancellation(dealId, stage, confirmCancel ? 'confirmed' : 'declined', justification, trimmed, v0[MC.approvedBy1]);
+  await loadHistory();
+}
+// Request raised: the confirming level gets an action-needed email + in-app
+// notification; the other level (1 or 2) gets an FYI.
+async function notifyCancellationRequested(dealId, stage, description, justification, level1ApproverEmail){
+  await notifyOtherLevelCancellation(dealId, stage, 'requested', justification, '', level1ApproverEmail);
+  const toEmails = cancelRecipients(stage.role, []);
+  const labelText = cancelDealLabelText(dealId);
+  if(!toEmails.length){
+    console.warn('No ' + stage.role + ' assigned — skipping cancellation-request notification for ' + dealId);
+    return;
+  }
+  addNotification(toEmails, 'cancel_requested', dealId, 'BD asked to cancel ' + labelText + ' — your Level ' + stage.level + ' confirmation is needed. Reason: ' + justification, {}).catch(()=>{});
+  const html = '<p>BD (' + escapeHtml(currentAccount.username || '') + ') has asked to <strong>cancel</strong> ' + cancelDealLabelHtml(dealId) + ', which is waiting on Level ' + stage.level + ' approval.</p>' +
+    '<p><strong>Justification:</strong> ' + escapeHtml(justification) + '</p>' +
+    ((description && String(description).trim()) ? '<p><strong>Description:</strong> ' + escapeHtml(description) + '</p>' : '') +
+    '<p>Please confirm or decline the cancellation in the Approval queue.</p>' +
+    '<p><a href="' + dealDeepLink(dealId) + '">Open it in the Trade Confirmation app</a></p>';
+  try{
+    await sendMailGraph(toEmails, 'Cancellation request — ' + labelText + ' (Admin — Level ' + stage.level + ')', html);
+  }catch(err){
+    console.error('Cancellation request email failed', err);
+  }
+}
+// FYI (email + in-app) to the level that is NOT confirming, at each step:
+// 'requested', 'confirmed' or 'declined'. For a Level 2 cancellation this is
+// Level 1 (every admin1, plus whoever actually approved the deal at Level 1);
+// for a Level 1 cancellation it is Level 2, so they know what's coming / gone.
+async function notifyOtherLevelCancellation(dealId, stage, step, justification, comment, level1ApproverEmail){
+  const toEmails = cancelRecipients(stage.otherRole, stage.otherRole === 'admin1' ? [level1ApproverEmail] : []);
+  if(!toEmails.length){
+    console.warn('No ' + stage.otherRole + ' assigned — skipping Level ' + stage.otherLevel + ' cancellation FYI for ' + dealId);
+    return;
+  }
+  const labelText = cancelDealLabelText(dealId);
+  const labelHtml = cancelDealLabelHtml(dealId);
+  const who = escapeHtml(currentAccount.username || '');
+  const context = stage.level === 2 ? ', which was approved at Level 1' : ', which has not been approved at Level 1 yet';
+  let inApp, subject, html;
+  if(step === 'requested'){
+    inApp = 'BD asked to cancel ' + labelText + ' — awaiting Level ' + stage.level + ' confirmation. Reason: ' + justification;
+    subject = 'FYI: BD rejected ' + labelText + ' — awaiting Level ' + stage.level;
+    html = '<p>BD (' + who + ') has rejected ' + labelHtml + context + '. Admin Level ' + stage.level + ' must confirm before it is cancelled.</p>' +
+      '<p><strong>Justification:</strong> ' + escapeHtml(justification) + '</p>' +
+      '<p>No action is needed from Level ' + stage.otherLevel + '.</p>';
+  } else if(step === 'confirmed'){
+    inApp = 'Cancelled: ' + labelText + ' — Level ' + stage.level + ' confirmed BD\'s rejection.';
+    subject = 'FYI: ' + labelText + ' cancelled';
+    html = '<p>Admin Level ' + stage.level + ' (' + who + ') has <strong>confirmed</strong> BD\'s request to cancel ' + labelHtml + '. The deal is now Cancelled.</p>' +
+      (justification ? '<p><strong>BD justification:</strong> ' + escapeHtml(justification) + '</p>' : '') +
+      (comment ? '<p><strong>Level ' + stage.level + ' comment:</strong> ' + escapeHtml(comment) + '</p>' : '');
+  } else {
+    inApp = 'Cancellation declined on ' + labelText + ' — back to ' + stage.from + '.' + (comment ? ' ' + comment : '');
+    subject = 'FYI: cancellation declined — ' + labelText;
+    html = '<p>Admin Level ' + stage.level + ' (' + who + ') has <strong>declined</strong> BD\'s request to cancel ' + labelHtml + '. It is back at ' + escapeHtml(stage.from) + '.</p>' +
+      (comment ? '<p><strong>Level ' + stage.level + ' comment:</strong> ' + escapeHtml(comment) + '</p>' : '');
+  }
+  addNotification(toEmails, 'cancel_fyi', dealId, inApp, {}).catch(()=>{});
+  try{
+    await sendMailGraph(toEmails, subject, html + '<p><a href="' + dealDeepLink(dealId) + '">Open it in the Trade Confirmation app</a></p>');
+  }catch(err){
+    console.error('Level ' + stage.otherLevel + ' cancellation FYI email failed', err);
+  }
+}
+async function notifyCancellationOutcome(dealId, stage, confirmed, requestedBy, submittedBy, salesPic, justification, comment){
+  const seen = new Set();
+  const toEmails = [];
+  [requestedBy, submittedBy, bdInChargeEmail(salesPic)].forEach(e=>{
+    const em = String(e || '').trim();
+    if(!em || em.indexOf('@') === -1) return;
+    const k = em.toLowerCase();
+    if(seen.has(k)) return;
+    seen.add(k);
+    toEmails.push(em);
+  });
+  if(!toEmails.length) return;
+  const labelText = cancelDealLabelText(dealId);
+  const labelHtml = cancelDealLabelHtml(dealId);
+  addNotification(toEmails, confirmed ? 'cancelled' : 'cancel_declined', dealId,
+    (confirmed ? 'Cancelled: ' + labelText : 'Cancellation declined on ' + labelText + (comment ? ' — ' + comment : '')), {}).catch(()=>{});
+  const html = confirmed
+    ? '<p>Your request to cancel ' + labelHtml + ' has been <strong>confirmed</strong> by Admin Level ' + stage.level + ' (' + escapeHtml(currentAccount.username || '') + '). The deal is now Cancelled.</p>' +
+      (justification ? '<p><strong>Your justification:</strong> ' + escapeHtml(justification) + '</p>' : '') +
+      (comment ? '<p><strong>Level ' + stage.level + ' comment:</strong> ' + escapeHtml(comment) + '</p>' : '')
+    : '<p>Your request to cancel ' + labelHtml + ' has been <strong>declined</strong> by Admin Level ' + stage.level + ' (' + escapeHtml(currentAccount.username || '') + '). It is back at ' + escapeHtml(stage.from) + ' and continues through normal approval.</p>' +
+      (comment ? '<p><strong>Level ' + stage.level + ' comment:</strong> ' + escapeHtml(comment) + '</p>' : '');
+  try{
+    await sendMailGraph(toEmails, (confirmed ? 'Deal cancelled — ' : 'Cancellation declined — ') + labelText,
+      html + '<p><a href="' + dealDeepLink(dealId) + '">Open it in the Trade Confirmation app</a></p>');
+  }catch(err){
+    console.error('Cancellation outcome email failed', err);
+  }
+}
 /* ---- Post-approval BD source matching change requests ----
    Only the original submitter can ask to correct a deal's Matching /
    Buyer-Seller / Which deal / No of RECs fields (see the "Request edit"
@@ -6020,11 +6273,11 @@ function groupByDealId(rows){
 // round trip to the shared workbook. See applyConfirmationFilters below.
 const historyGroupsCache = {mine:[], queue:[], admin:[]};
 const CONFIRMATION_FILTER_OPTS = {
-  mine: {showOwner:false, showActions:false, showRequestEdit:true, showFullEdit:true},
+  mine: {showOwner:false, showActions:false, showRequestEdit:true, showFullEdit:true, showCancelRequest:true},
   admin: {showOwner:true, showActions:false, restrictOthers:true},
   queue: {showOwner:true, showActions:true, emptyText:'Nothing pending right now.'}
 };
-const ALL_CONFIRMATION_STATUSES = [STATUS_PENDING_1, STATUS_REVERTED_1, STATUS_PENDING_2, STATUS_REVERTED_2, STATUS_PENDING_3, STATUS_REVERTED_3, STATUS_PENDING_CHANGE_3, STATUS_APPROVED, STATUS_REJECTED];
+const ALL_CONFIRMATION_STATUSES = [STATUS_PENDING_1, STATUS_REVERTED_1, STATUS_PENDING_2, STATUS_REVERTED_2, STATUS_PENDING_3, STATUS_REVERTED_3, STATUS_PENDING_CHANGE_3, STATUS_PENDING_CANCEL_1, STATUS_PENDING_CANCEL_2, STATUS_APPROVED, STATUS_REJECTED, STATUS_CANCELLED];
 function confirmationGroupType(g){
   return (g && g.sourceTable === CC_LOG_TABLE_NAME) ? 'carboncredit' : 'recs';
 }
@@ -6098,7 +6351,8 @@ function compareGroupsBySubmittedDesc(a, b){
 // earliest Delivery End Date), 1 = through Level 3, 2 = Rejected (always
 // at the very bottom). Tiers 1 and 2 are newest-submitted first.
 function groupSortTier(g){
-  if(dealGroupStatus(g.rows) === STATUS_REJECTED) return 2;
+  const st = dealGroupStatus(g.rows);
+  if(st === STATUS_REJECTED || st === STATUS_CANCELLED) return 2;
   return groupHasPassedLevel3(g) ? 1 : 0;
 }
 // ---- Delivery-due countdown + urgency flag ----
@@ -6361,8 +6615,11 @@ const ANALYSIS_STATUS_COLORS = {
   [STATUS_PENDING_3]: '#9c6d15',
   [STATUS_REVERTED_3]: '#b3560f',
   [STATUS_PENDING_CHANGE_3]: '#7a4d9f',
+  [STATUS_PENDING_CANCEL_1]: '#a8432f',
+  [STATUS_PENDING_CANCEL_2]: '#a8432f',
   [STATUS_APPROVED]: '#1f7a4d',
-  [STATUS_REJECTED]: '#8a2d1f'
+  [STATUS_REJECTED]: '#8a2d1f',
+  [STATUS_CANCELLED]: '#5a5a5a'
 };
 const ANALYSIS_VOLUME_COLORS = {
   matched: '#1f6f9c',
@@ -6458,7 +6715,7 @@ function renderAnalysisTab(){
   ALL_CONFIRMATION_STATUSES.forEach(s => counts[s] = 0);
   groups.forEach(g => { const s = dealGroupStatus(g.rows); counts[s] = (counts[s]||0) + 1; });
   const approvedCount = counts[STATUS_APPROVED] || 0;
-  const rejectedCount = counts[STATUS_REJECTED] || 0;
+  const rejectedCount = (counts[STATUS_REJECTED] || 0) + (counts[STATUS_CANCELLED] || 0);
   const pendingCount = total - approvedCount - rejectedCount;
   const pct = n => total ? Math.round((n/total)*1000)/10 : 0;
 
@@ -6470,15 +6727,15 @@ function renderAnalysisTab(){
   // its midpoint (see parseVolumeForTotals) rather than silently counted
   // as 0.
   const totalVolumeAll = groups.reduce((sum, g) => {
-    if(dealGroupStatus(g.rows) === STATUS_REJECTED) return sum;
+    if(dealGroupStatus(g.rows) === STATUS_REJECTED || dealGroupStatus(g.rows) === STATUS_CANCELLED) return sum;
     return sum + g.rows.reduce((s, r)=> s + parseVolumeForTotals(r.values[0][MC.volume]), 0);
   }, 0);
-  const anyVolumeUnconfirmed = groups.some(g => dealGroupStatus(g.rows) !== STATUS_REJECTED && g.rows.some(r => needsVolumeFix(r.values[0][MC.volume])));
+  const anyVolumeUnconfirmed = groups.some(g => dealGroupStatus(g.rows) !== STATUS_REJECTED && dealGroupStatus(g.rows) !== STATUS_CANCELLED && g.rows.some(r => needsVolumeFix(r.values[0][MC.volume])));
   // Total matched volume (across non-rejected deals), so we can show how
   // much of the total volume is still unmatched. Rounded to guard against
   // binary floating-point artifacts when summing decimal values.
   const totalMatchedVolumeAll = groups.reduce((sum, g) => {
-    if(dealGroupStatus(g.rows) === STATUS_REJECTED) return sum;
+    if(dealGroupStatus(g.rows) === STATUS_REJECTED || dealGroupStatus(g.rows) === STATUS_CANCELLED) return sum;
     return sum + g.rows.reduce((s, r)=>{
       const n = Number(r.values[0][MC.noOfRecs]);
       return s + (isFinite(n) ? n : 0);
@@ -6671,6 +6928,10 @@ function buildDealTimelineSteps(v, status, rows){
   if(v[MC.rejectedDate]){
     if(status === STATUS_REJECTED){
       steps.push({label:'Rejected', date:v[MC.rejectedDate], by:v[MC.rejectedBy], state:'rejected', reason:v[MC.rejectReason]});
+    } else if(isPendingCancelStatus(status)){
+      steps.push({label:'BD rejected — awaiting Level ' + cancelStagePending(status).level + ' confirmation', date:v[MC.rejectedDate], by:v[MC.rejectedBy], state:'onhold', note:v[MC.rejectReason], reason:v[MC.rejectReason]});
+    } else if(status === STATUS_CANCELLED){
+      steps.push({label:'Cancelled — confirmed by Level ' + cancelledByLevel(v), date:v[MC.rejectedDate], by:v[MC.rejectedBy], state:'rejected', note:v[MC.rejectReason], reason:v[MC.rejectReason]});
     } else {
       const revertInfo = REVERT_STATUS_INFO[status];
       const levelLabel = revertInfo ? ('Returned by Level '+revertInfo.level) : 'Returned to submitter';
@@ -6750,6 +7011,8 @@ function statusBadge(status){
   const s = status || STATUS_PENDING_1;
   const color = s === STATUS_APPROVED ? '#1f7a4d'
     : s === STATUS_REJECTED ? '#8a2d1f'
+    : s === STATUS_CANCELLED ? '#5a5a5a'
+    : isPendingCancelStatus(s) ? '#a8432f'
     : s === STATUS_PENDING_CHANGE_3 ? '#7a4d9f'
     : (s === STATUS_REVERTED_1 || s === STATUS_REVERTED_2 || s === STATUS_REVERTED_3) ? '#b3560f'
     : '#8a6d1f';
@@ -6779,6 +7042,7 @@ function renderHistoryTable(el, groups, opts){
   const showActions = !!opts.showActions;
   const showRequestEdit = !!opts.showRequestEdit;
   const showFullEdit = !!opts.showFullEdit;
+  const showCancelRequest = !!opts.showCancelRequest;
   const colCount = showOwner ? 8 : 7;
   // Delivery End Date filter (From/To), if active — passed through by
   // applyConfirmationFilter — so the Delivery End Date cell below only
@@ -6832,6 +7096,11 @@ function renderHistoryTable(el, groups, opts){
       return;
     }
     const canAct = showActions && canActOnStatus(status);
+    // BD cancellation (see STATUS_PENDING_CANCEL_1/2): the owner gets a
+    // "Reject deal" button while Pending Level 1 or 2; that level then sees
+    // Confirm/Decline instead of the normal Approve button.
+    const isCancelDecision = canAct && isPendingCancelStatus(status);
+    const canCancelRequest = showCancelRequest && canRequestDealCancellation(status, isDealOwner);
     // Revert replaces Reject at every stage of the main 3-level chain
     // (Pending Level 1/2/3) — sending the deal back to the submitter with a
     // comment instead of a dead-end Rejected status (see
@@ -6980,9 +7249,12 @@ function renderHistoryTable(el, groups, opts){
       '<td style="padding:6px;white-space:nowrap;">' +
         regTechWarningIcon +
         '<button type="button" class="secondary history-view-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;">View</button>' +
-        (canAct ? ' <button type="button" class="secondary history-approve-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;">Approve</button>' : '') +
+        (canAct && !isCancelDecision ? ' <button type="button" class="secondary history-approve-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;">Approve</button>' : '') +
         (canRevert ? ' <button type="button" class="secondary history-revert-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#8a6d1f;border-color:#e8c99a;" title="'+escapeHtml(revertTitle)+'">Revert to submitter</button>' : '') +
         (canReject ? ' <button type="button" class="secondary history-reject-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#8a2d1f;border-color:#c1493a;" title="Discards this requested BD source matching correction — the deal\'s already-Approved details are left untouched.">Reject change</button>' : '') +
+        (isCancelDecision ? ' <button type="button" class="secondary history-cancel-confirm-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#8a2d1f;border-color:#c1493a;" title="Confirm BD\'s request — the deal becomes Cancelled.">Confirm cancellation</button>' +
+            ' <button type="button" class="secondary history-cancel-decline-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;" title="Decline BD\'s request — the deal goes back to its pending level for normal approval.">Decline</button>' : '') +
+        (canCancelRequest ? ' <button type="button" class="secondary history-cancel-request-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#8a2d1f;border-color:#c1493a;" title="Cancel this deal. A justification is required and the current approval level must confirm before it is cancelled.">Reject deal</button>' : '') +
         (canRequestEdit ? ' <button type="button" class="secondary history-request-edit-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;">Request edit</button>' : '') +
         (canFullEdit ? ' <button type="button" class="secondary history-full-edit-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;" title="'+escapeHtml(fullEditTitle)+'">Edit &amp; resend</button>' : '') +
         ((canManageRedemption || canRequestRedemption || canConfirmRedemption || canReturnRedemption)
@@ -6999,6 +7271,21 @@ function renderHistoryTable(el, groups, opts){
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
         '<div style="background:#fdecea;border:1px solid #e2a49a;color:#8a2d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
         '<strong>Rejected'+(v[MC.rejectedBy]?(' by '+escapeHtml(v[MC.rejectedBy])):'')+':</strong> '+escapeHtml(v[MC.rejectReason]) +
+        '</div></td></tr>';
+    }
+    if(isPendingCancelStatus(status) && v[MC.rejectReason]){
+      const cStage = cancelStagePending(status);
+      html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
+        '<div style="background:#fdecea;border:1px solid #e2a49a;color:#8a2d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
+        '<strong>BD rejected this deal'+(v[MC.rejectedBy]?(' — '+escapeHtml(v[MC.rejectedBy])):'')+(v[MC.rejectedDate]?(' · '+escapeHtml(formatStoredDateTime(v[MC.rejectedDate]))):'')+':</strong> '+escapeHtml(v[MC.rejectReason]) +
+        ' <em>'+(isCancelDecision ? 'Confirm to cancel the deal, or Decline to send it back to '+escapeHtml(cStage.from)+'.' : 'Waiting on Admin Level '+cStage.level+' to confirm the cancellation.')+'</em>' +
+        '</div></td></tr>';
+    }
+    if(status === STATUS_CANCELLED){
+      html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
+        '<div style="background:#f0efec;border:1px solid #c9c6bf;color:#3a3a38;border-radius:6px;padding:8px 10px;font-size:12px;">' +
+        '<strong>Cancelled'+(v[MC.rejectedBy]?(' — confirmed by '+escapeHtml(v[MC.rejectedBy])):'')+'.</strong>' +
+        (v[MC.rejectReason] ? ' <strong>BD justification:</strong> '+escapeHtml(v[MC.rejectReason]) : '') +
         '</div></td></tr>';
     }
     // Reverted by Level 1, 2 or 3 — same rejectedBy/rejectedDate/rejectReason
@@ -7116,7 +7403,7 @@ function renderHistoryTable(el, groups, opts){
         currentLine + controls +
         '</details></td></tr>';
     }
-    if(v[MC.description] && (status === STATUS_PENDING_1 || status === STATUS_REVERTED_1)){
+    if(v[MC.description] && (status === STATUS_PENDING_1 || status === STATUS_REVERTED_1 || status === STATUS_PENDING_CANCEL_1)){
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
         '<div style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:12px;font-weight:bold;color:var(--text);">' +
         '<strong style="color:var(--text);">Commercial Justification:</strong> '+escapeHtml(v[MC.description]) +
@@ -7445,6 +7732,83 @@ document.getElementById('revert-modal-submit').addEventListener('click', async (
   try{
     await revertDeal(dealId, comment);
     closeRevertModal();
+  }catch(err){
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
+  }finally{
+    btn.disabled = false;
+  }
+});
+// ---- BD cancellation modal: mode 'request' (BD), 'confirm' / 'decline' (Level 2) ----
+let cancelModalDealId = null;
+let cancelModalMode = null;
+function openCancelModal(dealId, mode){
+  cancelModalDealId = dealId;
+  cancelModalMode = mode;
+  const displayId = friendlyDealId(dealId);
+  document.getElementById('cancel-modal-dealid').textContent = displayId;
+  document.getElementById('cancel-comment').value = '';
+  document.getElementById('cancel-modal-error').style.display = 'none';
+  const title = document.getElementById('cancel-modal-title');
+  const intro = document.getElementById('cancel-modal-intro');
+  const label = document.getElementById('cancel-modal-label');
+  const ta = document.getElementById('cancel-comment');
+  const submit = document.getElementById('cancel-modal-submit');
+  const modalGroup = logRowsCache.filter(r => (r._sourceTable||STANDARD_LOG_TABLE_NAME) === dealLogTableName() && String(r.values[0][MC.dealId] || '').trim() === String(dealId).trim());
+  const modalStatus = modalGroup.length ? dealGroupStatus(modalGroup) : null;
+  const modalStage = cancelStageFrom(modalStatus) || cancelStagePending(modalStatus) || CANCEL_STAGES[1];
+  if(mode === 'request'){
+    title.textContent = 'Reject deal';
+    intro.textContent = (modalStage.level === 1 ? 'Level 1 has not approved this deal yet.' : 'Level 1 has approved this deal but Level 2 has not yet.') +
+      ' Rejecting asks Admin Level ' + modalStage.level + ' to cancel it. The deal is only cancelled once Level ' + modalStage.level + ' confirms; if they decline, it goes back to ' + modalStage.from + '.';
+    label.textContent = 'Justification (required)';
+    ta.placeholder = 'e.g. Counterparty withdrew before signing.';
+    submit.textContent = 'Submit rejection';
+    submit.style.background = '#c1493a';
+  } else if(mode === 'confirm'){
+    title.textContent = 'Confirm cancellation';
+    intro.textContent = 'BD has asked to cancel this deal. Confirming marks it Cancelled — this cannot be undone. BD will be notified.';
+    label.textContent = 'Comment (optional)';
+    ta.placeholder = 'Optional note to BD.';
+    submit.textContent = 'Confirm cancellation';
+    submit.style.background = '#c1493a';
+  } else {
+    title.textContent = 'Decline cancellation';
+    intro.textContent = 'The deal goes back to ' + modalStage.from + ' and continues through normal approval. BD will see your comment.';
+    label.textContent = 'Comment (required)';
+    ta.placeholder = 'e.g. Counterparty has confirmed they still want to proceed.';
+    submit.textContent = 'Decline cancellation';
+    submit.style.background = '';
+  }
+  document.getElementById('cancel-modal-overlay').style.display = 'flex';
+  ta.focus();
+}
+function closeCancelModal(){
+  document.getElementById('cancel-modal-overlay').style.display = 'none';
+  cancelModalDealId = null;
+  cancelModalMode = null;
+}
+document.getElementById('cancel-modal-cancel').addEventListener('click', closeCancelModal);
+document.getElementById('cancel-modal-overlay').addEventListener('click', (e)=>{
+  if(e.target.id === 'cancel-modal-overlay') closeCancelModal();
+});
+document.getElementById('cancel-modal-submit').addEventListener('click', async ()=>{
+  const dealId = cancelModalDealId;
+  const mode = cancelModalMode;
+  const comment = document.getElementById('cancel-comment').value;
+  const errEl = document.getElementById('cancel-modal-error');
+  const btn = document.getElementById('cancel-modal-submit');
+  errEl.style.display = 'none';
+  if(mode !== 'confirm' && !comment.trim()){
+    errEl.textContent = mode === 'request' ? 'Please enter a justification.' : 'Please enter a comment for BD.';
+    errEl.style.display = 'block';
+    return;
+  }
+  btn.disabled = true;
+  try{
+    if(mode === 'request') await requestDealCancellation(dealId, comment);
+    else await resolveDealCancellation(dealId, mode === 'confirm', comment);
+    closeCancelModal();
   }catch(err){
     errEl.textContent = err.message;
     errEl.style.display = 'block';
@@ -8462,6 +8826,24 @@ document.addEventListener('click', (e)=>{
   if(rejectBtn){
     setActiveDealLogTable(rejectBtn.getAttribute('data-logtable'));
     openRejectModal(rejectBtn.getAttribute('data-dealid'));
+    return;
+  }
+  const cancelReqBtn = e.target.closest('.history-cancel-request-btn');
+  if(cancelReqBtn){
+    setActiveDealLogTable(cancelReqBtn.getAttribute('data-logtable'));
+    openCancelModal(cancelReqBtn.getAttribute('data-dealid'), 'request');
+    return;
+  }
+  const cancelConfirmBtn = e.target.closest('.history-cancel-confirm-btn');
+  if(cancelConfirmBtn){
+    setActiveDealLogTable(cancelConfirmBtn.getAttribute('data-logtable'));
+    openCancelModal(cancelConfirmBtn.getAttribute('data-dealid'), 'confirm');
+    return;
+  }
+  const cancelDeclineBtn = e.target.closest('.history-cancel-decline-btn');
+  if(cancelDeclineBtn){
+    setActiveDealLogTable(cancelDeclineBtn.getAttribute('data-logtable'));
+    openCancelModal(cancelDeclineBtn.getAttribute('data-dealid'), 'decline');
     return;
   }
   const revertBtn = e.target.closest('.history-revert-btn');
@@ -13247,7 +13629,7 @@ document.getElementById('redemption-refresh-btn').addEventListener('click', ()=>
   var STEPS=['Pending Level 1','Pending Level 2','Pending Level 3'];
   function dotClass(s){
     if(s==='Approved') return 'ok';
-    if(s==='Rejected') return 'bad';
+    if(s==='Rejected' || s==='Cancelled' || /^Pending Cancel/.test(s)) return 'bad';
     if(/^Pending Change/.test(s)) return 'purple';
     if(/^Reverted/.test(s)) return 'revert';
     return 'warn';
@@ -13542,7 +13924,7 @@ document.getElementById('redemption-refresh-btn').addEventListener('click', ()=>
   var legend=$('analysis-legend'), sbar=$('desk-status-bar');
   function segClass(s){
     if(s==='Approved') return 'ok';
-    if(s==='Rejected') return 'bad';
+    if(s==='Rejected' || s==='Cancelled' || /^Pending Cancel/.test(s)) return 'bad';
     if(/^Pending Change/.test(s)) return 'purple';
     if(/^Reverted/.test(s)) return 'revert';
     if(/Level 2/.test(s)) return 'warn2';
