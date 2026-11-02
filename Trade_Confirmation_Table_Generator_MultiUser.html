@@ -970,6 +970,8 @@ td.desk-pin{white-space:nowrap;}
         <div class="menu">
           <div class="who">Signed in as <strong id="user-email-label"></strong><span id="user-role-label"></span></div>
           <a href="https://shawnwork911-glitch.github.io/Task-Management/" target="_blank" rel="noopener noreferrer" class="secondary" id="task-tools-link" style="text-decoration:none;display:inline-flex;align-items:center;gap:5px;">Saxon Task Management &amp; Tools <span aria-hidden="true">&#8599;</span></a>
+          <a href="https://shawnwork911-glitch.github.io/SaxonFinanceAPRequest/" target="_blank" rel="noopener noreferrer" class="secondary admin-only-link" id="ap-request-link" style="text-decoration:none;display:none;align-items:center;gap:5px;">Saxon AP Request System <span aria-hidden="true">&#8599;</span></a>
+          <a href="https://shawnwork911-glitch.github.io/APISAXON/" target="_blank" rel="noopener noreferrer" class="secondary admin-only-link" id="solarlink-link" style="text-decoration:none;display:none;align-items:center;gap:5px;">SolarLink Connect — Multi-Brand Inverter API Extraction <span aria-hidden="true">&#8599;</span></a>
           <button type="button" id="signout-btn" class="secondary">Sign out</button>
         </div>
       </details>
@@ -2117,6 +2119,10 @@ document.addEventListener('click', e => {
 
 function applyRoleUi(){
   document.getElementById('user-role-label').textContent = ' · ' + ROLE_LABELS[currentUserRole];
+  // Extra tool links in the account menu (AP Request System, SolarLink
+  // Connect) — Admin Level 1/2/3 and Super Admin only; hidden for plain Users.
+  const showAdminLinks = ['admin1','admin2','admin3','superadmin'].indexOf(currentUserRole) !== -1;
+  document.querySelectorAll('.admin-only-link').forEach(a => { a.style.display = showAdminLinks ? 'inline-flex' : 'none'; });
   const isUserRole = canBuildAgreement();
   // Plain Users and Superadmin create/submit agreements. Admin1/2/3 are here
   // purely to review: they see the generated-table preview (when they click
