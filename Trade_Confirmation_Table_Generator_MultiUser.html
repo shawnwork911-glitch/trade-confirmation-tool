@@ -718,6 +718,8 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 
 #desk-user-menu .who{font-size:12px;color:var(--text-secondary);padding:2px 4px 8px;border-bottom:1px solid var(--border);word-break:break-all;}
 #desk-user-menu .who strong{color:var(--text);display:block;font-size:13px;}
 #desk-user-menu .menu button,#desk-user-menu .menu a{width:100%;justify-content:flex-start;text-align:left;}
+#desk-user-menu .menu a.desk-admin-link{white-space:normal;line-height:1.35;}
+#desk-user-menu .menu{min-width:300px;max-width:calc(100vw - 24px);}
 
 /* ---- sidebar ---- */
 #main-tabs{
@@ -1014,6 +1016,8 @@ html.desk-nav-hidden #main-tabs{transform:translateX(-100%);visibility:hidden;}
         <div class="menu">
           <div class="who">Signed in as <strong id="user-email-label"></strong><span id="user-role-label"></span></div>
           <a href="https://shawnwork911-glitch.github.io/Task-Management/" target="_blank" rel="noopener noreferrer" class="secondary" id="task-tools-link" style="text-decoration:none;display:inline-flex;align-items:center;gap:5px;">Saxon Task Management &amp; Tools <span aria-hidden="true">&#8599;</span></a>
+          <a href="https://shawnwork911-glitch.github.io/SaxonFinanceAPRequest/" target="_blank" rel="noopener noreferrer" class="secondary desk-admin-link" style="display:none;text-decoration:none;align-items:center;gap:5px;">Saxon AP Request System <span aria-hidden="true">&#8599;</span></a>
+          <a href="https://shawnwork911-glitch.github.io/APISAXON/" target="_blank" rel="noopener noreferrer" class="secondary desk-admin-link" style="display:none;text-decoration:none;align-items:center;gap:5px;">SolarLink Connect — Multi-Brand Inverter API Extraction <span aria-hidden="true">&#8599;</span></a>
           <button type="button" id="signout-btn" class="secondary">Sign out</button>
         </div>
       </details>
@@ -13650,6 +13654,20 @@ document.getElementById('redemption-refresh-btn').addEventListener('click', ()=>
     var h=!root.classList.contains('desk-nav-hidden'); apply(h);
     try{ localStorage.setItem(KEY, h?'1':'0'); }catch(e){}
   });
+})();
+</script>
+<script>
+/* Desk: extra tool links in the account menu — only for Admin Level 1, 2 and 3 (visual only) */
+(function(){
+  var label=document.getElementById('user-role-label'), links=document.querySelectorAll('.desk-admin-link');
+  if(!label||!links.length) return;
+  function sync(){
+    var role=''; try{ role=currentUserRole; }catch(e){}
+    var show = role==='admin1' || role==='admin2' || role==='admin3';
+    links.forEach(function(a){ a.style.display = show ? 'inline-flex' : 'none'; });
+  }
+  new MutationObserver(sync).observe(label,{childList:true,characterData:true,subtree:true});
+  sync();
 })();
 </script>
 </body>
