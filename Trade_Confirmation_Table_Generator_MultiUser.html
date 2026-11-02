@@ -927,6 +927,39 @@ td.desk-pin{white-space:nowrap;}
 #history-list td:last-child,#admin-history-list td:last-child,#approval-queue-list td:last-child,#urgent-deliveries-list td:last-child,#overdue-deliveries-list td:last-child,#hourly-deals-list td:last-child,#newdevice-deals-list td:last-child{padding-right:14px;}
 #history-list td:last-child button,#admin-history-list td:last-child button,#approval-queue-list td:last-child button,#urgent-deliveries-list td:last-child button,#overdue-deliveries-list td:last-child button,#hourly-deals-list td:last-child button,#newdevice-deals-list td:last-child button{white-space:nowrap;}
 #history-list td[colspan],#admin-history-list td[colspan],#approval-queue-list td[colspan],#urgent-deliveries-list td[colspan],#overdue-deliveries-list td[colspan],#hourly-deals-list td[colspan],#newdevice-deals-list td[colspan]{padding-right:14px;}
+
+/* ---- Readability: heavier text weights (visual only) ---- */
+body{font-weight:500;-webkit-font-smoothing:antialiased;}
+input,select,textarea,button{font-weight:500;}
+label,.field-label,.card-title,.card-note,.subtitle,p.subtitle,.muted,.small,.field-hint,.empty-note,.stat-label,.ct-label,.ct-count{font-weight:500;}
+label,.field-label,.card-title{font-weight:600;}
+th,thead th{font-weight:700;}
+td{font-weight:500;}
+h1,h2,h3{font-weight:700;}
+button.secondary,.btn,.tab-btn,.main-tab-btn,.subtab-btn,.task-subtab-btn,.rqa-subtab-btn{font-weight:600;}
+
+/* ---- Phone: tables become stacked cards (one card per deal) ---- */
+@media (max-width:600px){
+  .wrap{padding-left:10px;padding-right:10px;}
+  .card{padding:14px 14px;}
+  #history-list,#admin-history-list,#approval-queue-list,#urgent-deliveries-list,#overdue-deliveries-list,#hourly-deals-list,#newdevice-deals-list,#analysis-table-wrap{overflow-x:visible;}
+  #history-list table,#admin-history-list table,#approval-queue-list table,#urgent-deliveries-list table,#overdue-deliveries-list table,#hourly-deals-list table,#newdevice-deals-list table,#analysis-table-wrap table{display:block;width:100%;}
+  #history-list tbody,#admin-history-list tbody,#approval-queue-list tbody,#urgent-deliveries-list tbody,#overdue-deliveries-list tbody,#hourly-deals-list tbody,#newdevice-deals-list tbody,#analysis-table-wrap tbody{display:block;}
+  #history-list tr:has(> th),#admin-history-list tr:has(> th),#approval-queue-list tr:has(> th),#urgent-deliveries-list tr:has(> th),#overdue-deliveries-list tr:has(> th),#hourly-deals-list tr:has(> th),#newdevice-deals-list tr:has(> th),#analysis-table-wrap tr:has(> th){display:none;}
+  #history-list tr,#admin-history-list tr,#approval-queue-list tr,#urgent-deliveries-list tr,#overdue-deliveries-list tr,#hourly-deals-list tr,#newdevice-deals-list tr,#analysis-table-wrap tr{display:block;}
+  #history-list tr[data-orig]:not(:has(> td[colspan])),#admin-history-list tr[data-orig]:not(:has(> td[colspan])),#approval-queue-list tr[data-orig]:not(:has(> td[colspan])),#urgent-deliveries-list tr[data-orig]:not(:has(> td[colspan])),#overdue-deliveries-list tr[data-orig]:not(:has(> td[colspan])),#hourly-deals-list tr[data-orig]:not(:has(> td[colspan])),#newdevice-deals-list tr[data-orig]:not(:has(> td[colspan])),#analysis-table-wrap tr[data-orig]:not(:has(> td[colspan])){border:1px solid var(--border);border-radius:10px;padding:8px 12px;margin-top:10px;background:var(--surface);}
+  #history-list tr:has(> td[colspan]),#admin-history-list tr:has(> td[colspan]),#approval-queue-list tr:has(> td[colspan]),#urgent-deliveries-list tr:has(> td[colspan]),#overdue-deliveries-list tr:has(> td[colspan]),#hourly-deals-list tr:has(> td[colspan]),#newdevice-deals-list tr:has(> td[colspan]),#analysis-table-wrap tr:has(> td[colspan]){margin-top:-6px;}
+  #history-list tr:has(> td[colspan]),#admin-history-list tr:has(> td[colspan]),#approval-queue-list tr:has(> td[colspan]),#urgent-deliveries-list tr:has(> td[colspan]),#overdue-deliveries-list tr:has(> td[colspan]),#hourly-deals-list tr:has(> td[colspan]),#newdevice-deals-list tr:has(> td[colspan]),#analysis-table-wrap tr:has(> td[colspan]) > td{display:block;padding:0 0 4px;border:none;}
+  #history-list tr:not(:has(> td[colspan])) > td,#admin-history-list tr:not(:has(> td[colspan])) > td,#approval-queue-list tr:not(:has(> td[colspan])) > td,#urgent-deliveries-list tr:not(:has(> td[colspan])) > td,#overdue-deliveries-list tr:not(:has(> td[colspan])) > td,#hourly-deals-list tr:not(:has(> td[colspan])) > td,#newdevice-deals-list tr:not(:has(> td[colspan])) > td,#analysis-table-wrap tr:not(:has(> td[colspan])) > td{display:block;width:100%;padding:6px 0;overflow:hidden;border:none;text-align:right;position:static;background:transparent;white-space:normal;}
+  #history-list tr:not(:has(> td[colspan])) > td::before,#admin-history-list tr:not(:has(> td[colspan])) > td::before,#approval-queue-list tr:not(:has(> td[colspan])) > td::before,#urgent-deliveries-list tr:not(:has(> td[colspan])) > td::before,#overdue-deliveries-list tr:not(:has(> td[colspan])) > td::before,#hourly-deals-list tr:not(:has(> td[colspan])) > td::before,#newdevice-deals-list tr:not(:has(> td[colspan])) > td::before,#analysis-table-wrap tr:not(:has(> td[colspan])) > td::before{content:attr(data-label);float:left;margin-right:12px;max-width:45%;text-align:left;font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--text-secondary);padding-top:2px;}
+  #history-list td[data-label=""]::before,#admin-history-list td[data-label=""]::before,#approval-queue-list td[data-label=""]::before,#urgent-deliveries-list td[data-label=""]::before,#overdue-deliveries-list td[data-label=""]::before,#hourly-deals-list td[data-label=""]::before,#newdevice-deals-list td[data-label=""]::before,#analysis-table-wrap td[data-label=""]::before{display:none;}
+  #history-list td[data-label=""],#admin-history-list td[data-label=""],#approval-queue-list td[data-label=""],#urgent-deliveries-list td[data-label=""],#overdue-deliveries-list td[data-label=""],#hourly-deals-list td[data-label=""],#newdevice-deals-list td[data-label=""],#analysis-table-wrap td[data-label=""]{text-align:right;}
+  #history-list tr:not(:has(> td[colspan])) > td:last-child[data-label=""],#admin-history-list tr:not(:has(> td[colspan])) > td:last-child[data-label=""],#approval-queue-list tr:not(:has(> td[colspan])) > td:last-child[data-label=""],#urgent-deliveries-list tr:not(:has(> td[colspan])) > td:last-child[data-label=""],#overdue-deliveries-list tr:not(:has(> td[colspan])) > td:last-child[data-label=""],#hourly-deals-list tr:not(:has(> td[colspan])) > td:last-child[data-label=""],#newdevice-deals-list tr:not(:has(> td[colspan])) > td:last-child[data-label=""],#analysis-table-wrap tr:not(:has(> td[colspan])) > td:last-child[data-label=""]{display:flex;justify-content:flex-start;flex-wrap:wrap;gap:6px;border-top:1px solid var(--border);margin-top:4px;padding-top:10px;text-align:left;}
+  #history-list tr:not(:has(> td[colspan])) > td:last-child[data-label=""],#admin-history-list tr:not(:has(> td[colspan])) > td:last-child[data-label=""],#approval-queue-list tr:not(:has(> td[colspan])) > td:last-child[data-label=""],#urgent-deliveries-list tr:not(:has(> td[colspan])) > td:last-child[data-label=""],#overdue-deliveries-list tr:not(:has(> td[colspan])) > td:last-child[data-label=""],#hourly-deals-list tr:not(:has(> td[colspan])) > td:last-child[data-label=""],#newdevice-deals-list tr:not(:has(> td[colspan])) > td:last-child[data-label=""],#analysis-table-wrap tr:not(:has(> td[colspan])) > td:last-child[data-label=""] button{flex:1 1 auto;margin:0;}
+  #history-list td:last-child[data-label=""]::before,#admin-history-list td:last-child[data-label=""]::before,#approval-queue-list td:last-child[data-label=""]::before,#urgent-deliveries-list td:last-child[data-label=""]::before,#overdue-deliveries-list td:last-child[data-label=""]::before,#hourly-deals-list td:last-child[data-label=""]::before,#newdevice-deals-list td:last-child[data-label=""]::before,#analysis-table-wrap td:last-child[data-label=""]::before{display:none;}
+  #history-list .desk-stepper,#admin-history-list .desk-stepper,#approval-queue-list .desk-stepper,#urgent-deliveries-list .desk-stepper,#overdue-deliveries-list .desk-stepper,#hourly-deals-list .desk-stepper,#newdevice-deals-list .desk-stepper,#analysis-table-wrap .desk-stepper{margin-left:auto;}
+  .desk-pager{justify-content:space-between;}
+}
 </style>
 <script>
 // Applied immediately (before body paints) so returning users don't see a
@@ -970,8 +1003,6 @@ td.desk-pin{white-space:nowrap;}
         <div class="menu">
           <div class="who">Signed in as <strong id="user-email-label"></strong><span id="user-role-label"></span></div>
           <a href="https://shawnwork911-glitch.github.io/Task-Management/" target="_blank" rel="noopener noreferrer" class="secondary" id="task-tools-link" style="text-decoration:none;display:inline-flex;align-items:center;gap:5px;">Saxon Task Management &amp; Tools <span aria-hidden="true">&#8599;</span></a>
-          <a href="https://shawnwork911-glitch.github.io/SaxonFinanceAPRequest/" target="_blank" rel="noopener noreferrer" class="secondary admin-only-link" id="ap-request-link" style="text-decoration:none;display:none;align-items:center;gap:5px;">Saxon AP Request System <span aria-hidden="true">&#8599;</span></a>
-          <a href="https://shawnwork911-glitch.github.io/APISAXON/" target="_blank" rel="noopener noreferrer" class="secondary admin-only-link" id="solarlink-link" style="text-decoration:none;display:none;align-items:center;gap:5px;">SolarLink Connect — Multi-Brand Inverter API Extraction <span aria-hidden="true">&#8599;</span></a>
           <button type="button" id="signout-btn" class="secondary">Sign out</button>
         </div>
       </details>
@@ -1389,25 +1420,6 @@ const SP_FILE_NAME = "BD Agreement Record.xlsx";
 // grab its "Copy link" URL again and paste it in here — nothing else in
 // resolveWorkbook needs to change.
 const SP_FILE_SHARE_URL = "https://saxonrenewables.sharepoint.com/:x:/s/Operations/IQCIkW5tgJWPQJB1t7KiWT7KAaDp_pqoAmZigGQ9UbvBQME?e=dquVG0";
-// ---- Stock delivery status (read-only, from the Master Folder workbook) ----
-// Each deal's Received/Delivered status is read from the "Single Trade (SO)"
-// sheet of the Master Folder workbook (a DIFFERENT file from the BD
-// Agreement Record). Column G holds the Deal ID, column V is the Stock-In
-// tickbox (ticked = stock received) and column Y is the Stock-Out tickbox
-// (ticked = stock delivered). Read only — the app never writes to this file.
-// If the file moves or the sheet/columns change, update these constants.
-const STOCK_STATUS_FILE_SHARE_URL = "https://saxonrenewables.sharepoint.com/:x:/s/Operations/IQAkTmEx0W7_Rbf6Pmu57HuGAf2Z1k5VGW3lvd68_BBecpE?e=ic09wm";
-const STOCK_STATUS_SHEET_NAME = "Single Trade (SO)";
-const STOCK_STATUS_DEALID_COL = "G";
-const STOCK_STATUS_STOCKIN_COL = "V";
-const STOCK_STATUS_STOCKOUT_COL = "Y";
-const STOCK_STATUS_CACHE_MS = 2 * 60 * 1000; // re-read at most every 2 minutes
-// Not everyone can open the Master Folder, so whenever someone who CAN
-// opens the app, it copies each deal's status into this column of the
-// TradeDealLog table (BD Agreement Record), which every user can read.
-// Users without Master Folder access see the status from this column.
-// Add a column with exactly this header at the end of TradeDealLog.
-const STOCK_STATUS_LOG_COLUMN_NAME = 'Stock Status';
 const STANDARD_LOG_TABLE_NAME = "TradeDealLog";
 const CC_LOG_TABLE_NAME = "TradeDealLog7"; // Excel Table on the workbook's CCDealLog sheet
 // Column layout of the restructured TradeDealLog "main list" table.
@@ -2119,10 +2131,6 @@ document.addEventListener('click', e => {
 
 function applyRoleUi(){
   document.getElementById('user-role-label').textContent = ' · ' + ROLE_LABELS[currentUserRole];
-  // Extra tool links in the account menu (AP Request System, SolarLink
-  // Connect) — Admin Level 1/2/3 and Super Admin only; hidden for plain Users.
-  const showAdminLinks = ['admin1','admin2','admin3','superadmin'].indexOf(currentUserRole) !== -1;
-  document.querySelectorAll('.admin-only-link').forEach(a => { a.style.display = showAdminLinks ? 'inline-flex' : 'none'; });
   const isUserRole = canBuildAgreement();
   // Plain Users and Superadmin create/submit agreements. Admin1/2/3 are here
   // purely to review: they see the generated-table preview (when they click
@@ -2506,29 +2514,6 @@ function auditTagLine(oldTagValue, tagWrite){
 // Live vs staged (pending*) values on one row awaiting "Pending Change -
 // Level 3" — the same comparison approveBdMatchChange uses for its
 // Approved-list note, shared here so approve and reject log identical diffs.
-// Staged product Delivery Start/End date change, kept as JSON
-// {"dstart":"YYYY-MM-DD","dend":"YYYY-MM-DD"} in the (previously unused)
-// "Pending Delivery Date" column. null when nothing is staged — including
-// any legacy non-JSON value, which is ignored.
-function parsePendingDelivery(raw){
-  const s = String(raw || '').trim();
-  if(!s || s[0] !== '{') return null;
-  try{
-    const o = JSON.parse(s);
-    if(!o || (o.dstart === undefined && o.dend === undefined)) return null;
-    return { dstart: String(o.dstart || ''), dend: String(o.dend || '') };
-  }catch(e){ return null; }
-}
-// Diff lines for a staged delivery-date change (plain text).
-function pendingDeliveryDiffLines(values){
-  const pd = parsePendingDelivery(values[MC.pendingDeliveryDateM]);
-  if(!pd) return [];
-  const out = [];
-  const a1 = toDateInputValue(values[MC.deliveryStart]), a2 = toDateInputValue(values[MC.deliveryEnd]);
-  if(a1 !== pd.dstart) out.push('Delivery Start: ' + (formatStoredDate(values[MC.deliveryStart]) || '(blank)') + ' → ' + (formatStoredDate(pd.dstart) || '(blank)'));
-  if(a2 !== pd.dend) out.push('Delivery End: ' + (formatStoredDate(values[MC.deliveryEnd]) || '(blank)') + ' → ' + (formatStoredDate(pd.dend) || '(blank)'));
-  return out;
-}
 function pendingChangeDiffLines(values){
   const out = [];
   const d = (label, a, b) => { if((a||'') !== (b||'')) out.push(label + ': ' + (a||'(blank)') + ' → ' + (b||'(blank)')); };
@@ -2559,7 +2544,6 @@ function pendingChangeDiffLines(values){
     ];
     pairs.forEach(([label, a, b]) => { if(a !== b) out.push(label + ': ' + (a||'(blank)') + ' → ' + (b||'(blank)')); });
   }
-  pendingDeliveryDiffLines(values).forEach(l => out.push(l));
   return out;
 }
 
@@ -2812,7 +2796,7 @@ async function graphFetch(path, options){
   for(let attempt = 0; attempt < maxAttempts; attempt++){
     const token = await getAccessToken(options.scopes);
     const headers = Object.assign({ 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, options.headers || {});
-    if(isWorkbookCall && workbookSessionId && !options.noWorkbookSession) headers['workbook-session-id'] = workbookSessionId;
+    if(isWorkbookCall && workbookSessionId) headers['workbook-session-id'] = workbookSessionId;
     const res = await fetch('https://graph.microsoft.com/v1.0' + path, {
       method: options.method || 'GET',
       body: options.body,
@@ -2828,7 +2812,7 @@ async function graphFetch(path, options){
     // Excel sessions expire after ~5 min idle (or a longer hard cap) — if a
     // workbook call reports the session is gone, get a fresh one and retry
     // rather than surfacing an error the person can't do anything about.
-    const sessionExpired = isWorkbookCall && !options.noWorkbookSession && /InvalidSession|SessionNotFound|invalidSessionReCreatable|DeploymentInvalidEditSession/i.test(text);
+    const sessionExpired = isWorkbookCall && /InvalidSession|SessionNotFound|invalidSessionReCreatable|DeploymentInvalidEditSession/i.test(text);
     if(sessionExpired && !isLastAttempt){
       await createWorkbookSession();
       continue;
@@ -3361,11 +3345,6 @@ function tagBdColumnIndex(tableName){
   if(!names) return -1;
   return names.map(normalizeHeaderName).indexOf(normalizeHeaderName(TAG_BD_COLUMN_NAME));
 }
-function stockStatusLogColumnIndex(tableName){
-  const names = tableColumnNamesCache[tableName];
-  if(!names) return -1;
-  return names.map(normalizeHeaderName).indexOf(normalizeHeaderName(STOCK_STATUS_LOG_COLUMN_NAME));
-}
 function pendingSrcColumnIndex(tableName){
   const names = tableColumnNamesCache[tableName];
   if(!names) return -1;
@@ -3693,7 +3672,6 @@ async function getCanonicalTableRows(tableName){
   const redIdx = redReqColumnIndexes(tableName);
   const tagIdx = tagBdColumnIndex(tableName);
   const pendSrcIdx = pendingSrcColumnIndex(tableName);
-  const stockIdx = stockStatusLogColumnIndex(tableName);
   const flagIdx = dealFlagColumnIndexes(tableName);
   const cache = rawLogRowCache[tableName] = {};
   rawLogRowCacheHeaders[tableName] = tableHeaderSignature(tableName);
@@ -3709,8 +3687,6 @@ async function getCanonicalTableRows(tableName){
     if(out.values && out.values[0]) out.values[0].__redReq = readRedReqFromRaw(raw, redIdx);
     // Tagged BD In-charge (RECs and Carbon Credit) — read via dealTaggedBd.
     if(out.values && out.values[0]) out.values[0].__tagBd = tagIdx >= 0 ? String(raw[tagIdx] ?? '').trim() : '';
-    // Stock Status copied from the Master Folder (see syncStockStatusToLog).
-    if(out.values && out.values[0]) out.values[0].__stockStatus = stockIdx >= 0 ? String(raw[stockIdx] ?? '').trim() : '';
     // Staged per-source Vintage/Note (see PENDING_SRC_COLUMN_NAME).
     if(out.values && out.values[0]) out.values[0].__pendingSrc = pendSrcIdx >= 0 ? String(raw[pendSrcIdx] ?? '').trim() : '';
     // Hourly Deal / New Device flags (RECs) — read via dealFlags.
@@ -3794,14 +3770,6 @@ async function updateCanonicalTableRow(tableName, rowIndex, values, l2Override, 
     const v = ('__pendingSrcWrite' in values) ? values.__pendingSrcWrite : (cached ? (cached[pendSrcIdx] ?? '') : (raw[pendSrcIdx] ?? ''));
     while(raw.length <= pendSrcIdx) raw.push('');
     raw[pendSrcIdx] = v;
-  }
-  // Stock Status — always written back exactly as last read, so approvals
-  // and edits never wipe it (only syncStockStatusToLog changes it).
-  const stockIdx = stockStatusLogColumnIndex(tableName);
-  if(stockIdx >= 0){
-    const cached = (rawLogRowCache[tableName] || {})[rowIndex];
-    while(raw.length <= stockIdx) raw.push('');
-    raw[stockIdx] = cached ? (cached[stockIdx] ?? '') : (raw[stockIdx] ?? '');
   }
   // Hourly Deal / New Device — written back exactly as last read unless
   // this save carries a new __flagsWrite, so no other write can wipe them.
@@ -4045,15 +4013,8 @@ async function uploadRedemptionDocument(dealId, productIndex, docIndex, file){
 // NOTE: this now only means the deal is ELIGIBLE for a Redemption Docs
 // request — the upload step itself only opens once an admin has actually
 // requested the docs (see dealRedemptionRequest/requestRedemptionDocs).
-// Redemption Docs can be requested as soon as Level 1 has approved — i.e.
-// while the deal is Pending Level 2, Pending Level 3, or fully Approved —
-// so Admin Level 3 doesn't have to wait for the final Level 3 sign-off.
-const REDEMPTION_ELIGIBLE_STATUSES = [STATUS_PENDING_2, STATUS_PENDING_3, STATUS_APPROVED, STATUS_PENDING_CHANGE_3]; // Pending Change = an already-approved deal with an edit awaiting Level 3
-function isRedemptionEligibleStatus(status){
-  return REDEMPTION_ELIGIBLE_STATUSES.includes(status);
-}
 function dealNeedsRedemption(status, sourceTable, orderType){
-  return isRedemptionEligibleStatus(status) && sourceTable !== CC_LOG_TABLE_NAME && isRedemptionOrderType(orderType);
+  return status === STATUS_APPROVED && sourceTable !== CC_LOG_TABLE_NAME && isRedemptionOrderType(orderType);
 }
 // The admin's Redemption Docs request stamp on one row, or null if none.
 function redemptionRequestInfo(v){
@@ -4213,8 +4174,8 @@ async function loadEditableRedemptionRow(dealId, tableName, rowUid, productIndex
   let row = rowUid ? matching.find(r => String(r.values[0][MC.rowUid] || '') === rowUid) : null;
   if(!row) row = matching[productIndex - 1];
   if(!row) throw new Error('Could not find Product ' + productIndex + ' on this deal anymore — please refresh and try again.');
-  if(!isRedemptionEligibleStatus(row.values[0][MC.status])){
-    throw new Error('This deal is no longer at a stage where Redemption Documents apply (needs Level 1 approval or later) — please refresh.');
+  if(row.values[0][MC.status] !== STATUS_APPROVED){
+    throw new Error('This deal is no longer Approved — please refresh.');
   }
   if(!dealRedemptionRequest(matching)){
     throw new Error('Redemption Documents haven\'t been requested for this deal yet — they only need to be uploaded once an Admin Level 3 requests them.');
@@ -4295,7 +4256,7 @@ async function confirmRedemptionComplete(dealId, tableName){
   const rows = await getCanonicalTableRows(tableName);
   const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
   if(!matching.length) throw new Error('Could not find this deal anymore — please refresh and try again.');
-  if(!isRedemptionEligibleStatus(dealGroupStatus(matching))) throw new Error('This deal is no longer at a stage where Redemption Documents apply (needs Level 1 approval or later) — please refresh.');
+  if(dealGroupStatus(matching) !== STATUS_APPROVED) throw new Error('This deal is no longer Approved — please refresh.');
   if(dealRedemptionConfirmation(matching)) throw new Error('This deal\'s Redemption step has already been confirmed.');
   if(dealRedemptionReturn(matching)) throw new Error('This deal is currently returned to the user — wait for them to resubmit before confirming.');
   const summary = dealRedemptionSummary(matching);
@@ -4324,7 +4285,7 @@ async function returnRedemptionToUser(dealId, tableName, comment){
   const rows = await getCanonicalTableRows(tableName);
   const matching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
   if(!matching.length) throw new Error('Could not find this deal anymore — please refresh and try again.');
-  if(!isRedemptionEligibleStatus(dealGroupStatus(matching))) throw new Error('This deal is no longer at a stage where Redemption Documents apply (needs Level 1 approval or later) — please refresh.');
+  if(dealGroupStatus(matching) !== STATUS_APPROVED) throw new Error('This deal is no longer Approved — please refresh.');
   if(!dealRedemptionRequest(matching)) throw new Error('Redemption Documents haven\'t been requested for this deal.');
   if(dealRedemptionConfirmation(matching)) throw new Error('This deal\'s Redemption step has already been confirmed.');
   if(dealRedemptionReturn(matching)) throw new Error('This deal is already returned to the user.');
@@ -4432,7 +4393,7 @@ async function requestRedemptionDocs(dealId, tableName, selection){
   const v = matching[0].values[0];
   const status = dealGroupStatus(matching);
   if(!dealNeedsRedemption(status, tableName, v[MC.supplyDemand])){
-    throw new Error('Redemption Documents can only be requested on a Stock-Out (R)/Stock-In (R) REC deal that has passed Level 1 approval — this deal is currently: ' + (status || 'unknown') + '.');
+    throw new Error('Redemption Documents can only be requested on a fully Approved (Level 3) Stock-Out (R)/Stock-In (R) REC deal — this deal is currently: ' + (status || 'unknown') + '.');
   }
   if(dealRedemptionConfirmation(matching)){
     throw new Error('Level 3 has already confirmed the Redemption step for this deal is complete.');
@@ -5563,15 +5524,6 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
       lines.push((isCCTable ? 'Volume (VCUs): ' : 'Volume (RECs): ') + (String(rv[MC.volume] ?? '') || '(blank)') + ' \u2192 ' + (edit.volume||'(blank)'));
       volumeChangedAny = true;
     }
-    // Product Delivery Start/End dates — staged for Level 3 like everything else.
-    if(edit.dstart !== undefined || edit.dend !== undefined){
-      const curS = toDateInputValue(rv[MC.deliveryStart]), curE = toDateInputValue(rv[MC.deliveryEnd]);
-      const newS = edit.dstart !== undefined ? String(edit.dstart || '') : curS;
-      const newE = edit.dend !== undefined ? String(edit.dend || '') : curE;
-      if(curS !== newS) lines.push('Delivery Start: ' + (formatStoredDate(rv[MC.deliveryStart]) || '(blank)') + ' \u2192 ' + (formatStoredDate(newS) || '(blank)'));
-      if(curE !== newE) lines.push('Delivery End: ' + (formatStoredDate(rv[MC.deliveryEnd]) || '(blank)') + ' \u2192 ' + (formatStoredDate(newE) || '(blank)'));
-      if(curS !== newS || curE !== newE) edit.__deliveryStage = JSON.stringify({ dstart: newS, dend: newE });
-    }
     // Per-source Vintage / Matching note (see srcVintageNoteFieldsHtml).
     if(edit.vstart !== undefined){
       const before = { vs: normSrcVintage(rv[MC.sourceVintageStart]), ve: normSrcVintage(rv[MC.sourceVintageEnd]), nt: normSrcNote(rv[MC.sourceMatchNote]) };
@@ -5633,12 +5585,7 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
   // Route to Level 3 when the deal hasn't finished Level 3 yet (unchanged
   // behaviour) OR when any product's Volume changed — a quantity change is
   // never applied without Level 3 sign-off, even on an Approved deal.
-  // EVERY change to a deal/product made after Level 2 — Pending Level 3 OR
-  // already fully Approved — is staged as "Pending Change - Level 3" and
-  // only goes live once Admin Level 3 approves it (approveBdMatchChange).
-  // (Tag BD in-charge is view-only access, not deal data, and is still
-  // saved immediately — see finishTagWrite.)
-  const stageForLevel3 = true;
+  const stageForLevel3 = currentStatus === STATUS_PENDING_3 || volumeChangedAny;
   if(volumeChangedAny && matching[0].values[0].length <= MC.pendingVolume){
     throw new Error('Volume can\'t be changed yet: the ' + (isCCTable ? 'CCDealLog' : 'TradeDealLog') + ' table is missing its "Pending Volume" column. Ask an admin to add it, then try again.');
   }
@@ -5663,9 +5610,10 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
       values[MC.pendingBuyerSeller] = edit.buyerSeller || '';
       values[MC.pendingWhichDeal] = edit.whichDeal || '';
       values[MC.pendingNoOfRecs] = edit.noOfRecs || '';
-      // Product Delivery Start/End change (JSON, see parsePendingDelivery),
-      // or blank when this request doesn't change the delivery dates.
-      values[MC.pendingDeliveryDateM] = edit.__deliveryStage || '';
+      // Delivery date is gone entirely now — never staged for any deal, so
+      // approveBdMatchChange's guard never has anything to copy into the
+      // live Delivery Date column.
+      values[MC.pendingDeliveryDateM] = '';
       values[MC.pendingRegistry] = edit.registry || '';
       values[MC.pendingTech] = edit.tech || '';
       // Optional column (see pendingVolume on MC) — only stage it if the
@@ -5692,7 +5640,7 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
     }
     await finishTagWrite();
     await appendDealAuditEntry(dealId, buildAuditEntry('Change REQUESTED via "Request edit" (awaiting Level 3 approval, not yet live' +
-      (currentStatus === STATUS_APPROVED ? '; deal was already Approved' : '') + ')'));
+      (currentStatus === STATUS_APPROVED ? '; sent to Level 3 because Volume changed on an Approved deal' : '') + ')'));
     const notifyBody = changeLines.join('\n') + (matchNote ? '\n\nNote: ' + matchNote : '');
     await notifyNextApprover(STATUS_PENDING_CHANGE_3, dealId, matching[0].values[0][MC.description], notifyBody);
     await notifyAdmin3OfBdChange(dealId, matching[0].values[0][MC.description], changeLines, matchNote, 'pending', false);
@@ -5854,7 +5802,9 @@ async function approveBdMatchChange(dealId){
     if((values[MC.noOfRecs]||'') !== (values[MC.pendingNoOfRecs]||'')){
       noteLines.push('No of RECs: ' + (values[MC.noOfRecs]||'(blank)') + ' \u2192 ' + (values[MC.pendingNoOfRecs]||'(blank)'));
     }
-    pendingDeliveryDiffLines(values).forEach(l => noteLines.push(l));
+    // Delivery date is gone entirely now — never staged/diffed here any
+    // more (see the comment above this function); the live column, if a
+    // legacy row still has a real value in it, is left completely alone.
     if((values[MC.registry]||'') !== (values[MC.pendingRegistry]||'')){
       noteLines.push('Registry: ' + registryDisplayName(values[MC.registry]) + ' \u2192 ' + registryDisplayName(values[MC.pendingRegistry]));
     }
@@ -5874,19 +5824,15 @@ async function approveBdMatchChange(dealId){
       sv('Source Matching Note', normSrcNote(values[MC.sourceMatchNote]), normSrcNote(stagedSrc.note));
     }
     const submitterNote = values[MC.pendingMatchNote] || '';
-    const changeNote = 'Change' + (noteLines.length ? ': ' + noteLines.join(', ') : '') +
+    const changeNote = 'BD source matching change' + (noteLines.length ? ': ' + noteLines.join(', ') : '') +
       (submitterNote ? ' \u2014 Note: ' + submitterNote : '');
     values[MC.matching] = values[MC.pendingMatching];
     values[MC.buyerSeller] = values[MC.pendingBuyerSeller];
     values[MC.whichDeal] = values[MC.pendingWhichDeal];
     values[MC.noOfRecs] = values[MC.pendingNoOfRecs];
-    // Staged product Delivery Start/End (see parsePendingDelivery) — only
-    // applied when this request actually staged one.
-    const stagedDelivery = parsePendingDelivery(values[MC.pendingDeliveryDateM]);
-    if(stagedDelivery){
-      values[MC.deliveryStart] = stagedDelivery.dstart;
-      values[MC.deliveryEnd] = stagedDelivery.dend;
-    }
+    // Delivery date is gone entirely now — the live Delivery Date column is
+    // never touched here (see the comment above this function), so a
+    // legacy row that still has a real value in it keeps it untouched.
     // Only ever overwritten with a non-blank value when this product
     // actually went through the Registry/Tech fix flow (edits always carry
     // the product's current value through when no fix was needed — see the
@@ -6324,204 +6270,6 @@ function wireConfirmationFilterBars(){
   wireConfirmationFilterBar('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-type', 'queue-filter-order', 'queue-filter-delivery-from', 'queue-filter-delivery-to', 'queue-filter-count');
 }
 
-/* ---- Stock delivery status (Master Folder > Single Trade (SO)) ----
-   Builds stockStatusMap: normalized Deal ID -> {rows, stockIn, stockOut}
-   (number of sheet rows for that Deal ID, and how many have V / Y ticked).
-   Best-effort: any failure (no access to the file, sheet renamed, etc.)
-   just leaves the map empty and logs a warning — the rest of the app is
-   unaffected and no delivery status is shown. */
-let stockStatusMap = null;
-let stockStatusLoadedAt = 0;
-let stockStatusLoading = null;
-let stockStatusError = '';
-let stockStatusFile = null; // {driveId, itemId}
-function normalizeStockDealId(v){
-  return String(v ?? '').replace(/\u00a0/g,' ').trim().toUpperCase();
-}
-function isStockTickOn(v){
-  return v === true || /^(true|yes|y|1|✓|✔|x)$/i.test(String(v ?? '').trim());
-}
-async function stockStatusFetchColumn(base, col, lastRow){
-  const addr = col + '1:' + col + lastRow;
-  const data = await graphFetch(base + "/range(address='" + addr + "')?$select=values", { noWorkbookSession: true });
-  return ((data && data.values) || []).map(r => r[0]);
-}
-async function fetchStockStatusMap(){
-  if(!stockStatusFile){
-    const item = await graphFetch('/shares/' + encodeShareUrl(STOCK_STATUS_FILE_SHARE_URL) + '/driveItem?$select=id,parentReference');
-    stockStatusFile = { driveId: item.parentReference.driveId, itemId: item.id };
-  }
-  const base = '/drives/' + stockStatusFile.driveId + '/items/' + stockStatusFile.itemId +
-    "/workbook/worksheets('" + encodeURIComponent(STOCK_STATUS_SHEET_NAME.replace(/'/g, "''")) + "')";
-  const used = await graphFetch(base + '/usedRange(valuesOnly=true)?$select=rowIndex,rowCount', { noWorkbookSession: true });
-  const lastRow = Math.max(1, ((used && used.rowIndex) || 0) + ((used && used.rowCount) || 0));
-  const [ids, ins, outs] = await Promise.all([
-    stockStatusFetchColumn(base, STOCK_STATUS_DEALID_COL, lastRow),
-    stockStatusFetchColumn(base, STOCK_STATUS_STOCKIN_COL, lastRow),
-    stockStatusFetchColumn(base, STOCK_STATUS_STOCKOUT_COL, lastRow)
-  ]);
-  const map = {};
-  ids.forEach((raw, i) => {
-    const id = normalizeStockDealId(raw);
-    if(!id) return;
-    const e = map[id] || (map[id] = { rows:0, stockIn:0, stockOut:0 });
-    e.rows++;
-    if(isStockTickOn(ins[i])) e.stockIn++;
-    if(isStockTickOn(outs[i])) e.stockOut++;
-  });
-  return map;
-}
-// Loads (or re-uses a fresh cached copy of) the stock status map. Calls
-// onUpdated() only when a NEW map was actually fetched, so the tables can
-// re-render with the status badges without delaying the first render.
-function refreshStockStatus(onUpdated, force){
-  if(!force && stockStatusMap && (Date.now() - stockStatusLoadedAt) < STOCK_STATUS_CACHE_MS) return;
-  if(stockStatusLoading) return;
-  stockStatusLoading = fetchStockStatusMap()
-    .then(async map => {
-      stockStatusMap = map; stockStatusLoadedAt = Date.now(); stockStatusError = '';
-      if(onUpdated) onUpdated();
-      // This user can read the Master Folder — share the status with
-      // everyone else via TradeDealLog's "Stock Status" column.
-      await syncStockStatusToLog();
-    })
-    .catch(err => {
-      stockStatusError = err && err.message || String(err);
-      stockStatusLoadedAt = Date.now(); // don't hammer a failing file — retry after the cache window
-      console.warn('Could not read stock delivery status from the Master Folder workbook', err);
-    })
-    .finally(() => { stockStatusLoading = null; });
-}
-// Status for one deal from the live Master Folder map:
-// {isIn, done, rows} or null if not applicable / not found in the sheet.
-function stockStatusInfoFromMap(dealId, orderType){
-  if(!stockStatusMap || !dealId || isPendingDealId(dealId)) return null;
-  const ot = String(orderType || '');
-  const isIn = ot.indexOf('Stock-In') === 0, isOut = ot.indexOf('Stock-Out') === 0;
-  if(!isIn && !isOut) return null;
-  const e = stockStatusMap[normalizeStockDealId(dealId)];
-  if(!e) return null;
-  return { isIn, done: isIn ? e.stockIn : e.stockOut, rows: e.rows };
-}
-// Text stored in the TradeDealLog "Stock Status" column for that info.
-function stockStatusText(info){
-  if(!info) return '';
-  const word = info.isIn ? 'Received' : 'Delivered';
-  if(info.done >= info.rows) return word;
-  if(info.done > 0) return word + ' ' + info.done + '/' + info.rows;
-  return info.isIn ? 'Not yet received' : 'Not yet delivered';
-}
-// Parses that stored text back into {isIn, done, rows}, or null.
-function stockStatusInfoFromText(t){
-  t = String(t || '').trim();
-  let m = t.match(/^(received|delivered)(?:\s+(\d+)\s*\/\s*(\d+))?$/i);
-  if(m){
-    const isIn = /^received$/i.test(m[1]);
-    return m[2] ? { isIn, done: +m[2], rows: +m[3] } : { isIn, done: 1, rows: 1 };
-  }
-  m = t.match(/^not yet (received|delivered)$/i);
-  if(m) return { isIn: /^received$/i.test(m[1]), done: 0, rows: 1 };
-  return null;
-}
-// Badge for one deal's status cell, or '' if not applicable / not found.
-// Uses the live Master Folder read when this user can open that file,
-// otherwise the copy stored in TradeDealLog's "Stock Status" column.
-// Stock-In deals = column V (received), Stock-Out deals = column Y (delivered).
-function stockStatusBadgeHtml(dealId, orderType, sourceTable, storedText){
-  if(sourceTable === CC_LOG_TABLE_NAME) return '';
-  if(!dealId || isPendingDealId(dealId)) return '';
-  const ot = String(orderType || '');
-  if(ot.indexOf('Stock-In') !== 0 && ot.indexOf('Stock-Out') !== 0) return '';
-  const info = stockStatusMap ? stockStatusInfoFromMap(dealId, orderType) : stockStatusInfoFromText(storedText);
-  if(!info) return '';
-  const isIn = info.isIn, done = info.done;
-  const word = isIn ? 'Stock received' : 'Stock delivered';
-  const notWord = isIn ? 'Stock not received' : 'Stock not delivered';
-  const tip = 'From Master Folder › ' + STOCK_STATUS_SHEET_NAME + ' (column ' + (isIn ? STOCK_STATUS_STOCKIN_COL : STOCK_STATUS_STOCKOUT_COL) + ')';
-  // Solid, high-contrast pills (white text on a strong fill) so they read
-  // clearly in both light and dark mode: green = done, amber = partly done,
-  // red = not yet.
-  const pill = (bg, icon, text) =>
-    '<div style="margin-top:4px;"><span title="' + escapeHtml(tip) + '" style="display:inline-block;padding:2px 8px;border-radius:999px;' +
-    'font-size:11px;font-weight:700;line-height:1.5;white-space:nowrap;color:#fff;background:' + bg + ';">' + icon + ' ' + escapeHtml(text) + '</span></div>';
-  if(done >= info.rows) return pill('#1a7f37', '✓', word);
-  if(done > 0) return pill('#b45309', '◐', word + ': ' + done + ' of ' + info.rows);
-  return pill('#c62828', '✕', notWord);
-}
-// Copies the live Master Folder status into TradeDealLog's "Stock Status"
-// column so users without Master Folder access can see it. Runs only for a
-// user whose app could read the Master Folder. Re-reads the table fresh,
-// and writes the whole column in ONE call — only if something changed.
-// Only ever touches the "Stock Status" column.
-let stockStatusSyncing = false;
-let stockStatusMissingColumnWarned = false;
-async function syncStockStatusToLog(){
-  if(!stockStatusMap || stockStatusSyncing) return false;
-  stockStatusSyncing = true;
-  try{
-    const tableName = STANDARD_LOG_TABLE_NAME;
-    await ensureFreshWorkbookSession();
-    const rows = (await getCanonicalTableRows(tableName)).slice().sort((a,b) => a.index - b.index);
-    const col = stockStatusLogColumnIndex(tableName);
-    if(col < 0){
-      if(!stockStatusMissingColumnWarned){
-        stockStatusMissingColumnWarned = true;
-        console.warn('TradeDealLog has no "' + STOCK_STATUS_LOG_COLUMN_NAME + '" column — add it so users without Master Folder access can see the stock status.');
-      }
-      return false;
-    }
-    if(!rows.length) return false;
-    let changed = false;
-    const newValues = rows.map(r => {
-      const v = r.values[0];
-      const want = stockStatusText(stockStatusInfoFromMap(v[MC.dealId], v[MC.supplyDemand]));
-      if(want !== (v.__stockStatus || '')) changed = true;
-      return [want];
-    });
-    if(!changed) return false;
-    // Work out the sheet cells for the column: table range address is like
-    // "Sheet!A1:BZ300" (header in the first row, then one row per index).
-    const tr = await graphFetch(workbookTablePath(tableName) + '/range?$select=address');
-    const m = String(tr && tr.address || '').match(/^(.*)!\$?([A-Z]+)\$?(\d+)(?::\$?[A-Z]+\$?\d+)?$/);
-    if(!m) throw new Error('Could not read the TradeDealLog table address.');
-    let sheet = m[1];
-    if(/^'.*'$/.test(sheet)) sheet = sheet.slice(1, -1).replace(/''/g, "'");
-    const colToNum = c => c.split('').reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0);
-    const numToCol = n => { let c = ''; while(n > 0){ const r = (n - 1) % 26; c = String.fromCharCode(65 + r) + c; n = Math.floor((n - 1) / 26); } return c; };
-    const letter = numToCol(colToNum(m[2]) + col);
-    const headerRow = parseInt(m[3], 10);
-    // Rows are written by their table index so the cells line up exactly.
-    const first = headerRow + 1 + rows[0].index;
-    const last = headerRow + 1 + rows[rows.length - 1].index;
-    if(last - first + 1 !== rows.length) throw new Error('TradeDealLog rows are not contiguous — skipped Stock Status sync.');
-    await graphFetch(
-      '/drives/' + driveId + '/items/' + fileItemId + "/workbook/worksheets('" + encodeURIComponent(sheet.replace(/'/g, "''")) + "')" +
-      "/range(address='" + letter + first + ':' + letter + last + "')",
-      { method: 'PATCH', body: JSON.stringify({ values: newValues }) }
-    );
-    // Keep the in-memory rows in step with what was just written.
-    const byIdx = {};
-    rows.forEach((r, i) => { byIdx[r.index] = newValues[i][0]; });
-    const cache = rawLogRowCache[tableName] || {};
-    Object.keys(byIdx).forEach(i => { if(cache[i]){ while(cache[i].length <= col) cache[i].push(''); cache[i][col] = byIdx[i]; } });
-    (logRowsCache || []).forEach(r => {
-      if(r._sourceTable === tableName && (r.index in byIdx) && r.values && r.values[0]) r.values[0].__stockStatus = byIdx[r.index];
-    });
-    return true;
-  }catch(err){
-    console.warn('Could not copy stock status into TradeDealLog', err);
-    return false;
-  }finally{
-    stockStatusSyncing = false;
-  }
-}
-function rerenderConfirmationLists(){
-  applyConfirmationFilter('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-type', 'history-filter-order', 'history-filter-delivery-from', 'history-filter-delivery-to', 'history-filter-count');
-  applyConfirmationFilter('admin', 'admin-history-list', 'admin-filter-search', 'admin-filter-status', 'admin-filter-type', 'admin-filter-order', 'admin-filter-delivery-from', 'admin-filter-delivery-to', 'admin-filter-count');
-  if(isAdmin){
-    applyConfirmationFilter('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-type', 'queue-filter-order', 'queue-filter-delivery-from', 'queue-filter-delivery-to', 'queue-filter-count');
-  }
-}
 async function loadHistory(){
   const listEl = document.getElementById('history-list');
   listEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Loading…</p>';
@@ -6576,7 +6324,6 @@ async function loadHistory(){
     refreshAnalysisBdOptions();
     wireAnalysisFilterBar();
     renderAnalysisTab();
-    refreshStockStatus(rerenderConfirmationLists);
     tryOpenDealFromUrl();
   }catch(err){
     listEl.innerHTML = '<p style="font-size:13px;color:#8a2d1f;">Could not load: ' + escapeHtml(err.message) + '</p>';
@@ -7064,10 +6811,7 @@ function renderHistoryTable(el, groups, opts){
         '<td style="padding:6px;">'+escapeHtml(v[MC.company]||'')+'</td>' +
         '<td style="padding:6px;">—</td>' +
         '<td style="padding:6px;">'+escapeHtml(deliveryDatesText||'—')+deliveryUrgencyHtml(g)+'</td>' +
-        // Stock received/delivered status is shown to EVERY user, including
-        // on these summary-only rows.
-        '<td style="padding:6px;">'+statusBadge(status)+
-          stockStatusBadgeHtml(v[MC.dealId], v[MC.supplyDemand], g.sourceTable || (g.rows[0] && g.rows[0]._sourceTable) || STANDARD_LOG_TABLE_NAME, v.__stockStatus)+'</td>' +
+        '<td style="padding:6px;">'+statusBadge(status)+'</td>' +
         '<td style="padding:6px;white-space:nowrap;"><span class="row-lock-note">Owner only</span></td>' +
       '</tr>';
       return;
@@ -7213,7 +6957,6 @@ function renderHistoryTable(el, groups, opts){
         (trail ? '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">'+trail+'</div>' : '')+
         agreementLink+
         redemptionBadge+
-        stockStatusBadgeHtml(v[MC.dealId], v[MC.supplyDemand], rowSourceTable, v.__stockStatus)+
         dealFlagBadgesHtml(g.rows)+
         (isTaggedViewer
           ? '<div style="font-size:11px;color:#4a2d63;margin-top:2px;">👁 You\'re tagged on this deal — view only</div>'
@@ -7286,15 +7029,9 @@ function renderHistoryTable(el, groups, opts){
         if((rv[MC.noOfRecs]||'') !== (rv[MC.pendingNoOfRecs]||'')){
           lines.push('No of RECs: <s>'+escapeHtml(rv[MC.noOfRecs]||'(blank)')+'</s> → <strong>'+escapeHtml(rv[MC.pendingNoOfRecs]||'(blank)')+'</strong>');
         }
-        {
-          const pd = parsePendingDelivery(rv[MC.pendingDeliveryDateM]);
-          if(pd){
-            if(toDateInputValue(rv[MC.deliveryStart]) !== pd.dstart)
-              lines.push('<strong style="color:#8a2d1f;">Delivery Start</strong>: <s>'+escapeHtml(formatStoredDate(rv[MC.deliveryStart])||'(blank)')+'</s> → <strong>'+escapeHtml(formatStoredDate(pd.dstart)||'(blank)')+'</strong>');
-            if(toDateInputValue(rv[MC.deliveryEnd]) !== pd.dend)
-              lines.push('<strong style="color:#8a2d1f;">Delivery End</strong>: <s>'+escapeHtml(formatStoredDate(rv[MC.deliveryEnd])||'(blank)')+'</s> → <strong>'+escapeHtml(formatStoredDate(pd.dend)||'(blank)')+'</strong>');
-          }
-        }
+        // Delivery date is gone entirely now — never staged for any deal
+        // any more (see requestBdMatchChange/approveBdMatchChange), so
+        // there's nothing to diff here.
         if((rv[MC.registry]||'') !== (rv[MC.pendingRegistry]||'')){
           lines.push('Registry: <s>'+escapeHtml(registryDisplayName(rv[MC.registry])||'(blank)')+'</s> → <strong>'+escapeHtml(registryDisplayName(rv[MC.pendingRegistry])||'(blank)')+'</strong>');
         }
@@ -8071,12 +7808,11 @@ function openEditRequestModal(dealId){
     .sort((a,b)=> a.index - b.index);
   const currentStatus = group.length ? dealGroupStatus(group) : STATUS_APPROVED;
   editRequestModalStatus = currentStatus;
-  document.getElementById('edit-request-modal-intro').textContent = (currentStatus === STATUS_APPROVED
-    ? 'This deal is already Approved. '
-    : 'Level 2 has already approved this deal. ') +
-    'Any change here (including Delivery dates) is sent to Admin Level 3 as "Pending Change - Level 3" and only goes live once Level 3 approves it. The current, live values stay in place everywhere until then. Every change is recorded in the deal\'s Edit Change Summary.';
+  document.getElementById('edit-request-modal-intro').textContent = currentStatus === STATUS_APPROVED
+    ? 'This deal is already Approved (Level 3 sign-off complete), so a BD source matching correction here needs no further approval — it\'s written to TradeDealLog as soon as you submit, and operations@saxonrenewables.com is emailed a summary of what changed. Exception: changing a product\'s Volume sends the whole request to Level 3 for approval first. Every change is recorded in the deal\'s Edit Change Summary.'
+    : 'Level 2 has already approved this deal, so any correction here needs a fresh Level 3 sign-off before it takes effect. The current, live values stay in place everywhere until that happens. Every change is recorded in the deal\'s Edit Change Summary.';
   const submitBtn = document.getElementById('edit-request-modal-submit');
-  if(submitBtn) submitBtn.textContent = 'Submit for Level 3 approval';
+  if(submitBtn) submitBtn.textContent = currentStatus === STATUS_APPROVED ? 'Save changes' : 'Submit for Level 3 approval';
   const isCC = dealLogTableName() === CC_LOG_TABLE_NAME;
   const noOfRecsLabel = isCC ? 'No of VCUs' : 'No of RECs';
   const fieldsEl = document.getElementById('edit-request-modal-fields');
@@ -8115,17 +7851,9 @@ function openEditRequestModal(dealId){
       vstart: src.vstart, vend: src.vend, note: src.note,
       isCC: isCC, noOfRecsLabel: noOfRecsLabel, rowUid: v[MC.rowUid]||''
     })).join('');
-    const ds0 = toDateInputValue(v[MC.deliveryStart]), de0 = toDateInputValue(v[MC.deliveryEnd]);
-    const deliveryHtml = '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
-      '<div style="flex:1;min-width:140px;"><label style="margin:0 0 4px;display:block;font-size:12px;">Delivery start date</label>' +
-        '<input type="date" class="edit-request-dstart" data-idx="'+idx+'"'+uidAttr+' data-orig="'+escapeHtml(ds0)+'" value="'+escapeHtml(ds0)+'"/></div>' +
-      '<div style="flex:1;min-width:140px;"><label style="margin:0 0 4px;display:block;font-size:12px;">Delivery end date</label>' +
-        '<input type="date" class="edit-request-dend" data-idx="'+idx+'"'+uidAttr+' data-orig="'+escapeHtml(de0)+'" value="'+escapeHtml(de0)+'"/></div>' +
-      '</div>';
     return '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;">' +
       '<p style="margin:0;font-size:13px;font-weight:600;">'+escapeHtml(label)+'</p>' +
       volumeHtml +
-      deliveryHtml +
       '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Matching</label>' +
         '<select class="edit-request-matching" data-idx="'+idx+'"'+uidAttr+'>'+matchOptions+'</select></div>' +
       '<div id="er-'+idx+'-dependent" style="display:flex;flex-direction:column;gap:8px;'+(active?'':'display:none;')+'">' +
@@ -8160,7 +7888,7 @@ function editRequestVolumeChanged(){
     .some(el => el.value.trim() !== (el.getAttribute('data-orig') || '').trim());
 }
 function editRequestSubmitLabel(){
-  return 'Submit for Level 3 approval'; // every change now goes to Level 3
+  return (editRequestModalStatus === STATUS_APPROVED && !editRequestVolumeChanged()) ? 'Save changes' : 'Submit for Level 3 approval';
 }
 document.addEventListener('input', (e)=>{
   if(!e.target.classList || !e.target.classList.contains('edit-request-volume')) return;
@@ -8226,26 +7954,6 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
     edits[idx].tech = el.value;
     edits[idx].rowUid = edits[idx].rowUid || el.getAttribute('data-uid') || '';
   });
-  // Product Delivery Start/End dates (staged for Level 3 — see requestBdMatchChange).
-  const deliveryErrors = [];
-  const erDeliveryProductCount = document.querySelectorAll("#edit-request-modal-fields .edit-request-matching").length;
-  document.querySelectorAll('#edit-request-modal-fields .edit-request-dstart').forEach(el=>{
-    const idx = parseInt(el.getAttribute('data-idx'), 10);
-    const endEl = document.querySelector('#edit-request-modal-fields .edit-request-dend[data-idx="'+idx+'"]');
-    edits[idx] = edits[idx] || {};
-    edits[idx].dstart = el.value || '';
-    edits[idx].dend = endEl ? (endEl.value || '') : '';
-    edits[idx].rowUid = edits[idx].rowUid || el.getAttribute('data-uid') || '';
-    const pl = erDeliveryProductCount > 1 ? 'Product ' + (idx+1) : 'this product';
-    if((el.getAttribute('data-orig') || '') && !edits[idx].dstart) deliveryErrors.push('Enter a Delivery start date for ' + pl + '.');
-    if(endEl && (endEl.getAttribute('data-orig') || '') && !edits[idx].dend) deliveryErrors.push('Enter a Delivery end date for ' + pl + '.');
-    if(edits[idx].dstart && edits[idx].dend && edits[idx].dend < edits[idx].dstart) deliveryErrors.push('Delivery end date can\'t be before the start date for ' + pl + '.');
-  });
-  if(deliveryErrors.length){
-    errEl.textContent = deliveryErrors.join(' ');
-    errEl.style.display = 'block';
-    return;
-  }
   document.querySelectorAll('#edit-request-modal-fields .edit-request-volume').forEach(el=>{
     const idx = parseInt(el.getAttribute('data-idx'), 10);
     edits[idx] = edits[idx] || {};
@@ -13582,6 +13290,7 @@ document.getElementById('redemption-refresh-btn').addEventListener('click', ()=>
     recs.forEach(function(r,i){
       r.forEach(function(tr){ tr.setAttribute('data-orig',i); });
       var main=r[0], tds=main.children;
+      [].slice.call(tds).forEach(function(td,ci){ var h=ths[ci]; td.setAttribute('data-label', h ? h.textContent.trim() : ''); });
       if(pinCol>-1 && tds[pinCol]) tds[pinCol].classList.add('desk-pin');
       if(statusCol>-1 && tds[statusCol]){
         var cell=tds[statusCol];
