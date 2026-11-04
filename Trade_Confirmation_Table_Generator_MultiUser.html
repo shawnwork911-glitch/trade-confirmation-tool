@@ -1407,6 +1407,17 @@ html.desk-nav-hidden #main-tabs{transform:translateX(-100%);visibility:hidden;}
     </div>
     <div id="user-mgmt-list"><p style="font-size:13px;color:var(--text-secondary);">Loading...</p></div>
   </div>
+
+  <div class="card" id="list-sync-card" style="display:none;">
+    <p class="card-title">Approved list sync</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Super Admin only. Compares every fully Approved RECs and Carbon Credit deal with its latest row in the approved SharePoint lists (matched by Row Uid) and lists the deals whose details differ or are missing — for example edits made after Level 3 approval that never reached the list. "Resync" sends only the ticked deals, so the Power Automate flow corrects the master list. Notes, approver and status columns are not compared.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <button type="button" id="list-sync-scan-btn">Check for differences</button>
+      <button type="button" id="list-sync-run-btn" class="secondary" style="display:none;">Resync</button>
+      <span id="list-sync-status" style="font-size:12px;color:var(--text-secondary);"></span>
+    </div>
+    <div id="list-sync-results" style="margin-top:12px;"></div>
+  </div>
   </div><!-- /tab-panel-usermgmt -->
 
 
@@ -2615,6 +2626,8 @@ function applyRoleUi(){
   const dealIdRoleTab = document.getElementById('tab-btn-dealid');
   if(dealIdRoleTab) dealIdRoleTab.style.display = isSuperadmin ? 'inline-block' : 'none';
   document.getElementById('user-mgmt-card').style.display = isSuperadmin ? 'block' : 'none';
+  const listSyncCard = document.getElementById('list-sync-card');
+  if(listSyncCard) listSyncCard.style.display = isSuperadmin ? 'block' : 'none';
   const dealIdSettingsCard = document.getElementById('dealid-settings-card');
   if(dealIdSettingsCard) dealIdSettingsCard.style.display = isSuperadmin ? 'block' : 'none';
   if(isSuperadmin){
@@ -3842,7 +3855,7 @@ function buildBdMatchingParts(values){
 // Approved" list has a "BD Source Matching" column (any existing old
 // columns can stay — past rows keep their history — new writes just won't
 // use them any more).
-async function addApprovedDealToList(values, changeNote){
+async function addApprovedDealToList(values, changeNote, opts){
     const ctx = await getApprovedListContext();
     const columnMap = ctx.columnMap;
 
@@ -3965,6 +3978,8 @@ async function addApprovedDealToList(values, changeNote){
             skipped.push(displayName);
         }
     });
+    // Dry run (bulk sync check): return what WOULD be written, write nothing.
+    if(opts && opts.dryRun) return { ctx, fields };
     if(skipped.length){
         console.warn('"' + ctx.listName + '" list has no column matching these labels — skipped: ' + skipped.join(', '));
     }
@@ -17083,6 +17098,188 @@ document.addEventListener('click', function(e){
   setTimeout(()=> openAssetViewModal(id, r.values[0][g.mc.generatedHtml] || '', r.values[0][g.mc.agreementFileUrl]), 0);
 });
 
+
+/* ---- Bulk "Approved list sync" (Super Admin, User Management tab) ----
+   Compares every fully Approved RECs / Carbon Credit deal with its LATEST
+   row in the approved SharePoint list (matched by Row Uid) and re-sends only
+   the deals whose details differ or are missing — so the Power Automate flow
+   corrects the master list without resyncing deals one by one. */
+const LIST_SYNC_IGNORE = ['Pending Matching Note','Change Note','Status','Approved By','Approved Date','Submitted By','Submitted Date','Row Uid'];
+let listSyncCandidates = [];
+async function fetchApprovedListLatestByRowUid(ctx){
+  const uidCol = ctx.columnMap['Row Uid'] && ctx.columnMap['Row Uid'].name;
+  if(!uidCol) throw new Error('"' + ctx.listName + '" has no "Row Uid" column, so deals can\'t be matched.');
+  const latest = {};
+  let url = '/sites/' + siteId + '/lists/' + ctx.listId + '/items?$expand=fields&$top=500';
+  while(url){
+    const data = await graphFetch(url);
+    (data.value || []).forEach(it=>{
+      const f = it.fields || {};
+      const uid = String(f[uidCol] || '').trim().toLowerCase();
+      if(!uid) return;
+      const n = Number(it.id) || 0;
+      if(!latest[uid] || n > latest[uid].n) latest[uid] = { n, fields: f };
+    });
+    const next = data['@odata.nextLink'];
+    url = next ? next.replace('https://graph.microsoft.com/v1.0', '') : null;
+  }
+  return latest;
+}
+function listSyncNorm(v, type){
+  if(v === null || v === undefined) return '';
+  if(type === 'dateTime' || /^\d{4}-\d{2}-\d{2}T/.test(String(v))){
+    const t = new Date(v).getTime();
+    // nearest whole day, so a date-only column stored at local midnight still matches
+    return isNaN(t) ? String(v) : new Date(t + 12*3600*1000).toISOString().slice(0,10);
+  }
+  let s = String(v).replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&');
+  s = s.replace(/\s+/g, ' ').trim();
+  const num = s.replace(/,/g, '');
+  if(/^-?\d+(\.\d+)?$/.test(num)) return String(Math.round(Number(num) * 1e6) / 1e6);
+  return s.toLowerCase();
+}
+async function scanApprovedListDrift(onProgress){
+  const out = [];
+  const errors = [];
+  const prevTable = dealLogTableName();
+  try{
+    for(const table of [STANDARD_LOG_TABLE_NAME, CC_LOG_TABLE_NAME]){
+      setActiveDealLogTable(table);
+      const typeLabel = table === CC_LOG_TABLE_NAME ? 'Carbon Credit' : 'RECs';
+      let ctx, latest, rows;
+      try{
+        if(onProgress) onProgress('Reading the ' + typeLabel + ' approved list…');
+        ctx = await getApprovedListContext();
+        latest = await fetchApprovedListLatestByRowUid(ctx);
+        rows = await getCanonicalTableRows(table);
+      }catch(err){ errors.push(typeLabel + ': ' + err.message); continue; }
+      const byName = {};
+      Object.keys(ctx.columnMap).forEach(dn => { byName[ctx.columnMap[dn].name] = { dn, type: ctx.columnMap[dn].type }; });
+      const groups = {};
+      rows.forEach(r=>{
+        if(String(r.values[0][MC.status] || '') !== STATUS_APPROVED) return;
+        const id = String(r.values[0][MC.dealId] || '').trim();
+        if(!id) return;
+        (groups[id] = groups[id] || []).push(r);
+      });
+      for(const dealId of Object.keys(groups)){
+        const group = groups[dealId].sort((a,b)=> a.index - b.index);
+        const reasons = new Set();
+        for(let k = 0; k < group.length; k++){
+          const values = group[k].values[0];
+          const uid = String(values[MC.rowUid] || '').trim().toLowerCase();
+          const item = uid ? latest[uid] : null;
+          if(!item){ reasons.add(group.length > 1 ? 'Product ' + (k+1) + ' missing from list' : 'Missing from list'); continue; }
+          const built = await addApprovedDealToList(values, '', { dryRun: true });
+          Object.keys(built.fields).forEach(name=>{
+            const meta = byName[name];
+            if(!meta || LIST_SYNC_IGNORE.includes(meta.dn)) return;
+            if(listSyncNorm(built.fields[name], meta.type) !== listSyncNorm(item.fields[name], meta.type)) reasons.add(meta.dn);
+          });
+        }
+        if(reasons.size) out.push({ table, typeLabel, dealId, rows: group, reasons: [...reasons] });
+      }
+    }
+  }finally{
+    setActiveDealLogTable(prevTable);
+  }
+  return { drift: out, errors };
+}
+function renderListSyncResults(res){
+  const el = document.getElementById('list-sync-results');
+  const runBtn = document.getElementById('list-sync-run-btn');
+  listSyncCandidates = res.drift;
+  let html = '';
+  if(res.errors.length){
+    html += '<div class="warning-box" style="display:block;margin-bottom:10px;">' + res.errors.map(escapeHtml).join('<br>') + '</div>';
+  }
+  if(!res.drift.length){
+    html += '<p style="font-size:13px;color:var(--success);margin:0;">Everything matches — every Approved deal\'s latest approved-list row has its current details.</p>';
+    runBtn.style.display = 'none';
+  }else{
+    html += '<table style="width:100%;border-collapse:collapse;font-size:13px;"><tr>' +
+      '<th style="text-align:left;padding:6px;width:30px;"><input type="checkbox" id="list-sync-all" checked></th>' +
+      '<th style="text-align:left;padding:6px;">Deal ID</th><th style="text-align:left;padding:6px;">Type</th>' +
+      '<th style="text-align:left;padding:6px;">Products</th><th style="text-align:left;padding:6px;">What differs</th></tr>' +
+      res.drift.map((d, i)=> '<tr style="border-top:1px solid var(--border);">' +
+        '<td style="padding:6px;"><input type="checkbox" class="list-sync-cb" data-i="' + i + '" checked></td>' +
+        '<td style="padding:6px;">' + escapeHtml(friendlyDealId(d.dealId)) + '</td>' +
+        '<td style="padding:6px;">' + escapeHtml(d.typeLabel) + '</td>' +
+        '<td style="padding:6px;">' + d.rows.length + '</td>' +
+        '<td style="padding:6px;">' + escapeHtml(d.reasons.join(', ')) + '</td></tr>').join('') +
+      '</table>';
+    runBtn.style.display = 'inline-block';
+  }
+  el.innerHTML = html;
+  syncListSyncRunLabel();
+}
+function selectedListSyncCandidates(){
+  return [...document.querySelectorAll('.list-sync-cb')].filter(cb => cb.checked).map(cb => listSyncCandidates[+cb.getAttribute('data-i')]);
+}
+function syncListSyncRunLabel(){
+  const runBtn = document.getElementById('list-sync-run-btn');
+  if(!runBtn) return;
+  const n = selectedListSyncCandidates().length;
+  runBtn.textContent = 'Resync ' + n + ' deal' + (n === 1 ? '' : 's');
+  runBtn.disabled = !n;
+}
+document.addEventListener('change', (e)=>{
+  if(e.target.id === 'list-sync-all'){
+    document.querySelectorAll('.list-sync-cb').forEach(cb => { cb.checked = e.target.checked; });
+    syncListSyncRunLabel();
+  }else if(e.target.classList && e.target.classList.contains('list-sync-cb')){
+    syncListSyncRunLabel();
+  }
+});
+document.getElementById('list-sync-scan-btn').addEventListener('click', async ()=>{
+  const btn = document.getElementById('list-sync-scan-btn');
+  const status = document.getElementById('list-sync-status');
+  btn.disabled = true;
+  document.getElementById('list-sync-run-btn').style.display = 'none';
+  document.getElementById('list-sync-results').innerHTML = '';
+  try{
+    await ensureFreshWorkbookSession();
+    const res = await scanApprovedListDrift(msg => { status.textContent = msg; });
+    status.textContent = 'Checked ' + new Date().toLocaleString() + ' — ' + res.drift.length + ' deal(s) differ.';
+    renderListSyncResults(res);
+  }catch(err){
+    status.textContent = 'Check failed: ' + err.message;
+  }finally{
+    btn.disabled = false;
+  }
+});
+document.getElementById('list-sync-run-btn').addEventListener('click', async ()=>{
+  const picked = selectedListSyncCandidates();
+  if(!picked.length) return;
+  const productCount = picked.reduce((n, d)=> n + d.rows.length, 0);
+  if(!confirm('Resync ' + picked.length + ' deal(s) (' + productCount + ' product row(s)) to the approved SharePoint lists?\n\nEach product gets one new list row with its current details. The Power Automate flow then corrects the master list one row at a time, so allow roughly ' + Math.max(1, Math.ceil(productCount * 0.75)) + ' minute(s) for it to catch up.')) return;
+  const btn = document.getElementById('list-sync-run-btn');
+  const scanBtn = document.getElementById('list-sync-scan-btn');
+  const status = document.getElementById('list-sync-status');
+  btn.disabled = true; scanBtn.disabled = true;
+  const failures = [];
+  const prevTable = dealLogTableName();
+  try{
+    await ensureFreshWorkbookSession();
+    for(let i = 0; i < picked.length; i++){
+      const d = picked[i];
+      status.textContent = 'Resyncing ' + (i+1) + ' of ' + picked.length + ' — ' + friendlyDealId(d.dealId) + '…';
+      setActiveDealLogTable(d.table);
+      try{
+        const errs = await pushApprovedRowsToList(d.rows, 'Bulk resync by Super Admin ' + (currentAccount && currentAccount.username || '') + ' on ' + auditTimestampLabel() + ' — differed: ' + d.reasons.join(', '));
+        errs.forEach(e => failures.push(friendlyDealId(d.dealId) + ' — ' + e));
+      }catch(err){ failures.push(friendlyDealId(d.dealId) + ' — ' + err.message); }
+    }
+  }finally{
+    setActiveDealLogTable(prevTable);
+    btn.disabled = false; scanBtn.disabled = false;
+  }
+  status.textContent = 'Resync finished — ' + (picked.length - new Set(failures.map(f => f.split(' — ')[0])).size) + ' of ' + picked.length + ' deal(s) sent' + (failures.length ? ', ' + failures.length + ' problem(s).' : '. The master list updates as the flow works through them.');
+  document.getElementById('list-sync-results').innerHTML = failures.length
+    ? '<div class="warning-box" style="display:block;">' + failures.map(escapeHtml).join('<br>') + '</div>' : '';
+  btn.style.display = 'none';
+  try{ await loadHistory(); }catch(_){}
+});
 
 /* ---- Dark mode toggle ---- */
 (function(){
