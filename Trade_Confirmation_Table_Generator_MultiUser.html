@@ -17186,6 +17186,24 @@ function listSyncNorm(v, type){
   if(/^-?\d+(\.\d+)?$/.test(num)) return String(Math.round(Number(num) * 1e6) / 1e6);
   return s.toLowerCase();
 }
+// Human-readable value for the differences table: dates as dd/mm/yyyy
+// (Excel serials and ISO dates alike), HTML stripped, blanks shown as "(blank)".
+function listSyncDisplay(v, meta){
+  if(v === null || v === undefined || String(v).trim() === '') return '(blank)';
+  const dn = (meta && meta.dn) || '';
+  const str = String(v).trim();
+  const isDateCol = (meta && meta.type === 'dateTime') || /date/i.test(dn);
+  if(isDateCol){
+    if(/^\d{4}-\d{2}-\d{2}T/.test(str)){
+      const t = new Date(str).getTime();
+      if(!isNaN(t)){ const d = new Date(t + 12*3600*1000); return String(d.getUTCDate()).padStart(2,'0') + '/' + String(d.getUTCMonth()+1).padStart(2,'0') + '/' + d.getUTCFullYear(); }
+    }
+    if(/^\d{5}(\.\d+)?$/.test(str.replace(/,/g,''))) return formatStoredDate(str.replace(/,/g,''));
+    if(/^\d{4}-\d{2}-\d{2}$/.test(str)) return formatStoredDate(str);
+  }
+  const plain = str.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/\s+/g, ' ').trim();
+  return plain || '(blank)';
+}
 async function scanApprovedListDrift(onProgress){
   const out = [];
   const errors = [];
@@ -17228,19 +17246,29 @@ async function scanApprovedListDrift(onProgress){
         });
         if(!group.length){ skippedCompleted++; continue; }
         const reasons = new Set();
+        const diffs = []; // { product, field, listValue, appValue }
         for(let k = 0; k < group.length; k++){
           const values = group[k].values[0];
           const uid = String(values[MC.rowUid] || '').trim().toLowerCase();
           const item = uid ? latest[uid] : null;
-          if(!item){ reasons.add(allRows.length > 1 ? 'Product ' + (allRows.indexOf(group[k])+1) + ' missing from list' : 'Missing from list'); continue; }
+          const productNo = allRows.indexOf(group[k]) + 1;
+          if(!item){
+            reasons.add(allRows.length > 1 ? 'Product ' + productNo + ' missing from list' : 'Missing from list');
+            diffs.push({ product: productNo, field: '(whole row)', listValue: 'Not in the approved list', appValue: 'Will be added' });
+            continue;
+          }
           const built = await addApprovedDealToList(values, '', { dryRun: true });
           Object.keys(built.fields).forEach(name=>{
             const meta = byName[name];
             if(!meta || LIST_SYNC_IGNORE.includes(meta.dn)) return;
-            if(listSyncNorm(built.fields[name], meta.type) !== listSyncNorm(item.fields[name], meta.type)) reasons.add(meta.dn);
+            if(listSyncNorm(built.fields[name], meta.type) !== listSyncNorm(item.fields[name], meta.type)){
+              reasons.add(meta.dn);
+              diffs.push({ product: productNo, field: meta.dn,
+                listValue: listSyncDisplay(item.fields[name], meta), appValue: listSyncDisplay(built.fields[name], meta) });
+            }
           });
         }
-        if(reasons.size) out.push({ table, typeLabel, dealId, rows: group, reasons: [...reasons], partial: group.length < allRows.length });
+        if(reasons.size) out.push({ table, typeLabel, dealId, rows: group, reasons: [...reasons], diffs, productTotal: allRows.length, partial: group.length < allRows.length });
       }
     }
   }finally{
@@ -17263,7 +17291,8 @@ function renderListSyncResults(res){
     html += '<p style="font-size:13px;color:var(--success);margin:0;">Everything matches — every Approved deal\'s latest approved-list row has its current details.</p>';
     runBtn.style.display = 'none';
   }else{
-    html += '<table style="width:100%;border-collapse:collapse;font-size:13px;"><tr>' +
+    html += '<div style="margin:0 0 8px;"><button type="button" class="secondary" id="list-sync-expand-all" style="padding:3px 10px;font-size:12px;">Expand all details</button></div>' +
+      '<table style="width:100%;border-collapse:collapse;font-size:13px;"><tr>' +
       '<th style="text-align:left;padding:6px;width:30px;"><input type="checkbox" id="list-sync-all" checked></th>' +
       '<th style="text-align:left;padding:6px;">Deal ID</th><th style="text-align:left;padding:6px;">Type</th>' +
       '<th style="text-align:left;padding:6px;">Products</th><th style="text-align:left;padding:6px;">What differs</th></tr>' +
@@ -17272,13 +17301,47 @@ function renderListSyncResults(res){
         '<td style="padding:6px;">' + escapeHtml(friendlyDealId(d.dealId)) + '</td>' +
         '<td style="padding:6px;">' + escapeHtml(d.typeLabel) + '</td>' +
         '<td style="padding:6px;">' + d.rows.length + (d.partial ? ' <span style="font-size:11px;color:var(--text-secondary);">(others Completed)</span>' : '') + '</td>' +
-        '<td style="padding:6px;">' + escapeHtml(d.reasons.join(', ')) + '</td></tr>').join('') +
+        '<td style="padding:6px;">' + escapeHtml(d.reasons.join(', ')) +
+          ' <button type="button" class="secondary list-sync-detail-btn" data-i="' + i + '" style="padding:2px 8px;font-size:11px;margin-left:6px;">Show details</button></td></tr>' +
+        '<tr class="list-sync-detail-row" data-i="' + i + '" style="display:none;"><td></td><td colspan="4" style="padding:0 6px 12px;">' + listSyncDiffTableHtml(d) + '</td></tr>').join('') +
       '</table>';
     runBtn.style.display = 'inline-block';
   }
   el.innerHTML = html;
   syncListSyncRunLabel();
 }
+function listSyncDiffTableHtml(d){
+  const multi = (d.productTotal || d.rows.length) > 1;
+  return '<table style="width:100%;border-collapse:collapse;font-size:12px;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;">' +
+    '<tr>' + (multi ? '<th style="text-align:left;padding:5px 8px;">Product</th>' : '') +
+    '<th style="text-align:left;padding:5px 8px;">Field</th>' +
+    '<th style="text-align:left;padding:5px 8px;">Approved list now</th>' +
+    '<th style="text-align:left;padding:5px 8px;">Current deal (will be sent)</th></tr>' +
+    (d.diffs || []).map(x => '<tr style="border-top:1px solid var(--border);">' +
+      (multi ? '<td style="padding:5px 8px;">' + x.product + '</td>' : '') +
+      '<td style="padding:5px 8px;font-weight:600;">' + escapeHtml(x.field) + '</td>' +
+      '<td style="padding:5px 8px;color:#8a2d1f;"><s>' + escapeHtml(x.listValue) + '</s></td>' +
+      '<td style="padding:5px 8px;color:#1f7a4d;font-weight:600;">' + escapeHtml(x.appValue) + '</td></tr>').join('') +
+    '</table>';
+}
+document.addEventListener('click', (e)=>{
+  const btn = e.target.closest && e.target.closest('.list-sync-detail-btn');
+  if(btn){
+    const row = document.querySelector('.list-sync-detail-row[data-i="' + btn.getAttribute('data-i') + '"]');
+    if(!row) return;
+    const show = row.style.display === 'none';
+    row.style.display = show ? '' : 'none';
+    btn.textContent = show ? 'Hide details' : 'Show details';
+    return;
+  }
+  if(e.target && e.target.id === 'list-sync-expand-all'){
+    const rows = document.querySelectorAll('.list-sync-detail-row');
+    const show = [...rows].some(r => r.style.display === 'none');
+    rows.forEach(r => { r.style.display = show ? '' : 'none'; });
+    document.querySelectorAll('.list-sync-detail-btn').forEach(b => { b.textContent = show ? 'Hide details' : 'Show details'; });
+    e.target.textContent = show ? 'Collapse all details' : 'Expand all details';
+  }
+});
 function selectedListSyncCandidates(){
   return [...document.querySelectorAll('.list-sync-cb')].filter(cb => cb.checked).map(cb => listSyncCandidates[+cb.getAttribute('data-i')]);
 }
