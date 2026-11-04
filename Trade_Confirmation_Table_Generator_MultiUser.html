@@ -1422,6 +1422,7 @@ html.desk-nav-hidden #main-tabs{transform:translateX(-100%);visibility:hidden;}
       <div style="display:flex;align-items:center;gap:14px;">
         <span id="view-modal-agreement-link" style="font-size:13px;"></span>
         <button type="button" class="secondary" id="view-modal-edit" style="display:none;" title="Superadmin only - edit the recap details shown above">Edit details</button>
+        <button type="button" class="secondary" id="view-modal-resync" style="display:none;" title="Superadmin only - re-send this Approved deal's current details to the approved SharePoint list so the master list is corrected">Resync to SharePoint list</button>
         <button type="button" class="secondary" id="view-modal-copy" style="display:none;" title="Appears once Level 1 approves and a real Deal ID is assigned">Copy table</button>
         <button type="button" class="secondary" id="view-modal-close">Close</button>
       </div>
@@ -3983,6 +3984,48 @@ async function addApprovedDealToList(values, changeNote){
         const sent = Object.keys(fields).map(k => k + '=' + JSON.stringify(fields[k])).join(', ');
         throw new Error('SharePoint write to "' + ctx.listName + '" failed: ' + (err && err.message ? err.message : err) + '. Sent fields: ' + sent);
     }
+}
+
+// Pushes the CURRENT TradeDealLog/CCDealLog values of an already-Approved
+// deal to its "Approved" list as fresh rows (the list is append-only), each
+// carrying the product's Row Uid. The Power Automate flow on that list finds
+// the master-list row by "HTML Reference" = Row Uid and overwrites it, so
+// this is what keeps the master list in step with edits made AFTER Level 3.
+// rows = [{ index, values:[values] }] in product order. A product with no
+// Row Uid (very old deals) gets one generated and saved first, so the flow
+// can key on it from now on. Returns a list of error strings (empty = ok).
+async function pushApprovedRowsToList(rows, changeNote){
+  const errors = [];
+  for(let k = 0; k < rows.length; k++){
+    const values = rows[k].values[0].slice();
+    try{
+      let dirty = false;
+      if(!String(values[MC.rowUid] || '').trim()){ values[MC.rowUid] = generateRowUid(); dirty = true; }
+      const itemId = await addApprovedDealToList(values, changeNote);
+      if(itemId){ values[MC.approvedListItemId] = String(itemId); dirty = true; }
+      if(dirty) await updateCanonicalTableRow(dealLogTableName(), rows[k].index, values);
+      rows[k].values[0] = values;
+    }catch(err){
+      console.error('Approved list sync failed for Product ' + (k+1), err);
+      errors.push('Product ' + (k+1) + ': ' + (err && err.message ? err.message : err));
+    }
+  }
+  return errors;
+}
+// Superadmin "Resync to SharePoint list": re-sends an Approved deal's live
+// values so the master list self-corrects (e.g. after an edit that never
+// reached the list, or a flow run that failed).
+async function resyncApprovedDealToList(dealId){
+  await ensureFreshWorkbookSession();
+  const live = (await getCanonicalTableRows(dealLogTableName()))
+    .filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId)
+    .sort((a,b)=> a.index - b.index);
+  if(!live.length) throw new Error('Deal ' + dealId + ' could not be found in ' + dealLogTableName() + '.');
+  const status = dealGroupStatus(live);
+  if(status !== STATUS_APPROVED) throw new Error('Only fully Approved deals are in the approved list (this one is ' + (status || 'Unknown') + ').');
+  const errors = await pushApprovedRowsToList(live, 'Resync by Super Admin ' + (currentAccount && currentAccount.username || '') + ' on ' + auditTimestampLabel());
+  await loadHistory();
+  return { products: live.length, errors };
 }
 
 async function getTableColumnCount(tableName, forceRefresh){
@@ -8211,6 +8254,8 @@ function openViewModal(dealId, html, agreementUrl, group, deliveryFilter){
   // already exist and get looked up by whatever ID is currently stored.
   const editBtn = document.getElementById('view-modal-edit');
   editBtn.style.display = (currentUserRole === 'superadmin' && viewModalGroup.length) ? 'inline-block' : 'none';
+  const resyncBtn = document.getElementById('view-modal-resync');
+  if(resyncBtn) resyncBtn.style.display = (currentUserRole === 'superadmin' && viewModalGroup.length && dealGroupStatus(viewModalGroup) === STATUS_APPROVED) ? 'inline-block' : 'none';
   document.getElementById('view-modal-overlay').style.display = 'flex';
 }
 function closeViewModal(){
@@ -8234,6 +8279,23 @@ document.getElementById('view-modal-edit').addEventListener('click', ()=>{
   openRecapEditor(container, viewModalDealId, viewModalGroup, restoreHtml, (finalHtml)=>{
     viewModalHtml = finalHtml;
   });
+});
+document.getElementById('view-modal-resync').addEventListener('click', async ()=>{
+  const dealId = viewModalDealId;
+  if(!dealId || !viewModalGroup.length) return;
+  if(!confirm('Re-send Deal ID ' + friendlyDealId(dealId) + ' to the "' + approvedListNameForCurrentLog() + '" list?\n\nA new row per product is added with the deal\'s CURRENT details and the same Row Uid, so the Power Automate flow overwrites the matching master-list row.')) return;
+  const btn = document.getElementById('view-modal-resync');
+  btn.disabled = true; btn.textContent = 'Resyncing…';
+  try{
+    const res = await resyncApprovedDealToList(dealId);
+    alert(res.errors.length
+      ? 'Resync finished with problems:\n\n' + res.errors.join('\n')
+      : 'Sent ' + res.products + ' product row(s) to the approved list. The master list updates when the Power Automate flow runs (usually within a minute or two).');
+  }catch(err){
+    alert('Resync failed: ' + err.message);
+  }finally{
+    btn.disabled = false; btn.textContent = 'Resync to SharePoint list';
+  }
 });
 document.getElementById('view-modal-overlay').addEventListener('click', (e)=>{
   if(e.target.id === 'view-modal-overlay') closeViewModal();
@@ -12547,6 +12609,13 @@ async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
     for(const r of updatedRows){
       await updateCanonicalTableRow(dealLogTableName(), r.index, r.values[0]);
     }
+    // Deal already fully Approved: the edit must also reach the approved
+    // list, otherwise the master list (fed from that list by Power
+    // Automate, matched on Row Uid) keeps the old values.
+    let reListErrors = [];
+    if(dealGroupStatus(sortedGroup) === STATUS_APPROVED){
+      reListErrors = await pushApprovedRowsToList(updatedRows, 'Super Admin edit: ' + reJustification);
+    }
     await appendDealAuditEntry(dealId,
       'Super Admin edit via "Edit details" (applied immediately, no approval step) on ' + auditTimestampLabel() + ' by ' + (currentAccount.username || 'unknown') +
       '\nReason: ' + reJustification +
@@ -12565,6 +12634,9 @@ async function saveRecapEdits(dealId, sortedGroup, containerEl, onSaved){
     const finalHtml = refreshedGroup.length ? refreshBdMatchingInHtml(freshHtml, refreshedGroup) : freshHtml;
     containerEl.innerHTML = finalHtml;
     if(onSaved) onSaved(finalHtml);
+    if(reListErrors.length){
+      alert('The edit was saved, but sending it to the "' + approvedListNameForCurrentLog() + '" list failed, so the master list was not updated:\n\n' + reListErrors.join('\n') + '\n\nUse "Resync to SharePoint list" on this deal once the problem is fixed.');
+    }
   }catch(err){
     errEl.textContent = 'Save failed: ' + err.message;
     errEl.style.display = 'block';
