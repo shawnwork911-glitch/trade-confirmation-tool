@@ -1410,7 +1410,7 @@ html.desk-nav-hidden #main-tabs{transform:translateX(-100%);visibility:hidden;}
 
   <div class="card" id="list-sync-card" style="display:none;">
     <p class="card-title">Approved list sync</p>
-    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Super Admin only. Compares every fully Approved RECs and Carbon Credit deal with its latest row in the approved SharePoint lists (matched by Row Uid) and lists the deals whose details differ or are missing — for example edits made after Level 3 approval that never reached the list. "Resync" sends only the ticked deals, so the Power Automate flow corrects the master list. Notes, approver and status columns are not compared.</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Super Admin only. Compares every fully Approved RECs and Carbon Credit deal with its latest row in the approved SharePoint lists (matched by Row Uid) and lists the deals whose details differ or are missing — for example edits made after Level 3 approval that never reached the list. "Resync" sends only the ticked deals, so the Power Automate flow corrects the master list. Notes, approver and status columns are not compared, and deals already marked <strong>Completed</strong> in the master list are skipped.</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
       <button type="button" id="list-sync-scan-btn">Check for differences</button>
       <button type="button" id="list-sync-run-btn" class="secondary" style="display:none;">Resync</button>
@@ -4038,9 +4038,20 @@ async function resyncApprovedDealToList(dealId){
   if(!live.length) throw new Error('Deal ' + dealId + ' could not be found in ' + dealLogTableName() + '.');
   const status = dealGroupStatus(live);
   if(status !== STATUS_APPROVED) throw new Error('Only fully Approved deals are in the approved list (this one is ' + (status || 'Unknown') + ').');
-  const errors = await pushApprovedRowsToList(live, 'Resync by Super Admin ' + (currentAccount && currentAccount.username || '') + ' on ' + auditTimestampLabel());
+  // Products ops already marked "Completed" in the master list are final —
+  // skip them (same rule as the bulk sync and the Power Automate flow).
+  let toSend = live, skipped = 0;
+  if(dealLogTableName() !== CC_LOG_TABLE_NAME){
+    try{
+      const masterStatus = await fetchMasterStatusByRowUid();
+      toSend = live.filter(r => !isCompletedStatus(masterStatus[String(r.values[0][MC.rowUid] || '').trim().toLowerCase()]));
+      skipped = live.length - toSend.length;
+    }catch(err){ console.warn('Could not read master list Status — resyncing all products:', err); }
+  }
+  if(!toSend.length) throw new Error('Every product of this deal is "Completed" in the master list, so nothing was resynced.');
+  const errors = await pushApprovedRowsToList(toSend, 'Resync by Super Admin ' + (currentAccount && currentAccount.username || '') + ' on ' + auditTimestampLabel());
   await loadHistory();
-  return { products: live.length, errors };
+  return { products: toSend.length, skipped, errors };
 }
 
 async function getTableColumnCount(tableName, forceRefresh){
@@ -8305,7 +8316,7 @@ document.getElementById('view-modal-resync').addEventListener('click', async ()=
     const res = await resyncApprovedDealToList(dealId);
     alert(res.errors.length
       ? 'Resync finished with problems:\n\n' + res.errors.join('\n')
-      : 'Sent ' + res.products + ' product row(s) to the approved list. The master list updates when the Power Automate flow runs (usually within a minute or two).');
+      : 'Sent ' + res.products + ' product row(s) to the approved list' + (res.skipped ? ' (' + res.skipped + ' Completed product(s) skipped)' : '') + '. The master list updates when the Power Automate flow runs (usually within a minute or two).');
   }catch(err){
     alert('Resync failed: ' + err.message);
   }finally{
@@ -17106,6 +17117,43 @@ document.addEventListener('click', function(e){
    corrects the master list without resyncing deals one by one. */
 const LIST_SYNC_IGNORE = ['Pending Matching Note','Change Note','Status','Approved By','Approved Date','Submitted By','Submitted Date','Row Uid'];
 let listSyncCandidates = [];
+// The RECs master list the Power Automate flow writes to ("Single Trade
+// (SO)" table in /6.RECS FOLDER/Master Folder_250923.xlsx). Only read here,
+// to skip product rows ops have already marked "Completed".
+const MASTER_LIST = {
+  driveId: 'b!IV7fojEoU0ylxJsmFpq1wy7RlQWpaW5AjKTgPpSm-hGuWoO8lQ_WQKdeVE61kGtl',
+  fileId: '01QZS7X4EXISP6WETPMBCKEMPSPQFLSACA',
+  tableId: '{F88B0807-1A22-48AA-A7A8-DF27EC12506D}'
+};
+function isCompletedStatus(v){ return /^complete/i.test(String(v || '').trim()); }
+// Row Uid (lower-case) -> master Status. Uses plain fetch (no Excel
+// session header) because the app's workbook session belongs to a
+// different file.
+async function fetchMasterStatusByRowUid(){
+  const base = 'https://graph.microsoft.com/v1.0/drives/' + MASTER_LIST.driveId + '/items/' + MASTER_LIST.fileId +
+    '/workbook/tables/' + encodeURIComponent(MASTER_LIST.tableId);
+  const get = async (path) => {
+    const token = await getAccessToken(GRAPH_SCOPES);
+    const res = await fetch(base + path, { headers: { 'Authorization': 'Bearer ' + token } });
+    if(!res.ok) throw new Error('could not read the master list (' + res.status + '): ' + (await res.text().catch(()=> '')).slice(0, 200));
+    return res.json();
+  };
+  const cols = ((await get('/columns?$select=name')).value || []).map(c => String(c.name || '').trim().toLowerCase());
+  const iRef = cols.indexOf('html reference'), iStatus = cols.indexOf('status');
+  if(iRef < 0 || iStatus < 0) throw new Error('the master list has no "HTML Reference" / "Status" column');
+  const map = {};
+  const PAGE = 500;
+  for(let skip = 0; ; skip += PAGE){
+    const page = (await get('/rows?$top=' + PAGE + '&$skip=' + skip)).value || [];
+    page.forEach(r => {
+      const v = r.values && r.values[0] || [];
+      const uid = String(v[iRef] || '').trim().toLowerCase();
+      if(uid) map[uid] = String(v[iStatus] || '').trim();
+    });
+    if(page.length < PAGE) break;
+  }
+  return map;
+}
 async function fetchApprovedListLatestByRowUid(ctx){
   const uidCol = ctx.columnMap['Row Uid'] && ctx.columnMap['Row Uid'].name;
   if(!uidCol) throw new Error('"' + ctx.listName + '" has no "Row Uid" column, so deals can\'t be matched.');
@@ -17141,6 +17189,14 @@ function listSyncNorm(v, type){
 async function scanApprovedListDrift(onProgress){
   const out = [];
   const errors = [];
+  let skippedCompleted = 0;
+  let masterStatus = null;
+  try{
+    if(onProgress) onProgress('Reading master list statuses…');
+    masterStatus = await fetchMasterStatusByRowUid();
+  }catch(err){
+    errors.push('Completed deals could not be excluded — ' + err.message + '. Untick any deal that is already Completed before resyncing.');
+  }
   const prevTable = dealLogTableName();
   try{
     for(const table of [STANDARD_LOG_TABLE_NAME, CC_LOG_TABLE_NAME]){
@@ -17163,13 +17219,20 @@ async function scanApprovedListDrift(onProgress){
         (groups[id] = groups[id] || []).push(r);
       });
       for(const dealId of Object.keys(groups)){
-        const group = groups[dealId].sort((a,b)=> a.index - b.index);
+        const allRows = groups[dealId].sort((a,b)=> a.index - b.index);
+        // Products ops already marked "Completed" in the master list are
+        // final — never compared or resynced (CC deals aren't in that list).
+        const group = allRows.filter(r => {
+          const uid = String(r.values[0][MC.rowUid] || '').trim().toLowerCase();
+          return !(masterStatus && uid && isCompletedStatus(masterStatus[uid]));
+        });
+        if(!group.length){ skippedCompleted++; continue; }
         const reasons = new Set();
         for(let k = 0; k < group.length; k++){
           const values = group[k].values[0];
           const uid = String(values[MC.rowUid] || '').trim().toLowerCase();
           const item = uid ? latest[uid] : null;
-          if(!item){ reasons.add(group.length > 1 ? 'Product ' + (k+1) + ' missing from list' : 'Missing from list'); continue; }
+          if(!item){ reasons.add(allRows.length > 1 ? 'Product ' + (allRows.indexOf(group[k])+1) + ' missing from list' : 'Missing from list'); continue; }
           const built = await addApprovedDealToList(values, '', { dryRun: true });
           Object.keys(built.fields).forEach(name=>{
             const meta = byName[name];
@@ -17177,13 +17240,13 @@ async function scanApprovedListDrift(onProgress){
             if(listSyncNorm(built.fields[name], meta.type) !== listSyncNorm(item.fields[name], meta.type)) reasons.add(meta.dn);
           });
         }
-        if(reasons.size) out.push({ table, typeLabel, dealId, rows: group, reasons: [...reasons] });
+        if(reasons.size) out.push({ table, typeLabel, dealId, rows: group, reasons: [...reasons], partial: group.length < allRows.length });
       }
     }
   }finally{
     setActiveDealLogTable(prevTable);
   }
-  return { drift: out, errors };
+  return { drift: out, errors, skippedCompleted };
 }
 function renderListSyncResults(res){
   const el = document.getElementById('list-sync-results');
@@ -17192,6 +17255,9 @@ function renderListSyncResults(res){
   let html = '';
   if(res.errors.length){
     html += '<div class="warning-box" style="display:block;margin-bottom:10px;">' + res.errors.map(escapeHtml).join('<br>') + '</div>';
+  }
+  if(res.skippedCompleted){
+    html += '<p style="font-size:12px;color:var(--text-secondary);margin:0 0 8px;">' + res.skippedCompleted + ' deal(s) already marked Completed in the master list were skipped.</p>';
   }
   if(!res.drift.length){
     html += '<p style="font-size:13px;color:var(--success);margin:0;">Everything matches — every Approved deal\'s latest approved-list row has its current details.</p>';
@@ -17205,7 +17271,7 @@ function renderListSyncResults(res){
         '<td style="padding:6px;"><input type="checkbox" class="list-sync-cb" data-i="' + i + '" checked></td>' +
         '<td style="padding:6px;">' + escapeHtml(friendlyDealId(d.dealId)) + '</td>' +
         '<td style="padding:6px;">' + escapeHtml(d.typeLabel) + '</td>' +
-        '<td style="padding:6px;">' + d.rows.length + '</td>' +
+        '<td style="padding:6px;">' + d.rows.length + (d.partial ? ' <span style="font-size:11px;color:var(--text-secondary);">(others Completed)</span>' : '') + '</td>' +
         '<td style="padding:6px;">' + escapeHtml(d.reasons.join(', ')) + '</td></tr>').join('') +
       '</table>';
     runBtn.style.display = 'inline-block';
@@ -17240,7 +17306,7 @@ document.getElementById('list-sync-scan-btn').addEventListener('click', async ()
   try{
     await ensureFreshWorkbookSession();
     const res = await scanApprovedListDrift(msg => { status.textContent = msg; });
-    status.textContent = 'Checked ' + new Date().toLocaleString() + ' — ' + res.drift.length + ' deal(s) differ.';
+    status.textContent = 'Checked ' + new Date().toLocaleString() + ' — ' + res.drift.length + ' deal(s) differ' + (res.skippedCompleted ? ', ' + res.skippedCompleted + ' Completed skipped' : '') + '.';
     renderListSyncResults(res);
   }catch(err){
     status.textContent = 'Check failed: ' + err.message;
