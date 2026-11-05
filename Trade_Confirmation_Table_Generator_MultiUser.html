@@ -16181,7 +16181,26 @@ function assetSectionHeaderIsRedundant(section){
 function dedupeAssetSectionHeaders(html){
   return String(html || '').replace(/(<tr><th colspan="1">([^<]*)<\/th><\/tr>)<tr><th>\2<\/th><\/tr>/g, '$1');
 }
+// The View/Copy table preview is a snapshot (generatedHtml) taken at
+// submission, so it doesn't follow later edits to the BNM Rate column.
+// BNM Rate only applies to an MY-entity deal in a non-MYR currency — for
+// any other deal (or one whose BNM Rate is now "N/A" in the log), drop the
+// "BNM Rate (Standard)" / "BNM Rate" rows from the snapshot when shown.
+function assetBnmNotApplicable(values, mc){
+  if(!values || !mc) return false;
+  const g = k => (mc[k] === undefined) ? '' : String(values[mc[k]] ?? '').trim();
+  const bnm = g('bnmRate').toUpperCase();
+  return bnm === 'N/A' || bnm === 'NA' || g('entity').toUpperCase() === 'SG' ||
+    (g('entity').toUpperCase() === 'MY' && g('currency').toUpperCase() === 'MYR');
+}
+function stripAssetBnmRows(html){
+  return String(html || '').replace(/<tr>\s*<td[^>]*>\s*BNM Rate( \(Standard\))?\s*<\/td>\s*<td[^>]*>[\s\S]*?<\/td>\s*<\/tr>/g, '');
+}
 function openAssetViewModal(assetId, html, agreementUrl){
+  const bnmGroup = findAssetRowGroupInCache(assetId);
+  if(bnmGroup && bnmGroup.rows.length && assetBnmNotApplicable(bnmGroup.rows[0].values[0], bnmGroup.mc)){
+    html = stripAssetBnmRows(html);
+  }
   openViewModal(assetId, '<div class="asset-view-html">' + dedupeAssetSectionHeaders(html) + '</div>', agreementUrl, []);
   const labelEl = document.getElementById('view-modal-label');
   if(labelEl) labelEl.textContent = 'Asset ID';
