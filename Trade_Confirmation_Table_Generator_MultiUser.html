@@ -1126,6 +1126,12 @@ html.desk-nav-hidden #main-tabs{transform:translateX(-100%);visibility:hidden;}
     <div id="trades-container" style="margin-top:16px;"></div>
   </div>
 
+  <div id="tc-upload-box" class="card" style="display:none;border:1px solid #e8c99a;">
+    <p class="card-title" style="margin-bottom:6px;">Trade Confirmation (Tax Invoice) <span style="color:#c0392b;">*</span></p>
+    <p style="margin:0 0 10px;font-size:13px;color:var(--text-secondary);">This is a <strong>Climate Impact X</strong> deal — the Trade Confirmation (Tax Invoice) file must be uploaded before it can be submitted for Level 1 approval. PDF or Word, max 10 MB.</p>
+    <input type="file" id="tc-file-input" accept=".pdf,.doc,.docx"/>
+  </div>
+
   <div id="desk-actionbar" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
     <button id="generate-btn">Generate table</button>
     <button id="save-agreement-btn" class="secondary" type="button" disabled title="Generate the table first">Save agreement</button>
@@ -1896,6 +1902,27 @@ const L2_CLEAR = { reason:'', remark:'', by:'', date:'' };
 // __tagBdWrite property on the canonical values array (see applyTagBdWrite);
 // when absent, the cell is written back exactly as last read. See tagBdColumnIndex / dealTaggedBd / isTaggedBdViewer.
 const TAG_BD_COLUMN_NAME = 'Tagged BD In-charge';
+// ---- Climate Impact X: Trade Confirmation file (RECs only) ----
+// A RECs deal whose Buyer/Seller company is Climate Impact X must have its
+// Trade Confirmation file uploaded before it can be submitted for Level 1.
+// The file goes to the "Trade Confirmation Files" folder (same SharePoint
+// drive as "Agreement Files") and its link is stored on every row of the
+// deal in a column found by HEADER NAME — add "Trade Confirmation File" at
+// the end of the TradeDealLog table. Written via a __tcFileWrite property on
+// the canonical values array; when absent the cell is written back exactly
+// as last read. Read back as values.__tcFile.
+const TC_FILE_COLUMN_NAME = 'Trade Confirmation File';
+const TC_FILE_FOLDER = 'Trade Confirmation Files';
+const CIX_COMPANY_NAMES = ['climate impact x pte ltd', 'climate impact x'];
+function normalizeCompanyName(name){
+  return String(name || '').toLowerCase().replace(/[.,()]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+function isClimateImpactXBuyer(name){
+  return CIX_COMPANY_NAMES.indexOf(normalizeCompanyName(name)) !== -1;
+}
+function tcFileLinkHtml(url){
+  return url ? '<a href="'+escapeHtml(url)+'" target="_blank" rel="noopener">📄 View Trade Confirmation (Tax Invoice)</a>' : '';
+}
 // ---- Pending per-source Vintage / Matching note (RECs and Carbon Credit) ----
 // "Request edit" on a Pending Level 3 deal (or any volume change — see
 // requestBdMatchChange) is staged for Level 3 approval instead of written
@@ -4146,6 +4173,11 @@ function tagBdColumnIndex(tableName){
   if(!names) return -1;
   return names.map(normalizeHeaderName).indexOf(normalizeHeaderName(TAG_BD_COLUMN_NAME));
 }
+function tcFileColumnIndex(tableName){
+  const names = tableColumnNamesCache[tableName];
+  if(!names) return -1;
+  return names.map(normalizeHeaderName).indexOf(normalizeHeaderName(TC_FILE_COLUMN_NAME));
+}
 function pendingSrcColumnIndex(tableName){
   const names = tableColumnNamesCache[tableName];
   if(!names) return -1;
@@ -4473,6 +4505,7 @@ async function getCanonicalTableRows(tableName){
   const redIdx = redReqColumnIndexes(tableName);
   const tagIdx = tagBdColumnIndex(tableName);
   const pendSrcIdx = pendingSrcColumnIndex(tableName);
+  const tcIdx = tcFileColumnIndex(tableName);
   const flagIdx = dealFlagColumnIndexes(tableName);
   const cache = rawLogRowCache[tableName] = {};
   rawLogRowCacheHeaders[tableName] = tableHeaderSignature(tableName);
@@ -4490,6 +4523,8 @@ async function getCanonicalTableRows(tableName){
     if(out.values && out.values[0]) out.values[0].__tagBd = tagIdx >= 0 ? String(raw[tagIdx] ?? '').trim() : '';
     // Staged per-source Vintage/Note (see PENDING_SRC_COLUMN_NAME).
     if(out.values && out.values[0]) out.values[0].__pendingSrc = pendSrcIdx >= 0 ? String(raw[pendSrcIdx] ?? '').trim() : '';
+    // Trade Confirmation file link (Climate Impact X RECs deals).
+    if(out.values && out.values[0]) out.values[0].__tcFile = tcIdx >= 0 ? String(raw[tcIdx] ?? '').trim() : '';
     // Hourly Deal / New Device flags (RECs) — read via dealFlags.
     if(out.values && out.values[0]) out.values[0].__flags = {
       hourly: flagIdx.hourly >= 0 && isDealFlagOn(raw[flagIdx.hourly]),
@@ -4501,6 +4536,7 @@ async function getCanonicalTableRows(tableName){
 async function addCanonicalTableRows(tableName, rowsArray){
   await getTableColumnCount(tableName, true); // fresh header names before mapping
   const tagIdx = tagBdColumnIndex(tableName);
+  const tcIdx = tcFileColumnIndex(tableName);
   const flagIdx = dealFlagColumnIndexes(tableName);
   const rawRows = rowsArray.map(v => {
     const raw = canonicalToTableRaw(v, tableName);
@@ -4515,6 +4551,10 @@ async function addCanonicalTableRows(tableName, rowsArray){
     if(tagIdx >= 0 && ('__tagBdWrite' in v)){
       while(raw.length <= tagIdx) raw.push('');
       raw[tagIdx] = v.__tagBdWrite;
+    }
+    if(tcIdx >= 0 && ('__tcFileWrite' in v)){
+      while(raw.length <= tcIdx) raw.push('');
+      raw[tcIdx] = v.__tcFileWrite;
     }
     return raw;
   });
@@ -4563,6 +4603,14 @@ async function updateCanonicalTableRow(tableName, rowIndex, values, l2Override, 
     const v = ('__tagBdWrite' in values) ? values.__tagBdWrite : (cached ? (cached[tagIdx] ?? '') : (raw[tagIdx] ?? ''));
     while(raw.length <= tagIdx) raw.push('');
     raw[tagIdx] = v;
+  }
+  // Trade Confirmation file — same "write if given, else preserve" rule.
+  const tcIdx = tcFileColumnIndex(tableName);
+  if(tcIdx >= 0){
+    const cached = (rawLogRowCache[tableName] || {})[rowIndex];
+    const v = ('__tcFileWrite' in values) ? values.__tcFileWrite : (cached ? (cached[tcIdx] ?? '') : (raw[tcIdx] ?? ''));
+    while(raw.length <= tcIdx) raw.push('');
+    raw[tcIdx] = v;
   }
   // Pending Source Vintage/Note — same "write if given, else preserve" rule.
   const pendSrcIdx = pendingSrcColumnIndex(tableName);
@@ -4641,14 +4689,14 @@ async function deleteTableRow(tableName, rowIndex){
 const AGREEMENT_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
 const AGREEMENT_SIMPLE_UPLOAD_MAX_BYTES = 4 * 1024 * 1024; // Graph's own ceiling for PUT .../content
 const AGREEMENT_UPLOAD_CHUNK_BYTES = 5 * 1024 * 1024; // must be a multiple of 320 KiB per Graph's docs
-async function uploadAgreementFile(dealId, file, targetDriveId){
+async function uploadAgreementFile(dealId, file, targetDriveId, folderName){
   const uploadDriveId = targetDriveId || driveId;
   if(!uploadDriveId) throw new Error('Not connected to the SharePoint workbook yet — try refreshing the page.');
   if(file.size > AGREEMENT_UPLOAD_MAX_BYTES){
     throw new Error('That file is larger than 10 MB — please compress it or upload a smaller file.');
   }
   const safeName = (dealId + ' - ' + file.name).replace(/[\\\/:*?"<>|]/g, '-');
-  const itemPath = '/drives/' + uploadDriveId + '/root:/Agreement Files/' + encodeURIComponent(safeName) + ':';
+  const itemPath = '/drives/' + uploadDriveId + '/root:/' + encodeURIComponent(folderName || 'Agreement Files') + '/' + encodeURIComponent(safeName) + ':';
   if(file.size <= AGREEMENT_SIMPLE_UPLOAD_MAX_BYTES){
     const token = await getAccessToken(GRAPH_SCOPES);
     const res = await fetch('https://graph.microsoft.com/v1.0' + itemPath + '/content', {
@@ -5481,6 +5529,7 @@ async function saveDraft(){
 function applyDraftData(data){
   suppressAutosave = true;
   currentProductMode = data.productMode === 'carboncredit' ? 'carboncredit' : 'standard';
+  setTimeout(syncTcUploadUi, 0);
   setActiveDealLogTable(logTableForMode(currentProductMode));
   currentTab = currentProductMode === 'carboncredit' ? 'carboncredit' : 'form';
   document.getElementById('tab-btn-form').classList.toggle('active', currentProductMode === 'standard');
@@ -5665,6 +5714,7 @@ document.addEventListener('change', (e)=>{
 // still visible in Saved agreements).
 async function resetToBlankForm(){
   clearTimeout(draftSaveTimer);
+  { const tcInp = document.getElementById('tc-file-input'); if(tcInp) tcInp.value = ''; setTimeout(syncTcUploadUi, 0); }
   suppressAutosave = true; // don't let a pending autosave re-create the draft
   // Delete this user's draft row in BOTH draft tables (RECs and Carbon Credit),
   // looking the row up fresh by email instead of trusting a cached row index
@@ -5774,6 +5824,18 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
   const flagsAgg = { hourly: flagsPerProduct.some(f => f.hourly), newDevice: flagsPerProduct.some(f => f.newDevice) };
   const flagsCheck = await resolveDealFlagsWrite(dealLogTableName(), flagsAgg);
   if(flagsCheck.error) throw new Error(flagsCheck.error);
+  // Climate Impact X (RECs only): Trade Confirmation file is compulsory.
+  let tcFileUrl = null;
+  if(currentProductMode !== 'carboncredit' && isClimateImpactXBuyer(val('h-buyer'))){
+    const tcInput = document.getElementById('tc-file-input');
+    const tcFile = tcInput && tcInput.files && tcInput.files[0];
+    if(!tcFile) throw new Error('Climate Impact X deals need the Trade Confirmation (Tax Invoice) file uploaded before submitting for Level 1 approval — attach it under "Trade Confirmation (Tax Invoice)" above the Save button.');
+    if(tcFileColumnIndex(dealLogTableName()) < 0){
+      throw new Error('The TradeDealLog table in SharePoint is missing the "' + TC_FILE_COLUMN_NAME + '" column needed to save the Trade Confirmation file. Ask an admin to add it at the end of the table, then try again.');
+    }
+    const uploadedTc = await uploadAgreementFile(dealId + ' - TC', tcFile, null, TC_FILE_FOLDER);
+    tcFileUrl = uploadedTc.webUrl;
+  }
   const rowsToWrite = [];
   for(let n = 1; n <= tradeCount; n++){
     const matching = val('t'+n+'-m-matching');
@@ -5878,6 +5940,7 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
       row[MC.regTechReminderSentDate] = row[MC.deliveryEnd];
     }
     row.__tagBdWrite = tagBdValue; // written by addCanonicalTableRows
+    if(tcFileUrl) row.__tcFileWrite = tcFileUrl;
     applyDealFlagsWrite(row, flagsPerProduct[n-1]);
     rowsToWrite.push(row);
   }
@@ -7878,9 +7941,9 @@ function renderHistoryTable(el, groups, opts){
       : 'Send this back to the submitter with a comment instead of rejecting it outright — Level 1 and Level 2\'s approvals (and the Level 2 agreement) stay in place; once they resubmit, it comes straight back to Pending Level 3, not Level 1.';
     const trail = approvalTrailText(v);
     const agreementUrl = v[MC.agreementFileUrl];
-    const agreementLink = agreementUrl
+    const agreementLink = (agreementUrl
       ? '<div style="font-size:11px;margin-top:2px;"><a href="'+escapeHtml(agreementUrl)+'" target="_blank" rel="noopener">📄 View agreement</a></div>'
-      : '';
+      : '') + (v.__tcFile ? '<div style="font-size:11px;margin-top:2px;">'+tcFileLinkHtml(v.__tcFile)+'</div>' : '');
     const canRequestEdit = isOwnerOrAdmin && showRequestEdit && (status === STATUS_APPROVED || status === STATUS_PENDING_3);
     // Full details/products edit — available in the window right after
     // Admin Level 1 approves and before Level 2 acts (Pending Level 2), or
@@ -8289,8 +8352,10 @@ function openViewModal(dealId, html, agreementUrl, group, deliveryFilter){
   const viewTable = document.getElementById('view-modal-table');
   viewTable.innerHTML = html;
   applyDeliveryFilterHighlight(viewTable, group, deliveryFilter);
-  document.getElementById('view-modal-agreement-link').innerHTML = agreementUrl
-    ? '<a href="'+escapeHtml(agreementUrl)+'" target="_blank" rel="noopener">📄 View agreement</a>' : '';
+  const viewTcUrl = (group && group[0] && group[0].values && group[0].values[0] && group[0].values[0].__tcFile) || '';
+  document.getElementById('view-modal-agreement-link').innerHTML = (agreementUrl
+    ? '<a href="'+escapeHtml(agreementUrl)+'" target="_blank" rel="noopener">📄 View agreement</a>' : '') +
+    (viewTcUrl ? (agreementUrl ? ' &nbsp;·&nbsp; ' : '') + tcFileLinkHtml(viewTcUrl) : '');
   // Copy table stays hidden until Level 1 approval assigns a real Deal ID —
   // same rule as the main Preview card's Copy button.
   viewModalHtml = html;
@@ -11646,6 +11711,7 @@ function switchProductMode(mode){
     ? gatherFormData() : null;
   currentProductMode = mode;
   setActiveDealLogTable(logTableForMode(mode));
+  setTimeout(syncTcUploadUi, 0);
   draftRowIndex = null;
   draftRowTableName = draftTableName();
   updateBuyerSellerFieldLabel();
@@ -13080,6 +13146,11 @@ function fullEditFormHtml(dealId, sortedGroup){
       recapEditFieldHtml('BD in-charge', bdInChargeSelectHtml('fe-h-bd', head[MC.salesPic]))+
       '<div style="grid-column:1 / -1;">'+recapEditFieldHtml('Tag BD in-charge (optional — view only)', tagBdChecklistHtml('fe-h-tag-bd', dealTaggedBd(sortedGroup), 'fe-h-bd'))+'</div>'+
       recapEditFieldHtml(role+' Full Name', '<input type="text" id="fe-h-company" value="'+escapeHtml(head[MC.company]||'')+'"/>')+
+      (isCC ? '' : '<div id="fe-tc-box" style="grid-column:1 / -1;'+(isClimateImpactXBuyer(head[MC.company]) ? '' : 'display:none;')+'">'+
+        recapEditFieldHtml('Trade Confirmation (Tax Invoice) — required for Climate Impact X',
+          (head.__tcFile ? '<div style="font-size:12px;margin-bottom:4px;">Current: '+tcFileLinkHtml(head.__tcFile)+' — attach a new file only to replace it.</div>' : '')+
+          '<input type="file" id="fe-tc-file" accept=".pdf,.doc,.docx"/>')+
+      '</div>')+
       (isCC ? recapEditFieldHtml('Project Name', '<input type="text" id="fe-h-project-name" value="'+escapeHtml(head[MC.projectName]||'')+'"/>')+recapEditFieldHtml('Project ID', '<input type="text" id="fe-h-project-id" value="'+escapeHtml(head[MC.projectId]||'')+'"/>')+recapEditFieldHtml('Project Type', '<input type="text" id="fe-h-project-type" value="'+escapeHtml(head[MC.vFromMM]||'')+'"/>')+recapEditFieldHtml('Methodology', '<input type="text" id="fe-h-methodology" value="'+escapeHtml(head[MC.vToMM]||'')+'"/>') : '')+
     '</div>';
   sortedGroup.forEach((r, idx)=>{
@@ -13482,6 +13553,24 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
         values[MC.regTechReminderSentDate] = '';
       }
     });
+
+    // Climate Impact X (RECs only): a Trade Confirmation file must be on
+    // record — either already saved on the deal, or attached in this edit.
+    if(!isCC && isClimateImpactXBuyer(updatedRows[0].values[0][MC.company])){
+      const feTcInput = document.getElementById('fe-tc-file');
+      const feTcFile = feTcInput && feTcInput.files && feTcInput.files[0];
+      const existingTc = liveGroup[0].values[0].__tcFile || '';
+      if(!feTcFile && !existingTc){
+        throw new Error('Climate Impact X deals need the Trade Confirmation (Tax Invoice) file — attach it under "Trade Confirmation (Tax Invoice)" above before saving.');
+      }
+      if(feTcFile){
+        if(tcFileColumnIndex(activeTable) < 0){
+          throw new Error('The TradeDealLog table in SharePoint is missing the "' + TC_FILE_COLUMN_NAME + '" column needed to save the Trade Confirmation file. Ask an admin to add it at the end of the table, then try again.');
+        }
+        const upTc = await uploadAgreementFile(dealId + ' - TC', feTcFile, null, TC_FILE_FOLDER);
+        updatedRows.forEach(r => { r.values[0].__tcFileWrite = upTc.webUrl; });
+      }
+    }
 
     // Regenerate the recap from the edited values before writing.
     const freshHtml = renderPointFormatHtml(buildRecapLinesFromRows(dealId, updatedRows));
@@ -13890,6 +13979,22 @@ function liveRegTechCheck(){
   if(items.length) showRegTechWarning(items);
   else hideRegTechWarning();
 }
+// Shows the Trade Confirmation upload only for Climate Impact X RECs deals.
+function syncTcUploadUi(){
+  const box = document.getElementById('tc-upload-box');
+  if(!box) return;
+  const show = currentProductMode !== 'carboncredit' && isClimateImpactXBuyer(val('h-buyer'));
+  box.style.display = show ? '' : 'none';
+  if(!show){ const inp = document.getElementById('tc-file-input'); if(inp) inp.value = ''; }
+}
+document.addEventListener('input', (e)=>{
+  if(e.target && e.target.id === 'h-buyer') syncTcUploadUi();
+  if(e.target && e.target.id === 'fe-h-company'){
+    const b = document.getElementById('fe-tc-box');
+    if(b) b.style.display = isClimateImpactXBuyer(e.target.value) ? '' : 'none';
+  }
+});
+document.addEventListener('change', (e)=>{ if(e.target && e.target.id === 'h-buyer') syncTcUploadUi(); });
 document.addEventListener('input', (e)=>{
   const wrap = e.target.closest('[id$="-wrap"]');
   if(wrap) wrap.classList.remove('field-missing');
@@ -13962,6 +14067,7 @@ function generateOutput(){
 
 document.getElementById('generate-btn').addEventListener('click', ()=>{
   generateOutput();
+  syncTcUploadUi();
 });
 
 document.getElementById('preview-edit-btn').addEventListener('click', ()=>{
@@ -14009,6 +14115,17 @@ document.getElementById('save-agreement-btn').addEventListener('click', async ()
   try{
     const includeBD = generateOutput();
     if(includeBD === null) return; // validation warning already shown
+    syncTcUploadUi();
+    if(currentProductMode !== 'carboncredit' && isClimateImpactXBuyer(val('h-buyer'))){
+      const tcInput = document.getElementById('tc-file-input');
+      if(!(tcInput && tcInput.files && tcInput.files[0])){
+        note.textContent = 'Climate Impact X deal: please upload the Trade Confirmation (Tax Invoice) file before submitting for Level 1 approval.';
+        note.style.display = 'block';
+        const box = document.getElementById('tc-upload-box');
+        if(box) box.scrollIntoView({ behavior:'smooth', block:'center' });
+        return;
+      }
+    }
 
     if(!currentDealDocId){
       assignPendingDealId();
@@ -15361,7 +15478,9 @@ async function onNotifPanelClick(e){
     pricing.forEach(section=>{
       html += '<table style="margin-top:14px;">';
       html += '<tr><th colspan="'+section.cols.length+'">'+escapeHtml(section.heading)+'</th></tr>';
-      html += '<tr>'+section.cols.map(c=>'<th>'+escapeHtml(c)+'</th>').join('')+'</tr>';
+      // A single column named the same as its section (e.g. Currency) would
+      // just repeat the heading — skip the column header row.
+      if(!assetSectionHeaderIsRedundant(section)) html += '<tr>'+section.cols.map(c=>'<th>'+escapeHtml(c)+'</th>').join('')+'</tr>';
       section.rows.forEach(r=>{
         html += '<tr>'+r.map(v=>'<td>'+escapeHtml(v)+'</td>').join('')+'</tr>';
       });
@@ -15387,7 +15506,7 @@ async function onNotifPanelClick(e){
     pricing.forEach(section=>{
       lines.push('');
       lines.push(section.heading);
-      lines.push(section.cols.join(' | '));
+      if(!assetSectionHeaderIsRedundant(section)) lines.push(section.cols.join(' | '));
       section.rows.forEach(r=> lines.push(r.join(' | ')));
     });
     lines.push('');
@@ -15569,11 +15688,11 @@ function assignPendingAssetId(){
   return placeholder;
 }
 // Asset ID format: "A" + type code + 5-digit running number + "-" + 3-digit
-// device count, e.g. AOP00420-001 (Outright Purchase), ASM00421-003 (Self
-// Manage), APS00422-002 (Profit Sharing). The running number is ONE shared
-// sequence across all 3 types (never reused), starting at 00420.
+// device count, e.g. AOP00560-001 (Outright Purchase), APS00561-001 (Profit
+// Sharing), ASM00562-001 (Self Manage). The running number is ONE shared
+// sequence across all 3 types (never reused), starting at 00560.
 const ASSET_ID_TYPE_CODE = { 'Outright Purchase':'OP', 'Self Manage':'SM', 'Profit Sharing':'PS' };
-const ASSET_ID_FIRST_NUMBER = 420;
+const ASSET_ID_FIRST_NUMBER = 560;
 // Pulls the 5-digit running number out of an Asset ID in either the new
 // format (AOP00420-001) or the older plain one (00012-3). null if none.
 function assetIdRunningNumber(raw){
@@ -15820,8 +15939,16 @@ function buildAllAssetGroups(){
 // editor, stays hidden) and relabels the header from "Deal ID" to "Asset
 // ID". Asset has no post-approval BD-matching refresh step, so the stored
 // HTML is shown as-is.
+function assetSectionHeaderIsRedundant(section){
+  return !!(section && section.cols && section.cols.length === 1 && String(section.cols[0]).trim() === String(section.heading).trim());
+}
+// Agreements saved before the fix above still carry the repeated
+// single-column header (e.g. "Currency" / "Currency") — drop it on display.
+function dedupeAssetSectionHeaders(html){
+  return String(html || '').replace(/(<tr><th colspan="1">([^<]*)<\/th><\/tr>)<tr><th>\2<\/th><\/tr>/g, '$1');
+}
 function openAssetViewModal(assetId, html, agreementUrl){
-  openViewModal(assetId, '<div class="asset-view-html">' + (html || '') + '</div>', agreementUrl, []);
+  openViewModal(assetId, '<div class="asset-view-html">' + dedupeAssetSectionHeaders(html) + '</div>', agreementUrl, []);
   const labelEl = document.getElementById('view-modal-label');
   if(labelEl) labelEl.textContent = 'Asset ID';
   document.getElementById('view-modal-dealid').textContent = friendlyAssetId(assetId);
