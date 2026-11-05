@@ -4050,13 +4050,11 @@ async function resyncApprovedDealToList(dealId){
   // Products ops already marked "Completed" in the master list are final —
   // skip them (same rule as the bulk sync and the Power Automate flow).
   let toSend = live, skipped = 0;
-  if(dealLogTableName() !== CC_LOG_TABLE_NAME){
-    try{
-      const masterStatus = await fetchMasterStatusByRowUid();
-      toSend = live.filter(r => !isCompletedStatus(masterStatus[String(r.values[0][MC.rowUid] || '').trim().toLowerCase()]));
-      skipped = live.length - toSend.length;
-    }catch(err){ console.warn('Could not read master list Status — resyncing all products:', err); }
-  }
+  try{
+    const masterStatus = await fetchMasterStatusByRowUid();
+    toSend = live.filter(r => !isCompletedStatus(masterStatus[String(r.values[0][MC.rowUid] || '').trim().toLowerCase()]));
+    skipped = live.length - toSend.length;
+  }catch(err){ console.warn('Could not read master list Status — resyncing all products:', err); }
   if(!toSend.length) throw new Error('Every product of this deal is "Completed" in the master list, so nothing was resynced.');
   const errors = await pushApprovedRowsToList(toSend, 'Resync by Super Admin ' + (currentAccount && currentAccount.username || '') + ' on ' + auditTimestampLabel());
   await loadHistory();
@@ -17147,21 +17145,26 @@ document.addEventListener('click', function(e){
    corrects the master list without resyncing deals one by one. */
 const LIST_SYNC_IGNORE = ['Pending Matching Note','Change Note','Status','Approved By','Approved Date','Submitted By','Submitted Date','Row Uid'];
 let listSyncCandidates = [];
-// The RECs master list the Power Automate flow writes to ("Single Trade
-// (SO)" table in /6.RECS FOLDER/Master Folder_250923.xlsx). Only read here,
-// to skip product rows ops have already marked "Completed".
+// The master-list tables the Power Automate flows write to, both in
+// /6.RECS FOLDER/Master Folder_250923.xlsx: RECs ("Single Trade (SO)") and
+// Carbon Credit. Only read here, to skip rows ops have marked "Completed".
 const MASTER_LIST = {
   driveId: 'b!IV7fojEoU0ylxJsmFpq1wy7RlQWpaW5AjKTgPpSm-hGuWoO8lQ_WQKdeVE61kGtl',
   fileId: '01QZS7X4EXISP6WETPMBCKEMPSPQFLSACA',
-  tableId: '{F88B0807-1A22-48AA-A7A8-DF27EC12506D}'
+  tableIds: ['{F88B0807-1A22-48AA-A7A8-DF27EC12506D}', '{319566EA-160C-447C-9FA9-D7988202F8DB}']
 };
 function isCompletedStatus(v){ return /^complete/i.test(String(v || '').trim()); }
 // Row Uid (lower-case) -> master Status. Uses plain fetch (no Excel
 // session header) because the app's workbook session belongs to a
 // different file.
 async function fetchMasterStatusByRowUid(){
+  const map = {};
+  for(const tableId of MASTER_LIST.tableIds) await readMasterTableStatus(tableId, map);
+  return map;
+}
+async function readMasterTableStatus(tableId, map){
   const base = 'https://graph.microsoft.com/v1.0/drives/' + MASTER_LIST.driveId + '/items/' + MASTER_LIST.fileId +
-    '/workbook/tables/' + encodeURIComponent(MASTER_LIST.tableId);
+    '/workbook/tables/' + encodeURIComponent(tableId);
   const get = async (path) => {
     const token = await getAccessToken(GRAPH_SCOPES);
     const res = await fetch(base + path, { headers: { 'Authorization': 'Bearer ' + token } });
@@ -17170,8 +17173,7 @@ async function fetchMasterStatusByRowUid(){
   };
   const cols = ((await get('/columns?$select=name')).value || []).map(c => String(c.name || '').trim().toLowerCase());
   const iRef = cols.indexOf('html reference'), iStatus = cols.indexOf('status');
-  if(iRef < 0 || iStatus < 0) throw new Error('the master list has no "HTML Reference" / "Status" column');
-  const map = {};
+  if(iRef < 0 || iStatus < 0) throw new Error('master table ' + tableId + ' has no "HTML Reference" / "Status" column');
   const PAGE = 500;
   for(let skip = 0; ; skip += PAGE){
     const page = (await get('/rows?$top=' + PAGE + '&$skip=' + skip)).value || [];
@@ -17182,7 +17184,6 @@ async function fetchMasterStatusByRowUid(){
     });
     if(page.length < PAGE) break;
   }
-  return map;
 }
 async function fetchApprovedListLatestByRowUid(ctx){
   const uidCol = ctx.columnMap['Row Uid'] && ctx.columnMap['Row Uid'].name;
@@ -17284,7 +17285,7 @@ async function scanApprovedListDrift(onProgress){
       for(const dealId of Object.keys(groups)){
         const allRows = groups[dealId].sort((a,b)=> a.index - b.index);
         // Products ops already marked "Completed" in the master list are
-        // final — never compared or resynced (CC deals aren't in that list).
+        // final — never compared or resynced (RECs and Carbon Credit master tables).
         const group = allRows.filter(r => {
           const uid = String(r.values[0][MC.rowUid] || '').trim().toLowerCase();
           return !(masterStatus && uid && isCompletedStatus(masterStatus[uid]));
