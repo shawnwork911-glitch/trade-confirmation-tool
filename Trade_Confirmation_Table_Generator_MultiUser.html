@@ -1937,6 +1937,8 @@ function tcFileLinkHtml(url){
 // goes to Level 3; without the column, that one case shows a clear error.
 // Read as values.__pendingSrc (raw text, '' when nothing staged); written
 // via values.__pendingSrcWrite, otherwise preserved exactly as last read.
+// Also carries a staged Order Type change ({"orderType":"…"}) from "Request
+// edit", so Order Type needs no extra column of its own.
 const PENDING_SRC_COLUMN_NAME = 'Pending Source Vintage/Note';
 // ---- Product flags: Hourly Deal / New Device (RECs only, per product) ----
 // Two tickboxes for EACH RECs product. Stored on that product row as "Yes"
@@ -3063,7 +3065,13 @@ function pendingChangeDiffLines(values){
   // given the ORIGINAL row values array (not a .slice()), since __pendingSrc
   // is a property on it rather than an indexed column.
   const ps = parsePendingSrc(values.__pendingSrc);
-  if(ps){
+  if(ps && ps.orderType && ps.orderType !== String(values[MC.supplyDemand] || '').trim()){
+    out.push('Order Type: ' + (String(values[MC.supplyDemand] || '').trim() || '(blank)') + ' → ' + ps.orderType);
+  }
+  if(ps && ps.hasTransfer && ps.transfer !== String(values[MC.tigrsIrecName] || '').trim()){
+    out.push('Receiving Account: ' + (String(values[MC.tigrsIrecName] || '').trim() || '(blank)') + ' → ' + (ps.transfer || '(blank)'));
+  }
+  if(ps && ps.hasSrc){
     const pairs = [
       ['Source Vintage Start', normSrcVintage(values[MC.sourceVintageStart]), normSrcVintage(ps.vstart)],
       ['Source Vintage End', normSrcVintage(values[MC.sourceVintageEnd]), normSrcVintage(ps.vend)],
@@ -4189,7 +4197,12 @@ function parsePendingSrc(raw){
   if(!s) return null;
   try{
     const o = JSON.parse(s);
-    return { vstart: String(o.vstart || ''), vend: String(o.vend || ''), note: String(o.note || '') };
+    // hasSrc: whether per-source Vintage/Note was actually staged (a request
+    // may stage only an Order Type change in this same JSON value — see
+    // requestBdMatchChange). orderType: staged deal-level Order Type, '' if none.
+    return { vstart: String(o.vstart || ''), vend: String(o.vend || ''), note: String(o.note || ''),
+      hasSrc: ('vstart' in o) || ('vend' in o) || ('note' in o), orderType: String(o.orderType || ''),
+      hasTransfer: ('transfer' in o), transfer: String(o.transfer || '') };
   }catch(e){ return null; }
 }
 // 0-based positions of the "Hourly Deal" / "New Device" columns in this
@@ -6507,7 +6520,7 @@ async function notifyCancellationOutcome(dealId, stage, confirmed, requestedBy, 
    registry/tech/volume are always included (even for products that didn't
    need a fix) carrying that product's current, unchanged value, so the diff
    below only picks up a real change. */
-async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
+async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue, orderTypeValue, transferValues){
   if(!dealId) return;
   await ensureFreshWorkbookSession();
   const rows = await getCanonicalTableRows(dealLogTableName());
@@ -6627,6 +6640,39 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
       changeLines.push((matching.length > 1 ? 'Product ' + (i+1) + ' \u2014 ' : '') + rowChangeLines[i]);
     }
   }
+  // Order Type (deal-level, stored on every product row). BD can change it
+  // at any stage via this flow, but it's ALWAYS staged for Level 3 approval
+  // — even on an Approved deal — same rule as Volume/Registry. Every row of
+  // the deal is staged, since Order Type must stay identical across them.
+  const oldOrderType = String(matching[0].values[0][MC.supplyDemand] || '').trim();
+  const newOrderType = orderTypeValue === undefined ? oldOrderType : String(orderTypeValue || '').trim();
+  const orderTypeChanged = !!newOrderType && newOrderType !== oldOrderType;
+  // Switching to Stock-Out (T) needs a real Receiving Account on every
+  // product (same block as the main form / Level 2 approval). The modal
+  // collects corrected accounts (transferValues, one per product); any
+  // that differ are staged with the Order Type for Level 3.
+  const newTransfers = matching.map((r, i) => {
+    const cur = String(r.values[0][MC.tigrsIrecName] || '').trim();
+    return (orderTypeChanged && isStockOutT(newOrderType) && transferValues && transferValues[i] !== undefined)
+      ? String(transferValues[i] || '').trim() : cur;
+  });
+  if(orderTypeChanged && isStockOutT(newOrderType)){
+    const bad = [];
+    newTransfers.forEach((t, i) => { if(stockOutTAccountError(newOrderType, t)) bad.push(i + 1); });
+    if(bad.length){
+      throw new Error('The Buyer Receiving Account for Product ' + bad.join(', ') + ' must be filled in, at least ' + STOCK_OUT_T_MIN_ACCOUNT_LEN + ' characters, and cannot be NA for a Stock-Out (T) deal.');
+    }
+  }
+  const transferChanged = matching.map((r, i) => newTransfers[i] !== String(r.values[0][MC.tigrsIrecName] || '').trim());
+  if(orderTypeChanged){
+    changeLines.unshift('Order Type: ' + (oldOrderType || '(blank)') + ' \u2192 ' + newOrderType);
+    for(let i = 0; i < matching.length; i++){
+      rowChanged[i] = true;
+      const acctLine = transferChanged[i] ? 'Receiving Account: ' + (String(matching[i].values[0][MC.tigrsIrecName] || '').trim() || '(blank)') + ' \u2192 ' + newTransfers[i] : '';
+      rowChangeLines[i] = 'Order Type: ' + (oldOrderType || '(blank)') + ' \u2192 ' + newOrderType + (acctLine ? ', ' + acctLine : '') + (rowChangeLines[i] ? ', ' + rowChangeLines[i] : '');
+      if(acctLine) changeLines.push((matching.length > 1 ? 'Product ' + (i+1) + ' \u2014 ' : '') + acctLine);
+    }
+  }
   // Tag BD in-charge (view-only) — applied immediately on every row of the
   // deal regardless of status, never staged for Level 3. Undefined
   // tagBdValue = caller didn't offer the field, so leave it untouched.
@@ -6673,11 +6719,14 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
   // Route to Level 3 when the deal hasn't finished Level 3 yet (unchanged
   // behaviour) OR when any product's Volume changed — a quantity change is
   // never applied without Level 3 sign-off, even on an Approved deal.
-  const stageForLevel3 = currentStatus === STATUS_PENDING_3 || volumeChangedAny || registryChangedAny;
+  const stageForLevel3 = currentStatus === STATUS_PENDING_3 || volumeChangedAny || registryChangedAny || orderTypeChanged;
   if(volumeChangedAny && matching[0].values[0].length <= MC.pendingVolume){
     throw new Error('Volume can\'t be changed yet: the ' + (isCCTable ? 'CCDealLog' : 'TradeDealLog') + ' table is missing its "Pending Volume" column. Ask an admin to add it, then try again.');
   }
   const pendSrcColIdx = pendingSrcColumnIndex(dealLogTableName());
+  if(orderTypeChanged && pendSrcColIdx < 0){
+    throw new Error('Order Type can\'t be changed yet: the ' + (isCCTable ? 'CCDealLog' : 'TradeDealLog') + ' table is missing the "' + PENDING_SRC_COLUMN_NAME + '" column (used to stage the change for Level 3). Ask an admin to add it at the end of the table, then try again.');
+  }
   if(stageForLevel3 && rowSrcChanged.some(Boolean) && pendSrcColIdx < 0){
     throw new Error('Vintage / Matching note changes that need Level 3 approval can\'t be staged yet: the ' + (isCCTable ? 'CCDealLog' : 'TradeDealLog') + ' table is missing the "' + PENDING_SRC_COLUMN_NAME + '" column. Ask an admin to add it at the end of the table, then try again.');
   }
@@ -6711,8 +6760,12 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
       // Per-source Vintage/Note staged as JSON (see PENDING_SRC_COLUMN_NAME)
       // whenever the column exists, so approval re-aligns them with the
       // staged Buyer/Seller/No of RECs/Which deal in the same source order.
-      if(pendSrcColIdx >= 0 && edit.vstart !== undefined){
-        values.__pendingSrcWrite = JSON.stringify({ vstart: edit.vstart || '', vend: edit.vend || '', note: edit.note || '' });
+      if(pendSrcColIdx >= 0 && (edit.vstart !== undefined || orderTypeChanged)){
+        const staged = {};
+        if(edit.vstart !== undefined){ staged.vstart = edit.vstart || ''; staged.vend = edit.vend || ''; staged.note = edit.note || ''; }
+        if(orderTypeChanged) staged.orderType = newOrderType;
+        if(orderTypeChanged && transferChanged[i]) staged.transfer = newTransfers[i];
+        values.__pendingSrcWrite = JSON.stringify(staged);
       }
       values[MC.pendingMatchNote] = matchNote || '';
       values[MC.pendingRequestedBy] = currentAccount.username;
@@ -6729,7 +6782,7 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
     await finishTagWrite();
     await appendDealAuditEntry(dealId, buildAuditEntry('Change REQUESTED via "Request edit" (awaiting Level 3 approval, not yet live' +
       (currentStatus === STATUS_APPROVED ? '; sent to Level 3 because ' +
-        [volumeChangedAny ? 'Volume' : '', registryChangedAny ? 'Registry' : ''].filter(Boolean).join(' and ') +
+        [volumeChangedAny ? 'Volume' : '', registryChangedAny ? 'Registry' : '', orderTypeChanged ? 'Order Type' : ''].filter(Boolean).join(' / ') +
         ' changed on an Approved deal' : '') + ')'));
     const notifyBody = changeLines.join('\n') + (matchNote ? '\n\nNote: ' + matchNote : '');
     await notifyNextApprover(STATUS_PENDING_CHANGE_3, dealId, matching[0].values[0][MC.description], notifyBody);
@@ -6907,7 +6960,13 @@ async function approveBdMatchChange(dealId){
     // Staged per-source Vintage/Note \u2014 same diff, read from the original
     // row since .slice() doesn't carry __pendingSrc.
     const stagedSrc = parsePendingSrc(r.values[0].__pendingSrc);
-    if(stagedSrc){
+    if(stagedSrc && stagedSrc.orderType && stagedSrc.orderType !== String(values[MC.supplyDemand] || '').trim()){
+      noteLines.push('Order Type: ' + (String(values[MC.supplyDemand] || '').trim() || '(blank)') + ' \u2192 ' + stagedSrc.orderType);
+    }
+    if(stagedSrc && stagedSrc.hasTransfer && stagedSrc.transfer !== String(values[MC.tigrsIrecName] || '').trim()){
+      noteLines.push('Receiving Account: ' + (String(values[MC.tigrsIrecName] || '').trim() || '(blank)') + ' \u2192 ' + (stagedSrc.transfer || '(blank)'));
+    }
+    if(stagedSrc && stagedSrc.hasSrc){
       const sv = (label, a, b) => { if(a !== b) noteLines.push(label + ': ' + (a||'(blank)') + ' \u2192 ' + (b||'(blank)')); };
       sv('Source Vintage Start', normSrcVintage(values[MC.sourceVintageStart]), normSrcVintage(stagedSrc.vstart));
       sv('Source Vintage End', normSrcVintage(values[MC.sourceVintageEnd]), normSrcVintage(stagedSrc.vend));
@@ -6940,7 +6999,13 @@ async function approveBdMatchChange(dealId){
     // an older request staged before this column existed leaves the live
     // vintage/note untouched. (stagedSrc was parsed above, before the
     // Approved-list change note was built.)
-    if(stagedSrc){
+    if(stagedSrc && stagedSrc.hasTransfer) values[MC.tigrsIrecName] = stagedSrc.transfer;
+    if(stagedSrc && stagedSrc.orderType){
+      values[MC.supplyDemand] = stagedSrc.orderType;
+      // Stock-Out (R) never carries a Receiving Account (see transferAccountValue).
+      if(isStockOutR(stagedSrc.orderType)) values[MC.tigrsIrecName] = '';
+    }
+    if(stagedSrc && stagedSrc.hasSrc){
       if(values.length > MC.sourceMatchNote){
         values[MC.sourceVintageStart] = stagedSrc.vstart;
         values[MC.sourceVintageEnd] = stagedSrc.vend;
@@ -8171,7 +8236,13 @@ function renderHistoryTable(el, groups, opts){
         }
         // Staged per-source Vintage/Note (see PENDING_SRC_COLUMN_NAME).
         const psr = parsePendingSrc(rv.__pendingSrc);
-        if(psr){
+        if(psr && psr.orderType && psr.orderType !== String(rv[MC.supplyDemand] || '').trim()){
+          lines.push('<strong style="color:#8a2d1f;">Order Type</strong>: <s>'+escapeHtml(String(rv[MC.supplyDemand] || '').trim()||'(blank)')+'</s> → <strong>'+escapeHtml(psr.orderType)+'</strong>');
+        }
+        if(psr && psr.hasTransfer && psr.transfer !== String(rv[MC.tigrsIrecName] || '').trim()){
+          lines.push('Receiving Account: <s>'+escapeHtml(String(rv[MC.tigrsIrecName] || '').trim()||'(blank)')+'</s> → <strong>'+escapeHtml(psr.transfer||'(blank)')+'</strong>');
+        }
+        if(psr && psr.hasSrc){
           [['Source Vintage Start', normSrcVintage(rv[MC.sourceVintageStart]), normSrcVintage(psr.vstart)],
            ['Source Vintage End', normSrcVintage(rv[MC.sourceVintageEnd]), normSrcVintage(psr.vend)],
            ['Source Matching Note', normSrcNote(rv[MC.sourceMatchNote]), normSrcNote(psr.note)]].forEach(([label, a, b])=>{
@@ -9055,7 +9126,7 @@ function openEditRequestModal(dealId){
   const currentStatus = group.length ? dealGroupStatus(group) : STATUS_APPROVED;
   editRequestModalStatus = currentStatus;
   document.getElementById('edit-request-modal-intro').textContent = currentStatus === STATUS_APPROVED
-    ? 'This deal is already Approved (Level 3 sign-off complete), so a BD source matching correction here needs no further approval — it\'s written to TradeDealLog as soon as you submit, and operations@saxonrenewables.com is emailed a summary of what changed. Exception: changing a product\'s Volume or Registry sends the whole request to Level 3 for approval first. Every change is recorded in the deal\'s Edit Change Summary.'
+    ? 'This deal is already Approved (Level 3 sign-off complete), so a BD source matching correction here needs no further approval — it\'s written to TradeDealLog as soon as you submit, and operations@saxonrenewables.com is emailed a summary of what changed. Exception: changing the Order Type, or a product\'s Volume or Registry, sends the whole request to Level 3 for approval first. Every change is recorded in the deal\'s Edit Change Summary.'
     : 'Level 2 has already approved this deal, so any correction here needs a fresh Level 3 sign-off before it takes effect. The current, live values stay in place everywhere until that happens. Every change is recorded in the deal\'s Edit Change Summary.';
   const submitBtn = document.getElementById('edit-request-modal-submit');
   if(submitBtn) submitBtn.textContent = currentStatus === STATUS_APPROVED ? 'Save changes' : 'Submit for Level 3 approval';
@@ -9072,7 +9143,25 @@ function openEditRequestModal(dealId){
       '<input type="hidden" id="er-h-bd" value="'+escapeHtml(erBd)+'"/>' +
       tagBdChecklistHtml('er-h-tag-bd', dealTaggedBd(group), 'er-h-bd') +
     '</div>';
-  fieldsEl.innerHTML = tagHtml + group.map((r, idx)=>{
+  // Order Type — deal-level; any change always needs Level 3 approval
+  // (see requestBdMatchChange) and is logged in the deal's audit trail.
+  const erOrder = group.length ? String(group[0].values[0][MC.supplyDemand] || '').trim() : '';
+  const orderHtml = '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;">' +
+      '<label style="margin:0;font-size:13px;font-weight:600;" for="er-h-order">Order type</label>' +
+      '<p style="margin:0;font-size:12px;color:var(--text-secondary);">Applies to every product on this deal. Changing it needs Level 3 approval before it takes effect, and is logged in the deal\'s audit trail.</p>' +
+      orderTypeSelectHtml('er-h-order', erOrder, ' data-orig="'+escapeHtml(erOrder)+'" style="max-width:260px;"') +
+      // Shown only when switching TO Stock-Out (T): that order type needs a
+      // real Buyer Receiving Account on every product (see stockOutTAccountError).
+      '<div id="er-order-transfer" style="display:none;flex-direction:column;gap:8px;">' +
+        '<p style="margin:0;font-size:12px;color:#8a2d1f;">Stock-Out (T) needs a Buyer Receiving Account of at least '+STOCK_OUT_T_MIN_ACCOUNT_LEN+' characters for every product (NA not accepted). Correct any below — they\'re approved by Level 3 together with the Order Type.</p>' +
+        group.map((r, idx)=>{
+          const cur = String(r.values[0][MC.tigrsIrecName] || '').trim();
+          return '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Buyer Receiving Account'+(group.length > 1 ? ' — Product '+(idx+1) : '')+'</label>' +
+            '<input type="text" class="er-order-transfer-input" data-idx="'+idx+'" value="'+escapeHtml(cur)+'"/></div>';
+        }).join('') +
+      '</div>' +
+    '</div>';
+  fieldsEl.innerHTML = tagHtml + orderHtml + group.map((r, idx)=>{
     const v = r.values[0];
     const matchingVal = v[MC.matching] || 'Open Position';
     const active = matchingVal && matchingVal !== 'Open Position';
@@ -9140,11 +9229,22 @@ function editRequestRegistryChanged(){
   return Array.from(fields.querySelectorAll('.edit-request-registry[data-orig]'))
     .some(el => (el.value || '').trim() !== (el.getAttribute('data-orig') || '').trim());
 }
+function syncEditRequestOrderTransfer(){
+  const sel = document.getElementById('er-h-order');
+  const box = document.getElementById('er-order-transfer');
+  if(!sel || !box) return;
+  box.style.display = (editRequestOrderTypeChanged() && isStockOutT(sel.value)) ? 'flex' : 'none';
+}
+document.addEventListener('change', (e)=>{ if(e.target && e.target.id === 'er-h-order') syncEditRequestOrderTransfer(); });
+function editRequestOrderTypeChanged(){
+  const el = document.getElementById('er-h-order');
+  return !!(el && el.value && el.value.trim() !== (el.getAttribute('data-orig') || '').trim());
+}
 function editRequestSubmitLabel(){
-  return (editRequestModalStatus === STATUS_APPROVED && !editRequestVolumeChanged() && !editRequestRegistryChanged()) ? 'Save changes' : 'Submit for Level 3 approval';
+  return (editRequestModalStatus === STATUS_APPROVED && !editRequestVolumeChanged() && !editRequestRegistryChanged() && !editRequestOrderTypeChanged()) ? 'Save changes' : 'Submit for Level 3 approval';
 }
 document.addEventListener('change', (e)=>{
-  if(!e.target.classList || !e.target.classList.contains('edit-request-registry')) return;
+  if(!e.target.classList || !(e.target.classList.contains('edit-request-registry') || e.target.id === 'er-h-order')) return;
   const btn = document.getElementById('edit-request-modal-submit');
   if(btn && !btn.disabled) btn.textContent = editRequestSubmitLabel();
 });
@@ -9307,7 +9407,11 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
   btn.disabled = true;
   btn.textContent = 'Submitting…';
   try{
-    await requestBdMatchChange(dealId, edits, matchNote, val('er-h-tag-bd'));
+    const erTransfers = [];
+    document.querySelectorAll('#edit-request-modal-fields .er-order-transfer-input').forEach(el=>{
+      erTransfers[parseInt(el.getAttribute('data-idx'), 10)] = el.value.trim();
+    });
+    await requestBdMatchChange(dealId, edits, matchNote, val('er-h-tag-bd'), val('er-h-order'), erTransfers);
     closeEditRequestModal();
   }catch(err){
     errEl.textContent = err.message;
@@ -10546,6 +10650,18 @@ function lockableField(label, inputHtml, ids){
 // Back-compat aliases — same thing, different names used historically.
 function headerField(label, inputHtml, id){ return lockableField(label, inputHtml, id); }
 function field(label, inputHtml, id){ return lockableField(label, inputHtml, id); }
+// Order type <select> for the post-submission edit forms (Edit & resend /
+// Request edit). Keeps a legacy/unlisted current value selectable so
+// opening a form never silently changes it.
+function orderTypeSelectHtml(id, current, extraAttrs){
+  const cur = String(current || '').trim();
+  const opts = ORDER_TYPES.slice();
+  if(cur && opts.indexOf(cur) === -1) opts.unshift(cur);
+  return '<select id="'+id+'"'+(extraAttrs||'')+'>' +
+    (cur ? '' : '<option value="" selected>— Select order type —</option>') +
+    opts.map(o => '<option value="'+escapeHtml(o)+'"'+(o===cur?' selected':'')+'>'+escapeHtml(o)+'</option>').join('') +
+    '</select>';
+}
 function selectHtml(id, options, def, blankLabel){
   let o = (blankLabel !== undefined ? '<option value=""'+(!def?' selected':'')+' disabled hidden>'+blankLabel+'</option>' : '') + options.map(v => '<option value="'+v+'"'+(v===def?' selected':'')+'>'+v+'</option>').join('');
   return '<select id="'+id+'">'+o+'</select>';
@@ -12909,6 +13025,7 @@ function buildFullEditChangeSummary(oldGroup, updatedRows, role){
   diff('Deal Date', formatStoredDate(oldHead[MC.agreementDate]), formatStoredDate(newHead[MC.agreementDate]));
   diff('Entity', oldHead[MC.entity], newHead[MC.entity]);
   diff('BD in-charge', oldHead[MC.salesPic], newHead[MC.salesPic]);
+  diff('Order Type', oldHead[MC.supplyDemand], newHead[MC.supplyDemand]);
   if('__tagBdWrite' in newHead) diff('Tag BD in-charge', dealTaggedBdList(oldGroup).join(', '), parseTagBdList(newHead.__tagBdWrite).join(', '));
   diff(role+' Full Name', oldHead[MC.company], newHead[MC.company]);
   if(isCC){
@@ -13185,6 +13302,9 @@ function fullEditFormHtml(dealId, sortedGroup){
       recapEditFieldHtml('Deal Date', '<input type="date" id="fe-h-date" value="'+escapeHtml(toDateInputValue(head[MC.agreementDate]))+'"/>')+
       recapEditFieldHtml('Entity', '<input type="text" id="fe-h-entity" value="'+escapeHtml(head[MC.entity]||'')+'"/>')+
       recapEditFieldHtml('BD in-charge', bdInChargeSelectHtml('fe-h-bd', head[MC.salesPic]))+
+      // Order type — editable here too; the change is logged in the Edit
+      // Change Summary and the deal still goes through approval as usual.
+      recapEditFieldHtml('Order type', orderTypeSelectHtml('fe-h-order', head[MC.supplyDemand]))+
       '<div style="grid-column:1 / -1;">'+recapEditFieldHtml('Tag BD in-charge (optional — view only)', tagBdChecklistHtml('fe-h-tag-bd', dealTaggedBd(sortedGroup), 'fe-h-bd'))+'</div>'+
       recapEditFieldHtml(role+' Full Name', '<input type="text" id="fe-h-company" value="'+escapeHtml(head[MC.company]||'')+'"/>')+
       (isCC ? '' : '<div id="fe-tc-box" style="grid-column:1 / -1;'+(isClimateImpactXBuyer(head[MC.company]) ? '' : 'display:none;')+'">'+
@@ -13252,10 +13372,10 @@ function openFullEditModal(dealId){
   } else if(currentStatus === STATUS_REVERTED_2 || currentStatus === STATUS_REVERTED_3){
     const revertComment = group[0].values[0][MC.rejectReason] || '';
     const standing = revertInfo ? revertInfo.standing : '';
-    introEl.innerHTML = 'Admin Level ' + revertInfo.level + ' sent this back for changes instead of approving it — it has <strong>not</strong> been rejected, and ' + standing + '. Fix whatever needs fixing below and it goes straight back to Pending Level ' + revertInfo.resubmitTo + ' for Admin Level ' + revertInfo.level + ' to look at again, along with your note.' +
+    introEl.innerHTML = 'Admin Level ' + revertInfo.level + ' sent this back for changes instead of approving it — it has <strong>not</strong> been rejected, and ' + standing + '. Fix whatever needs fixing below and it goes straight back to Pending Level ' + revertInfo.resubmitTo + ' for Admin Level ' + revertInfo.level + ' to look at again, along with your note. <strong>Exception:</strong> changing the Order type sends it back to Pending Level 1 for full re-approval.' +
       (revertComment ? '<br><br><strong>Admin Level ' + revertInfo.level + '’s comment:</strong> ' + escapeHtml(revertComment) : '');
   } else {
-    introEl.innerHTML = 'Admin Level 1 has already signed off on this deal. If you change the <strong>volume, price (or currency) or vintage</strong>, the deal goes back through approval: the Status resets to <strong>Pending Level 1</strong>, any Level 2 sign-off already recorded (and the Level 2 agreement attachment) is cleared, and Admin Level 1 gets a fresh approval email along with your justification below. Any other change (e.g. BD source matching, registry, tech, dates) keeps Level 1\'s sign-off: the deal stays at <strong>Pending Level 2</strong> and Admin Level 2 is notified of the update. The Deal ID does not change either way. This full edit is only available before Level 2 acts. Once Level 2 or Level 3 has approved, use "Request edit" instead.';
+    introEl.innerHTML = 'Admin Level 1 has already signed off on this deal. If you change the <strong>order type, volume, price (or currency) or vintage</strong>, the deal goes back through approval: the Status resets to <strong>Pending Level 1</strong>, any Level 2 sign-off already recorded (and the Level 2 agreement attachment) is cleared, and Admin Level 1 gets a fresh approval email along with your justification below. Any other change (e.g. BD source matching, registry, tech, dates) keeps Level 1\'s sign-off: the deal stays at <strong>Pending Level 2</strong> and Admin Level 2 is notified of the update. The Deal ID does not change either way. This full edit is only available before Level 2 acts. Once Level 2 or Level 3 has approved, use "Request edit" instead.';
   }
   document.getElementById('full-edit-modal-fields').innerHTML = fullEditFormHtml(dealId, group);
   syncAllTagBdChecklists(document.getElementById('full-edit-modal-fields'));
@@ -13393,6 +13513,10 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
     const rv = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
 
     const hDate = rv('fe-h-date'), hEntity = rv('fe-h-entity'), hBd = rv('fe-h-bd'), hCompany = rv('fe-h-company');
+    const hOrder = rv('fe-h-order');
+    if(!hOrder && String(liveGroup[0].values[0][MC.supplyDemand] || '').trim()){
+      throw new Error('Order type can\'t be blank.');
+    }
     if(!hDate || !hEntity || !hBd || !hCompany){
       throw new Error(currentProductMode === 'carboncredit'
         ? 'Deal Date, Entity, BD in-charge and the Project Name can\'t be blank.'
@@ -13464,8 +13588,10 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
       values[MC.entity] = hEntity;
       values[MC.salesPic] = hBd;
       values[MC.company] = hCompany;
+      values[MC.supplyDemand] = hOrder;
       values[MC.registry] = registry;
-      values[MC.tigrsIrecName] = rv(idp+'transfer');
+      // Stock-Out (R) never carries a Receiving Account (see transferAccountValue).
+      values[MC.tigrsIrecName] = transferAccountValue(hOrder, rv(idp+'transfer'));
       values[MC.tech] = isCC ? 'CC' : rv(idp+'tech');
       values[MC.country] = rv(idp+'country');
       applyTagBdWrite(values, feTag);
@@ -13544,6 +13670,15 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
       updatedRows.push({ index: liveGroup[idx].index, values: [values] });
     }
 
+    // Stock-Out (T) needs a real Buyer Receiving Account on every product —
+    // same block as the main form and Level 2 approval.
+    if(isStockOutT(hOrder)){
+      const badTrades = [];
+      updatedRows.forEach((r, k)=>{ if(stockOutTAccountError(hOrder, r.values[0][MC.tigrsIrecName])) badTrades.push(k + 1); });
+      if(badTrades.length){
+        throw new Error('The ' + transferAccountLabel(roleFromOrderType(hOrder)) + ' for Product ' + badTrades.join(', ') + ' must be filled in, at least ' + STOCK_OUT_T_MIN_ACCOUNT_LEN + ' characters, and cannot be NA for a Stock-Out (T) deal.');
+      }
+    }
     // Decide where this resubmission lands and which approval-trail columns
     // (if any) need clearing. Four scenarios, per canFullyEditAfterLevel1:
     //  - liveStatus is STATUS_REVERTED_2 (Admin Level 2 sent it back while
@@ -13563,9 +13698,15 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
     //    Anything else (BD matching, registry, tech, dates, remarks...)
     //    stays at Pending Level 2 with Level 1's sign-off untouched.
     const skipLevelReset = !revertInfo && liveStatus === STATUS_PENDING_2
-      && !fullEditChangedKeyTerms(liveGroup, updatedRows);
+      && !fullEditChangedKeyTerms(liveGroup, updatedRows)
+      && String(liveGroup[0].values[0][MC.supplyDemand] || '').trim() === String(updatedRows[0].values[0][MC.supplyDemand] || '').trim();
+    // An Order Type change always restarts approval from Level 1 (whatever
+    // the starting status, including a Level 2/3 revert) — it flips
+    // Buyer/Seller and the account rules, so every level re-reviews it.
+    const feOrderTypeChanged = String(liveGroup[0].values[0][MC.supplyDemand] || '').trim() !== String(updatedRows[0].values[0][MC.supplyDemand] || '').trim();
     let finalStatus;
-    if(liveStatus === STATUS_REVERTED_2) finalStatus = STATUS_PENDING_2;
+    if(feOrderTypeChanged) finalStatus = STATUS_PENDING_1;
+    else if(liveStatus === STATUS_REVERTED_2) finalStatus = STATUS_PENDING_2;
     else if(liveStatus === STATUS_REVERTED_3) finalStatus = STATUS_PENDING_3;
     else finalStatus = skipLevelReset ? STATUS_PENDING_2 : STATUS_PENDING_1;
 
@@ -13626,7 +13767,8 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
     const nowForLabel = new Date();
     const timestampLabel = String(nowForLabel.getUTCDate()).padStart(2,'0')+'/'+String(nowForLabel.getUTCMonth()+1).padStart(2,'0')+'/'+nowForLabel.getUTCFullYear()+' '+String(nowForLabel.getUTCHours()).padStart(2,'0')+':'+String(nowForLabel.getUTCMinutes()).padStart(2,'0')+' UTC';
     const roundLabel = (revertInfo ? ('Edit after Admin Level ' + revertInfo.level + ' sent this back, on ')
-      : (skipLevelReset ? 'Edit (kept at Pending Level 2, Level 1 sign-off untouched) on ' : (liveStatus === STATUS_PENDING_1 ? 'Edit before Level 1 approval, on ' : 'Edit on '))) + timestampLabel + ' by ' + (currentAccount.username || 'unknown');
+      : (skipLevelReset ? 'Edit (kept at Pending Level 2, Level 1 sign-off untouched) on ' : (liveStatus === STATUS_PENDING_1 ? 'Edit before Level 1 approval, on ' : 'Edit on '))) + timestampLabel + ' by ' + (currentAccount.username || 'unknown') +
+      (feOrderTypeChanged && liveStatus !== STATUS_PENDING_1 ? ' (Order Type changed — sent back to Level 1 for re-approval)' : '');
     // If this edit is resolving a revert (at any level), carry the admin's own
     // comment along with the diff so it stays on the permanent edit history
     // even after rejectReason itself gets cleared above.
