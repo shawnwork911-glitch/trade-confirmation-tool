@@ -17173,6 +17173,21 @@ async function fetchApprovedListLatestByRowUid(ctx){
   }
   return latest;
 }
+// SharePoint returns rich-text / multi-line values HTML-encoded (e.g. ":"
+// comes back as "&#58;", line breaks as <br>/<div>), so turn both sides
+// into plain text before comparing or showing them.
+function listSyncHtmlToText(v){
+  let s = String(v == null ? '' : v);
+  s = s.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|li)>/gi, '\n').replace(/<[^>]*>/g, ' ');
+  const named = { amp:'&', lt:'<', gt:'>', quot:'"', apos:"'", nbsp:' ' };
+  // decode twice so double-encoded values like "&amp;#58;" also resolve
+  for(let pass = 0; pass < 2; pass++){
+    s = s.replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+         .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+         .replace(/&([a-z]+);/gi, (m, n) => (named[n.toLowerCase()] !== undefined ? named[n.toLowerCase()] : m));
+  }
+  return s.replace(/​/g, '');
+}
 function listSyncNorm(v, type){
   if(v === null || v === undefined) return '';
   if(type === 'dateTime' || /^\d{4}-\d{2}-\d{2}T/.test(String(v))){
@@ -17180,7 +17195,7 @@ function listSyncNorm(v, type){
     // nearest whole day, so a date-only column stored at local midnight still matches
     return isNaN(t) ? String(v) : new Date(t + 12*3600*1000).toISOString().slice(0,10);
   }
-  let s = String(v).replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&');
+  let s = listSyncHtmlToText(v);
   s = s.replace(/\s+/g, ' ').trim();
   const num = s.replace(/,/g, '');
   if(/^-?\d+(\.\d+)?$/.test(num)) return String(Math.round(Number(num) * 1e6) / 1e6);
@@ -17201,7 +17216,7 @@ function listSyncDisplay(v, meta){
     if(/^\d{5}(\.\d+)?$/.test(str.replace(/,/g,''))) return formatStoredDate(str.replace(/,/g,''));
     if(/^\d{4}-\d{2}-\d{2}$/.test(str)) return formatStoredDate(str);
   }
-  const plain = str.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/\s+/g, ' ').trim();
+  const plain = listSyncHtmlToText(str).replace(/\s+/g, ' ').trim();
   return plain || '(blank)';
 }
 async function scanApprovedListDrift(onProgress){
