@@ -1225,6 +1225,12 @@ html.desk-nav-hidden #main-tabs{transform:translateX(-100%);visibility:hidden;}
 
   <div id="tab-panel-confirmations" class="tab-panel" style="display:none;">
 
+  <div class="confirmation-section-selector" id="confirmation-type-tabs">
+    <button type="button" class="active" data-confirmation-type="recs">RECs</button>
+    <button type="button" data-confirmation-type="carboncredit">Carbon Credit</button>
+    <button type="button" data-confirmation-type="asset">Asset</button>
+  </div>
+
   <div id="desk-kpis"></div>
 
   <div class="confirmation-section-selector" id="confirmation-section-selector">
@@ -1265,7 +1271,7 @@ html.desk-nav-hidden #main-tabs{transform:translateX(-100%);visibility:hidden;}
     <p class="card-title">My saved confirmations</p>
     <div class="confirmation-filter-bar">
       <input type="text" id="history-filter-search" placeholder="Search Deal / Asset ID or Counterparty…">
-      <select id="history-filter-type"><option value="">All types</option><option value="recs">RECs</option><option value="carboncredit">Carbon Credit</option><option value="asset">Asset</option></select>
+      <select id="history-filter-type" style="display:none;" aria-hidden="true" tabindex="-1"><option value="recs" selected>RECs</option><option value="carboncredit">Carbon Credit</option><option value="asset">Asset</option></select>
       <select id="history-filter-status"></select>
       <select id="history-filter-order"><option value="">All order types</option><option value="Stock-In (T)">Stock-In (T)</option><option value="Stock-Out (T)">Stock-Out (T)</option><option value="Stock-Out (R)">Stock-Out (R)</option><option value="Stock-In (R)">Stock-In (R)</option></select>
       <span class="confirmation-filter-daterange">
@@ -1283,7 +1289,7 @@ html.desk-nav-hidden #main-tabs{transform:translateX(-100%);visibility:hidden;}
     <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Every confirmation currently pending at any approval level. Approve/Reject only appear on the rows waiting on your own level — the rest are visible for awareness only.</p>
     <div class="confirmation-filter-bar">
       <input type="text" id="queue-filter-search" placeholder="Search Deal / Asset ID or Counterparty…">
-      <select id="queue-filter-type"><option value="">All types</option><option value="recs">RECs</option><option value="carboncredit">Carbon Credit</option><option value="asset">Asset</option></select>
+      <select id="queue-filter-type" style="display:none;" aria-hidden="true" tabindex="-1"><option value="recs" selected>RECs</option><option value="carboncredit">Carbon Credit</option><option value="asset">Asset</option></select>
       <select id="queue-filter-status"></select>
       <select id="queue-filter-order"><option value="">All order types</option><option value="Stock-In (T)">Stock-In (T)</option><option value="Stock-Out (T)">Stock-Out (T)</option><option value="Stock-Out (R)">Stock-Out (R)</option><option value="Stock-In (R)">Stock-In (R)</option></select>
       <span class="confirmation-filter-daterange">
@@ -1301,7 +1307,7 @@ html.desk-nav-hidden #main-tabs{transform:translateX(-100%);visibility:hidden;}
     <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px;">Every saved confirmation across every user. You can open full details and edit only for confirmations you created (Admin/Super Admin can open any). Everyone else's confirmations show as a read-only summary row.</p>
     <div class="confirmation-filter-bar">
       <input type="text" id="admin-filter-search" placeholder="Search Deal / Asset ID or Counterparty…">
-      <select id="admin-filter-type"><option value="">All types</option><option value="recs">RECs</option><option value="carboncredit">Carbon Credit</option><option value="asset">Asset</option></select>
+      <select id="admin-filter-type" style="display:none;" aria-hidden="true" tabindex="-1"><option value="recs" selected>RECs</option><option value="carboncredit">Carbon Credit</option><option value="asset">Asset</option></select>
       <select id="admin-filter-status"></select>
       <select id="admin-filter-order"><option value="">All order types</option><option value="Stock-In (T)">Stock-In (T)</option><option value="Stock-Out (T)">Stock-Out (T)</option><option value="Stock-Out (R)">Stock-Out (R)</option><option value="Stock-In (R)">Stock-In (R)</option></select>
       <span class="confirmation-filter-daterange">
@@ -2537,15 +2543,22 @@ function canBuildAgreement(){
 
 let activeConfirmationSection = null;
 function confirmationSectionAllowed(section){
-  if(section === 'urgent' || section === 'overdue' || section === 'hourly' || section === 'newdevice') return true;
+  const typeTab = (typeof confirmationTypeTab !== 'undefined') ? confirmationTypeTab : 'recs';
+  // Asset agreements have no delivery dates or deal flags; Hourly Deal /
+  // New Device flags exist on RECs only.
+  if(section === 'urgent' || section === 'overdue') return typeTab !== 'asset';
+  if(section === 'hourly' || section === 'newdevice') return typeTab === 'recs';
   if(section === 'my') return canBuildAgreement();
   if(section === 'queue') return isAdmin;
   if(section === 'all') return true;
   return false;
 }
+function defaultConfirmationSection(){
+  return ['urgent','my','queue','all'].find(confirmationSectionAllowed) || 'all';
+}
 function setConfirmationSection(section){
   if(!confirmationSectionAllowed(section)){
-    section = 'urgent';
+    section = defaultConfirmationSection();
   }
   activeConfirmationSection = section;
   const urgentCard = document.getElementById('urgent-deliveries-card');
@@ -2573,15 +2586,11 @@ function refreshConfirmationSectionSelector(){
   if(myBtn) myBtn.style.display = confirmationSectionAllowed('my') ? 'inline-block' : 'none';
   if(queueBtn) queueBtn.style.display = confirmationSectionAllowed('queue') ? 'inline-block' : 'none';
   if(allBtn) allBtn.style.display = 'inline-block';
-  const urgentBtn = document.getElementById('confirmation-section-urgent');
-  if(urgentBtn) urgentBtn.style.display = 'inline-block';
-  const overdueBtn = document.getElementById('confirmation-section-overdue');
-  if(overdueBtn) overdueBtn.style.display = 'inline-block';
-  const hourlyBtn = document.getElementById('confirmation-section-hourly');
-  if(hourlyBtn) hourlyBtn.style.display = 'inline-block';
-  const newDeviceBtn = document.getElementById('confirmation-section-newdevice');
-  if(newDeviceBtn) newDeviceBtn.style.display = 'inline-block';
-  const fallback = 'urgent';
+  ['urgent','overdue','hourly','newdevice'].forEach(sec=>{
+    const b = document.getElementById('confirmation-section-' + sec);
+    if(b) b.style.display = confirmationSectionAllowed(sec) ? 'inline-block' : 'none';
+  });
+  const fallback = defaultConfirmationSection();
   setConfirmationSection(activeConfirmationSection && confirmationSectionAllowed(activeConfirmationSection) ? activeConfirmationSection : fallback);
 }
 
@@ -7195,7 +7204,8 @@ function wireConfirmationFilterBar(key, listElId, searchElId, statusElId, typeEl
 function renderUrgentDeliveries(){
   // Admins / Superadmin see every deal. Everyone else only sees deals they own,
   // are BD in-charge of, or are tagged on (same set as My Saved Confirmations).
-  const source = (isAdmin ? historyGroupsCache.admin : historyGroupsCache.mine) || [];
+  const typeTab = (typeof confirmationTypeTab !== 'undefined') ? confirmationTypeTab : 'recs';
+  const source = ((isAdmin ? historyGroupsCache.admin : historyGroupsCache.mine) || []).filter(g => confirmationGroupType(g) === typeTab);
   // Urgent = due today or within the next 7 days. Overdue (days < 0) has its
   // own tab so the two lists never overlap.
   const urgent = source.filter(g => {
@@ -7255,6 +7265,7 @@ function renderDeliveryList(cfg){
 }
 function wireConfirmationFilterBars(){
   populateConfirmationFilterSelects();
+  if(typeof setConfirmationTypeTab === 'function') setConfirmationTypeTab(confirmationTypeTab, { skipRender:true });
   wireConfirmationFilterBar('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-type', 'history-filter-order', 'history-filter-delivery-from', 'history-filter-delivery-to', 'history-filter-count');
   wireConfirmationFilterBar('admin', 'admin-history-list', 'admin-filter-search', 'admin-filter-status', 'admin-filter-type', 'admin-filter-order', 'admin-filter-delivery-from', 'admin-filter-delivery-to', 'admin-filter-count');
   wireConfirmationFilterBar('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-type', 'queue-filter-order', 'queue-filter-delivery-from', 'queue-filter-delivery-to', 'queue-filter-count');
@@ -16892,11 +16903,17 @@ function appendAssetRowsToConfirmationTable(scope, listElId, countElId){
   }
   const countEl = countElId ? document.getElementById(countElId) : null;
   if(countEl){
-    const hasFilter = f.search || f.status || f.type || f.orderType || f.from || f.to;
-    const recFull = (historyGroupsCache[scope] || []).length;
-    const m = /Showing (\d+) of (\d+)/.exec(countEl.textContent || '');
-    const recShown = m ? parseInt(m[1], 10) : recFull;
-    countEl.textContent = hasFilter ? ('Showing ' + (recShown + assets.length) + ' of ' + (recFull + scoped.length)) : '';
+    // The type (RECs / Carbon Credit / Asset tab) isn't counted as a filter —
+    // "Showing x of y" only appears for the other filters, out of that type.
+    const hasFilter = f.search || f.status || f.orderType || f.from || f.to;
+    if(f.type === 'asset'){
+      countEl.textContent = hasFilter ? ('Showing ' + assets.length + ' of ' + scoped.length) : '';
+    }else{
+      const typeFull = (historyGroupsCache[scope] || []).filter(g => !f.type || confirmationGroupType(g) === f.type).length;
+      const m = /Showing (\d+) of (\d+)/.exec(countEl.textContent || '');
+      const recShown = m ? parseInt(m[1], 10) : typeFull;
+      countEl.textContent = hasFilter ? ('Showing ' + recShown + ' of ' + typeFull) : '';
+    }
   }
 }
 const _recApplyConfirmationFilter = applyConfirmationFilter;
@@ -16904,6 +16921,19 @@ applyConfirmationFilter = function(key, listElId, searchElId, statusElId, typeEl
   _recApplyConfirmationFilter(key, listElId, searchElId, statusElId, typeElId, orderTypeElId, deliveryFromElId, deliveryToElId, countElId);
   try{ appendAssetRowsToConfirmationTable(key, listElId, countElId); }
   catch(err){ console.warn('Could not add Asset rows to ' + listElId, err); }
+  // The type tab isn't a "filter" — when nothing else is filtered and the
+  // list is empty, say so plainly for that type instead of "match your filter".
+  try{
+    const el = document.getElementById(listElId);
+    if(el && !el.querySelector(':scope > table')){
+      const f = assetFilterState(key);
+      if(!(f.search || f.status || f.orderType || f.from || f.to)){
+        const label = f.type === 'asset' ? 'Asset agreements' : f.type === 'carboncredit' ? 'Carbon Credit confirmations' : 'RECs confirmations';
+        const text = key === 'queue' ? 'No ' + label + ' pending right now.' : key === 'mine' ? 'No saved ' + label + ' yet.' : 'No ' + label + ' yet.';
+        el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">' + escapeHtml(text) + '</p>';
+      }
+    }
+  }catch(_){}
 };
 function refreshAssetQueueAndHistoryUi(){
   if(typeof historyGroupsCache !== 'undefined' && historyGroupsCache){
@@ -17425,6 +17455,78 @@ document.getElementById('list-sync-run-btn').addEventListener('click', async ()=
   try{ await loadHistory(); }catch(_){}
 });
 
+/* ---- Confirmations: one tab per type (RECs | Carbon Credit | Asset) ----
+   Every list on the Confirmations tab (Urgent, Overdue, Hourly, New Device,
+   My saved, Approval Queue, All) and the KPI tiles show only the selected
+   type. The hidden per-list type selects still carry the value, so the
+   existing filter code filters by it unchanged. */
+var confirmationTypeTab = 'recs';
+try{ const saved = localStorage.getItem('confirmation-type-tab'); if(saved === 'recs' || saved === 'carboncredit' || saved === 'asset') confirmationTypeTab = saved; }catch(_){}
+const CONFIRMATION_TYPE_SELECTS = ['history-filter-type','queue-filter-type','admin-filter-type'];
+function rerenderConfirmationLists(){
+  if(typeof historyGroupsCache === 'undefined') return;
+  try{ renderUrgentDeliveries(); }catch(err){ console.warn('Urgent deliveries render failed', err); }
+  applyConfirmationFilter('mine', 'history-list', 'history-filter-search', 'history-filter-status', 'history-filter-type', 'history-filter-order', 'history-filter-delivery-from', 'history-filter-delivery-to', 'history-filter-count');
+  applyConfirmationFilter('admin', 'admin-history-list', 'admin-filter-search', 'admin-filter-status', 'admin-filter-type', 'admin-filter-order', 'admin-filter-delivery-from', 'admin-filter-delivery-to', 'admin-filter-count');
+  if(isAdmin){
+    applyConfirmationFilter('queue', 'approval-queue-list', 'queue-filter-search', 'queue-filter-status', 'queue-filter-type', 'queue-filter-order', 'queue-filter-delivery-from', 'queue-filter-delivery-to', 'queue-filter-count');
+  }
+}
+function setConfirmationTypeTab(type, opts){
+  if(type !== 'recs' && type !== 'carboncredit' && type !== 'asset') type = 'recs';
+  confirmationTypeTab = type;
+  try{ localStorage.setItem('confirmation-type-tab', type); }catch(_){}
+  document.querySelectorAll('#confirmation-type-tabs [data-confirmation-type]').forEach(b=>{
+    b.classList.toggle('active', b.getAttribute('data-confirmation-type') === type);
+  });
+  CONFIRMATION_TYPE_SELECTS.forEach(id => { const el = document.getElementById(id); if(el) el.value = type; });
+  // Order type exists on RECs and Carbon Credit only.
+  ['history-filter-order','queue-filter-order','admin-filter-order'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(!el) return;
+    if(type === 'asset') el.value = '';
+    el.style.display = type === 'asset' ? 'none' : '';
+  });
+  refreshConfirmationSectionSelector();
+  if(!(opts && opts.skipRender)) rerenderConfirmationLists();
+}
+document.addEventListener('click', function(e){
+  const b = e.target.closest && e.target.closest('#confirmation-type-tabs [data-confirmation-type]');
+  if(b) setConfirmationTypeTab(b.getAttribute('data-confirmation-type'));
+});
+// Asset KPI tiles (same tiles/keys as RECs, so clicking them still jumps to
+// the right list and status filter).
+function renderAssetKpis(host){
+  if(!host) return;
+  let groups = [];
+  try{ groups = getAssetGroupsForScope(isAdmin ? 'admin' : 'mine'); }catch(_){}
+  const now = new Date(), ym = now.getFullYear()*12 + now.getMonth();
+  const cnt = { action:0, p1:0, p2:0, p3:0, ret:0, appr:0 };
+  groups.forEach(g=>{
+    const st = assetGroupStatus(g);
+    if(isAdmin && canActOnStatus(st) && PENDING_STATUSES.includes(st)) cnt.action++;
+    if(st === STATUS_PENDING_1) cnt.p1++; else if(st === STATUS_PENDING_2) cnt.p2++; else if(st === STATUS_PENDING_3) cnt.p3++;
+    if(REVERT_STATUS_INFO[st]) cnt.ret++;
+    if(st === STATUS_APPROVED){
+      const d = parseStoredDateToDate(String(g.rows[0].values[0][g.mc.approvedDate3] || '').slice(0,10));
+      if(d && d.getUTCFullYear()*12 + d.getUTCMonth() === ym) cnt.appr++;
+    }
+  });
+  const tiles = [];
+  if(isAdmin) tiles.push(['action','Awaiting my action',cnt.action,'accent']);
+  tiles.push(['p1','Pending L1',cnt.p1,'warn'],['p2','Pending L2',cnt.p2,'warn'],['p3','Pending L3',cnt.p3,'warn'],
+    ['returned','Returned to submitter',cnt.ret,'bad'],['appr','Approved this month',cnt.appr,'ok']);
+  host.innerHTML = tiles.map(t => '<button type="button" class="kpi '+t[3]+(t[2]?' has':'')+'" data-kpi="'+t[0]+'"><span class="n">'+t[2]+'</span><span class="l">'+t[1]+'</span></button>').join('');
+}
+// "Returned to submitter" tile (Asset only): open My saved filtered to the
+// reverted statuses' first match isn't possible with one select value, so
+// just open the list the person can act on.
+document.addEventListener('click', function(e){
+  const t = e.target.closest && e.target.closest('#desk-kpis [data-kpi="returned"]');
+  if(!t) return;
+  setConfirmationSection(canBuildAgreement() ? 'my' : 'all');
+});
+
 /* ---- Dark mode toggle ---- */
 (function(){
   const btn = document.getElementById('theme-toggle-btn');
@@ -17716,10 +17818,14 @@ document.getElementById('redemption-refresh-btn').addEventListener('click', ()=>
   /* ---- KPI strip ---- */
   var kpiHost=document.getElementById('desk-kpis');
   function baseGroups(){
-    try{ return (isAdmin ? historyGroupsCache.admin : historyGroupsCache.mine) || []; }catch(e){ return []; }
+    try{
+      var t = (typeof confirmationTypeTab !== 'undefined') ? confirmationTypeTab : 'recs';
+      return ((isAdmin ? historyGroupsCache.admin : historyGroupsCache.mine) || []).filter(function(g){ return confirmationGroupType(g) === t; });
+    }catch(e){ return []; }
   }
   function renderKpis(){
     if(!kpiHost) return;
+    if(typeof confirmationTypeTab !== 'undefined' && confirmationTypeTab === 'asset' && typeof renderAssetKpis === 'function'){ renderAssetKpis(kpiHost); return; }
     var g=baseGroups(), now=new Date(), ym=now.getFullYear()*12+now.getMonth();
     var cnt={action:0,urgent:0,overdue:0,p1:0,p2:0,p3:0,appr:0};
     g.forEach(function(x){
@@ -17949,7 +18055,7 @@ document.getElementById('redemption-refresh-btn').addEventListener('click', ()=>
     form:['Renewable Energy Certificate Trade','Fill in the details below and save for approval. Once approved, generate the customer version table and email it to your customer, copying Ops and Middle Office.'],
     carboncredit:['Carbon Credit Trade','Fill in the details below and save for approval. Once approved, generate the customer version table and email it to your customer, copying Ops and Middle Office.'],
     asset:['Asset Agreement','Fill in the Company, Agreement, Pricing & Fees and Device details, generate the table, then save it for approval (Level 1 → 2 → 3, same as RECs).'],
-    confirmations:['Confirmations','Track saved confirmations and act on anything waiting on your approval level — urgent and overdue deliveries first.'],
+    confirmations:['Confirmations','RECs, Carbon Credit and Asset kept separate — track saved confirmations and act on anything waiting on your approval level.'],
     analysis:['Analysis','RECs, Carbon Credit and Asset analysed separately — status and volume breakdown per type. Filter, sort, and export to Excel.'],
     redemption:['Redemption Form','Download the redemption form templates from SharePoint.'],
     usermgmt:['User Management','Assign each person their approval level.'],
