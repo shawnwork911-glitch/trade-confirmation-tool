@@ -1527,6 +1527,19 @@ html.desk-nav-hidden #main-tabs{transform:translateX(-100%);visibility:hidden;}
   </div>
 </div>
 
+<div id="asset-l3-approve-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
+  <div style="width:100%;max-width:560px;max-height:calc(100vh - 32px);overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:10px;">
+    <h2 style="margin:0;font-size:16px;">Approve Asset ID <span id="asset-l3-approve-modal-id"></span> — Level 3</h2>
+    <p style="margin:0;font-size:13px;color:var(--text-secondary);">Level 3 approval requires the counterparty's company and bank details below. They are saved to the agreement and the Asset Approval Record List.</p>
+    <div id="asset-l3-approve-modal-fields" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px 14px;"></div>
+    <div id="asset-l3-approve-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
+      <button type="button" class="secondary" id="asset-l3-approve-modal-cancel">Cancel</button>
+      <button type="button" id="asset-l3-approve-modal-submit">Approve</button>
+    </div>
+  </div>
+</div>
+
 <div id="asset-revert-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
   <div style="width:100%;max-width:420px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:10px;">
     <h2 style="margin:0;font-size:16px;">Revert to submitter — <span id="asset-revert-modal-id"></span></h2>
@@ -2167,6 +2180,18 @@ const RC = { email:0, role:1, assignedBy:2, assignedDate:3 };
 const STATUS_PENDING_1 = "Pending Level 1";
 const STATUS_PENDING_2 = "Pending Level 2";
 const STATUS_PENDING_3 = "Pending Level 3";
+// Asset tab: company details the Level 3 approver fills in when approving
+// (hidden on the submitter's form). key = Asset log column (mc[key]),
+// label = row label in the stored preview HTML.
+const ASSET_L3_FIELDS = [
+  { key:'regNumber',         label:'Registration Number', placeholder:'Company registration number' },
+  { key:'financeEmail',      label:'Finance Email',       placeholder:'finance@company.com' },
+  { key:'bankName',          label:'Bank Name',           placeholder:'Bank name' },
+  { key:'bankAccountNumber', label:'Bank Account Number', placeholder:'Bank account number' },
+  { key:'swiftCode',         label:'Swift Code',          placeholder:'e.g. MBBEMYKL' },
+  { key:'address',           label:'Invoice Address',     placeholder:'Full invoice address', multiline:true }
+];
+const ASSET_L3_PENDING_TEXT = 'To be filled at Level 3 approval';
 const STATUS_APPROVED = "Approved";
 const STATUS_REJECTED = "Rejected";
 // Revert replaces outright Reject at every stage of the main 3-level chain
@@ -14560,16 +14585,22 @@ async function onNotifPanelClick(e){
       lockableField('BD in-charge', selectInput('asset-h-bd', BD_NAMES, BD_NAMES[0]), 'asset-h-bd') +
       lockableField('Entity', selectInput('asset-h-entity', ['MY','SG'], 'MY'), 'asset-h-entity') +
       lockableField('Agreement Company Name', textInput('asset-h-agreement-company-name','Company name as per agreement'), 'asset-h-agreement-company-name') +
-      lockableField('Registration Number', textInput('asset-h-reg-number','Company registration number'), 'asset-h-reg-number') +
+      // Registration Number, Finance Email, Bank Name, Bank Account Number,
+      // Swift Code and Invoice Address are filled in by the Level 3 approver
+      // (see the Level 3 approve modal) — hidden from the submitter's form.
+      '<div class="asset-l3-only-field" style="display:none;">'+lockableField('Registration Number', textInput('asset-h-reg-number','Company registration number'), 'asset-h-reg-number')+'</div>' +
       lockableField('Contact Person', textInput('asset-h-contact-person','Contact person name'), 'asset-h-contact-person') +
       lockableField('Phone Number', textInput('asset-h-phone','e.g. +60 12-345 6789'), 'asset-h-phone') +
       lockableField('Email', textInput('asset-h-email','name@company.com'), 'asset-h-email') +
-      lockableField('Finance Email', textInput('asset-h-finance-email','finance@company.com'), 'asset-h-finance-email') +
-      lockableField('Bank Name', textInput('asset-h-bank-name','Bank name'), 'asset-h-bank-name') +
-      lockableField('Bank Account Number', textInput('asset-h-bank-account-number','Bank account number'), 'asset-h-bank-account-number') +
-      lockableField('Swift Code', textInput('asset-h-swift-code','e.g. MBBEMYKL'), 'asset-h-swift-code') +
-      '<div style="grid-column:1 / -1;">'+
+      '<div class="asset-l3-only-field" style="display:none;">'+lockableField('Finance Email', textInput('asset-h-finance-email','finance@company.com'), 'asset-h-finance-email')+'</div>' +
+      '<div class="asset-l3-only-field" style="display:none;">'+lockableField('Bank Name', textInput('asset-h-bank-name','Bank name'), 'asset-h-bank-name')+'</div>' +
+      '<div class="asset-l3-only-field" style="display:none;">'+lockableField('Bank Account Number', textInput('asset-h-bank-account-number','Bank account number'), 'asset-h-bank-account-number')+'</div>' +
+      '<div class="asset-l3-only-field" style="display:none;">'+lockableField('Swift Code', textInput('asset-h-swift-code','e.g. MBBEMYKL'), 'asset-h-swift-code')+'</div>' +
+      '<div class="asset-l3-only-field" style="display:none;grid-column:1 / -1;">'+
         lockableField('Invoice Address', '<textarea id="asset-h-address" placeholder="N/A" rows="2"></textarea>', 'asset-h-address')+
+      '</div>' +
+      '<div style="grid-column:1 / -1;font-size:12px;color:var(--text-secondary);background:var(--surface-2, rgba(127,127,127,.08));border:1px dashed var(--border);border-radius:8px;padding:8px 10px;">'+
+        'ℹ️ <strong>Registration Number, Finance Email, Bank Name, Bank Account Number, Swift Code and Invoice Address</strong> are filled in by the Level 3 approver when approving — no need to enter them here.'+
       '</div>';
 
     document.getElementById('asset-agreement-fields').innerHTML =
@@ -15065,15 +15096,11 @@ async function onNotifPanelClick(e){
       ['asset-h-bd','BD in-charge'],
       ['asset-h-entity','Entity'],
       ['asset-h-agreement-company-name','Agreement Company Name'],
-      ['asset-h-reg-number','Registration Number'],
       ['asset-h-contact-person','Contact Person'],
       ['asset-h-phone','Phone Number'],
-      ['asset-h-email','Email'],
-      ['asset-h-finance-email','Finance Email'],
-      ['asset-h-bank-name','Bank Name'],
-      ['asset-h-bank-account-number','Bank Account Number'],
-      ['asset-h-swift-code','Swift Code'],
-      ['asset-h-address','Invoice Address']
+      ['asset-h-email','Email']
+      // Registration Number, Finance Email, Bank Name, Bank Account Number,
+      // Swift Code and Invoice Address are entered at Level 3 approval.
     ];
     companyFields.forEach(([id,label])=>{
       if(!val(id)){ missing.push({section:'Company', label}); markMissing(id); }
@@ -15195,15 +15222,15 @@ async function onNotifPanelClick(e){
     rows.push(['BD in-charge', val('asset-h-bd')]);
     rows.push(['Entity', val('asset-h-entity')]);
     rows.push(['Agreement Company Name', val('asset-h-agreement-company-name')]);
-    rows.push(['Registration Number', val('asset-h-reg-number')]);
-    rows.push(['Invoice Address', val('asset-h-address')]);
+    rows.push(['Registration Number', ASSET_L3_PENDING_TEXT]);
+    rows.push(['Invoice Address', ASSET_L3_PENDING_TEXT]);
     rows.push(['Contact Person', val('asset-h-contact-person')]);
     rows.push(['Phone Number', val('asset-h-phone')]);
     rows.push(['Email', val('asset-h-email')]);
-    rows.push(['Finance Email', val('asset-h-finance-email')]);
-    rows.push(['Bank Name', val('asset-h-bank-name')]);
-    rows.push(['Bank Account Number', val('asset-h-bank-account-number')]);
-    rows.push(['Swift Code', val('asset-h-swift-code')]);
+    rows.push(['Finance Email', ASSET_L3_PENDING_TEXT]);
+    rows.push(['Bank Name', ASSET_L3_PENDING_TEXT]);
+    rows.push(['Bank Account Number', ASSET_L3_PENDING_TEXT]);
+    rows.push(['Swift Code', ASSET_L3_PENDING_TEXT]);
     rows.push(['Agreement Start Date', formatDisplayDate(val('asset-h-agreement-start'))]);
     rows.push(['Agreement End Date', formatDisplayDate(val('asset-h-agreement-end'))]);
     rows.push(['Registry', registryDisplayName(val('asset-h-registry'))]);
@@ -15903,18 +15930,19 @@ async function buildAssetRowsFromForm(assetId, nowIso){
     row[mc.bnmRate] = (bnmStdToggle && bnmStdToggle.checked) ? 'Y' : v('asset-h-bnm-rate');
     row[mc.currency] = v('asset-h-currency');
     row[mc.specialRemarks] = v('asset-h-remarks') || 'N/A';
-    row[mc.regNumber] = v('asset-h-reg-number');
-    row[mc.address] = v('asset-h-address');
+    // Filled in by the Level 3 approver (approveAssetDeal).
+    row[mc.regNumber] = '';
+    row[mc.address] = '';
     row[mc.contactPerson] = v('asset-h-contact-person');
     row[mc.phoneNumber] = v('asset-h-phone');
     row[mc.email] = v('asset-h-email');
     // invoicingAddress / invoicingSameAsAddress / acctDeptEmail /
     // acctDeptEmailSameAsEmail are no longer on the form — left blank.
-    row[mc.bankName] = v('asset-h-bank-name');
-    row[mc.bankAccountNumber] = v('asset-h-bank-account-number');
+    row[mc.bankName] = '';
+    row[mc.bankAccountNumber] = '';
     row[mc.agreementCompanyName] = v('asset-h-agreement-company-name');
-    row[mc.swiftCode] = v('asset-h-swift-code');
-    row[mc.financeEmail] = v('asset-h-finance-email');
+    row[mc.swiftCode] = '';
+    row[mc.financeEmail] = '';
     row[mc.residential] = v('asset-h-residential') === 'Y' ? 'Y' : 'N';
     row[mc.deviceCountry] = v('asset-h-device-country');
     row[mc.fuel] = v('asset-h-fuel');
@@ -16297,7 +16325,34 @@ async function loadAssetSubmissionSnapshot(rowUid){
 }
 
 /* ---- Approve ---- */
-async function approveAssetDeal(assetId, file){
+// Reads the Level 3 company details already stored on an Asset row.
+function assetL3DetailsFromValues(values, mc){
+  const d = {};
+  ASSET_L3_FIELDS.forEach(f => {
+    const v = String(values[mc[f.key]] == null ? '' : values[mc[f.key]]).trim();
+    if(v && v !== ASSET_L3_PENDING_TEXT) d[f.key] = v;
+  });
+  return d;
+}
+// Returns the labels of any Level 3 company detail that is still blank.
+function missingAssetL3Details(d){
+  return ASSET_L3_FIELDS.filter(f => !String((d && d[f.key]) || '').trim()).map(f => f.label);
+}
+// Replaces the value cell of each Level 3 row ("Registration Number", ...)
+// in the stored Details table, so View shows what Level 3 entered.
+function patchAssetL3DetailsInHtml(html, d){
+  if(!html || !d) return html;
+  let out = String(html);
+  ASSET_L3_FIELDS.forEach(f => {
+    if(!d[f.key]) return;
+    const label = escapeHtml(f.label).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp('(<td[^>]*>' + label + '</td><td[^>]*>)[\\s\\S]*?(</td>)');
+    out = out.replace(re, (m, a, b) => a + escapeHtml(d[f.key]) + b);
+  });
+  return out;
+}
+
+async function approveAssetDeal(assetId, file, l3Details){
   if(!assetId) return;
   await ensureFreshAssetWorkbookSession();
   const group = await findAssetRowGroupLive(assetId);
@@ -16306,6 +16361,13 @@ async function approveAssetDeal(assetId, file){
   const currentStatus = matching[0].values[0][mc.status];
   if(!canActOnStatus(currentStatus)) throw new Error('You are not able to approve this asset agreement at its current stage.');
   if(currentStatus === STATUS_PENDING_2 && !file) throw new Error('Level 2 approval requires the signed agreement to be attached.');
+  let l3 = null;
+  if(currentStatus === STATUS_PENDING_3){
+    l3 = {};
+    ASSET_L3_FIELDS.forEach(f => { l3[f.key] = String((l3Details && l3Details[f.key]) || '').trim(); });
+    const missingL3 = missingAssetL3Details(l3);
+    if(missingL3.length) throw new Error('Level 3 approval requires these company details to be filled in: ' + missingL3.join(', ') + '.');
+  }
   const nowIso = new Date().toISOString();
   let nextStatus, byCol, dateCol;
   if(currentStatus === STATUS_PENDING_1){ nextStatus = STATUS_PENDING_2; byCol = mc.approvedBy1; dateCol = mc.approvedDate1; }
@@ -16339,6 +16401,10 @@ async function approveAssetDeal(assetId, file){
     if(uploaded){
       values[mc.agreementFileName] = uploaded.name;
       values[mc.agreementFileUrl] = uploaded.webUrl;
+    }
+    if(l3){
+      ASSET_L3_FIELDS.forEach(f => { values[mc[f.key]] = l3[f.key]; });
+      if(values[mc.generatedHtml]) values[mc.generatedHtml] = patchAssetL3DetailsInHtml(values[mc.generatedHtml], l3);
     }
     await updateTableRow(tableName, r.index, values);
     if(nextStatus === STATUS_APPROVED){
@@ -16569,6 +16635,8 @@ async function resubmitAssetDeal(){
       row[nmc.agreementFileName] = oldV[omc.agreementFileName] || ''; row[nmc.agreementFileUrl] = oldV[omc.agreementFileUrl] || '';
     }
     row[nmc.rejectedBy] = ''; row[nmc.rejectedDate] = ''; row[nmc.rejectReason] = '';
+    ASSET_L3_FIELDS.forEach(f => { row[nmc[f.key]] = oldV[omc[f.key]] || ''; });
+    if(row[nmc.generatedHtml]) row[nmc.generatedHtml] = patchAssetL3DetailsInHtml(row[nmc.generatedHtml], assetL3DetailsFromValues(row, nmc));
     const oldRow = live.rows[idx];
     if(oldRow && oldRow.values[0][omc.rowUid]) row[nmc.rowUid] = oldRow.values[0][omc.rowUid];
   });
@@ -16626,6 +16694,71 @@ document.getElementById('asset-approve-modal-submit').addEventListener('click', 
   try{
     await approveAssetDeal(assetId, file);
     closeAssetApproveModal();
+  }catch(err){
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
+  }finally{
+    btn.disabled = false;
+    btn.textContent = 'Approve';
+  }
+});
+/* ---- Level 3 approve modal: company details are entered here ---- */
+let assetL3ApproveModalId = null;
+function openAssetL3ApproveModal(assetId){
+  assetL3ApproveModalId = assetId;
+  document.getElementById('asset-l3-approve-modal-id').textContent = friendlyAssetId(assetId);
+  const g = findAssetRowGroupInCache(assetId);
+  const existing = g ? assetL3DetailsFromValues(g.rows[0].values[0], g.mc) : {};
+  document.getElementById('asset-l3-approve-modal-fields').innerHTML = ASSET_L3_FIELDS.map(f => {
+    const id = 'asset-l3-f-' + f.key;
+    const v = escapeHtml(existing[f.key] || '');
+    const input = f.multiline
+      ? '<textarea id="'+id+'" rows="3" placeholder="'+escapeHtml(f.placeholder)+'">'+v+'</textarea>'
+      : '<input type="'+(f.type||'text')+'" id="'+id+'" placeholder="'+escapeHtml(f.placeholder)+'" value="'+v+'"/>';
+    return '<div'+(f.multiline ? ' style="grid-column:1 / -1;"' : '')+'><label for="'+id+'" style="margin:0 0 4px;display:block;">'+escapeHtml(f.label)+' <span style="color:#c0392b;">*</span></label>'+input+'</div>';
+  }).join('');
+  document.getElementById('asset-l3-approve-modal-error').style.display = 'none';
+  document.getElementById('asset-l3-approve-modal-overlay').style.display = 'flex';
+  const first = document.getElementById('asset-l3-f-' + ASSET_L3_FIELDS[0].key);
+  if(first) first.focus();
+}
+function closeAssetL3ApproveModal(){
+  document.getElementById('asset-l3-approve-modal-overlay').style.display = 'none';
+  assetL3ApproveModalId = null;
+}
+document.getElementById('asset-l3-approve-modal-cancel').addEventListener('click', closeAssetL3ApproveModal);
+document.getElementById('asset-l3-approve-modal-overlay').addEventListener('click', (e)=>{
+  if(e.target.id === 'asset-l3-approve-modal-overlay') closeAssetL3ApproveModal();
+});
+document.getElementById('asset-l3-approve-modal-submit').addEventListener('click', async ()=>{
+  const assetId = assetL3ApproveModalId;
+  const errEl = document.getElementById('asset-l3-approve-modal-error');
+  const btn = document.getElementById('asset-l3-approve-modal-submit');
+  errEl.style.display = 'none';
+  const d = {};
+  ASSET_L3_FIELDS.forEach(f => {
+    const el = document.getElementById('asset-l3-f-' + f.key);
+    if(el) el.style.borderColor = '';
+    d[f.key] = el ? String(el.value || '').trim() : '';
+  });
+  const missing = missingAssetL3Details(d);
+  if(missing.length){
+    ASSET_L3_FIELDS.forEach(f => { if(!d[f.key]){ const el = document.getElementById('asset-l3-f-' + f.key); if(el) el.style.borderColor = '#c0392b'; } });
+    errEl.textContent = 'Please fill in: ' + missing.join(', ') + '.';
+    errEl.style.display = 'block';
+    return;
+  }
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(d.financeEmail)){
+    document.getElementById('asset-l3-f-financeEmail').style.borderColor = '#c0392b';
+    errEl.textContent = 'Please enter a valid Finance Email address.';
+    errEl.style.display = 'block';
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = 'Approving…';
+  try{
+    await approveAssetDeal(assetId, null, d);
+    closeAssetL3ApproveModal();
   }catch(err){
     errEl.textContent = err.message;
     errEl.style.display = 'block';
@@ -17111,6 +17244,7 @@ document.addEventListener('click', function(e){
     const g = findAssetRowGroupInCache(id);
     const status = g ? assetGroupStatus(g) : '';
     if(status === STATUS_PENDING_2){ openAssetApproveModal(id); return; }
+    if(status === STATUS_PENDING_3){ openAssetL3ApproveModal(id); return; }
     const label = isPendingAssetId(id) ? 'this asset agreement' : 'Asset ID ' + id;
     if(confirm('Approve ' + label + ' at your level? This will advance it to the next stage (or mark it fully Approved if this is the final level).')){
       approve.disabled = true;
