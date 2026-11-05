@@ -7959,6 +7959,8 @@ function renderHistoryTable(el, groups, opts){
       ? 'Edit details/products — resubmitting sends this deal straight back to Pending Level 2 (Level 1\'s approval stays in place)'
       : status === STATUS_REVERTED_3
       ? 'Edit details/products — resubmitting sends this deal straight back to Pending Level 3 (Level 1 and Level 2\'s approvals stay in place)'
+      : status === STATUS_PENDING_1
+      ? 'Edit details/products before Admin Level 1 approves — it stays at Pending Level 1 and the change is saved in the edit history'
       : status === STATUS_PENDING_2
       ? 'Edit details/products — if you only correct BD source matching this stays at Pending Level 2 (Level 1\'s approval stays in place); changing anything else resends the deal through Level 1 approval again'
       : 'Edit details/products — resends this deal through Level 1 approval again';
@@ -12844,7 +12846,10 @@ function canFullyEditAfterLevel1(status){
   // matching remain editable, via the separate "Request edit" flow (see
   // canRequestEdit / openEditRequestModal), which sends the deal through a
   // fresh Level 3 sign-off instead of resubmitting through the main chain.
-  return status === STATUS_PENDING_2 || status === STATUS_REVERTED_1 ||
+  // Pending Level 1 is editable too: nothing has approved it yet, so the
+  // submitter can correct it in place (stays at Pending Level 1, logged in
+  // the edit history, Admin Level 1 is emailed the change).
+  return status === STATUS_PENDING_1 || status === STATUS_PENDING_2 || status === STATUS_REVERTED_1 ||
     status === STATUS_REVERTED_2 || status === STATUS_REVERTED_3;
 }
 // Compares the pre-edit row values (oldGroup, untouched) against what's
@@ -13206,6 +13211,8 @@ function openFullEditModal(dealId){
     const revertComment = group[0].values[0][MC.rejectReason] || '';
     introEl.innerHTML = 'Admin Level 1 sent this back for changes instead of approving it — it has <strong>not</strong> been rejected, and no level has approved it yet, so nothing about the approval trail needs clearing. Fix whatever needs fixing below and it goes straight back to Pending Level 1 for Admin Level 1 to look at again, along with your note.' +
       (revertComment ? '<br><br><strong>Admin Level 1’s comment:</strong> ' + escapeHtml(revertComment) : '');
+  } else if(currentStatus === STATUS_PENDING_1){
+    introEl.innerHTML = 'Nothing has approved this deal yet, so you can still correct it. Saving keeps it at <strong>Pending Level 1</strong> (the Deal ID is still assigned when Level 1 approves), records exactly what changed in the deal\'s <strong>Edit history</strong>, and emails Admin Level 1 the change with your justification below.';
   } else if(currentStatus === STATUS_REVERTED_2 || currentStatus === STATUS_REVERTED_3){
     const revertComment = group[0].values[0][MC.rejectReason] || '';
     const standing = revertInfo ? revertInfo.standing : '';
@@ -13583,7 +13590,7 @@ async function saveFullEditAndResubmit(dealId, sortedGroup){
     const nowForLabel = new Date();
     const timestampLabel = String(nowForLabel.getUTCDate()).padStart(2,'0')+'/'+String(nowForLabel.getUTCMonth()+1).padStart(2,'0')+'/'+nowForLabel.getUTCFullYear()+' '+String(nowForLabel.getUTCHours()).padStart(2,'0')+':'+String(nowForLabel.getUTCMinutes()).padStart(2,'0')+' UTC';
     const roundLabel = (revertInfo ? ('Edit after Admin Level ' + revertInfo.level + ' sent this back, on ')
-      : (skipLevelReset ? 'Edit (kept at Pending Level 2, Level 1 sign-off untouched) on ' : 'Edit on ')) + timestampLabel + ' by ' + (currentAccount.username || 'unknown');
+      : (skipLevelReset ? 'Edit (kept at Pending Level 2, Level 1 sign-off untouched) on ' : (liveStatus === STATUS_PENDING_1 ? 'Edit before Level 1 approval, on ' : 'Edit on '))) + timestampLabel + ' by ' + (currentAccount.username || 'unknown');
     // If this edit is resolving a revert (at any level), carry the admin's own
     // comment along with the diff so it stays on the permanent edit history
     // even after rejectReason itself gets cleared above.
@@ -16405,7 +16412,10 @@ const ASSET_REVERT_TO_STATUS = {
   [STATUS_PENDING_2]: STATUS_REVERTED_2,
   [STATUS_PENDING_3]: STATUS_REVERTED_3
 };
+// Where "Edit & resend" lands. Pending Level 1 is editable too (nothing
+// has approved it yet), and saving keeps it at Pending Level 1.
 const ASSET_RESUBMIT_TO_STATUS = {
+  [STATUS_PENDING_1]: STATUS_PENDING_1,
   [STATUS_REVERTED_1]: STATUS_PENDING_1,
   [STATUS_REVERTED_2]: STATUS_PENDING_2,
   [STATUS_REVERTED_3]: STATUS_PENDING_3
@@ -16601,15 +16611,24 @@ function syncAssetResubmitUi(){
   if(saveBtn) saveBtn.textContent = ctx ? 'Resubmit for approval' : 'Save agreement';
   if(!banner) return;
   if(!ctx){ banner.style.display = 'none'; banner.innerHTML = ''; return; }
-  const info = REVERT_STATUS_INFO[ctx.status] || { level:'?', resubmitTo:'Level 1' };
+  const info = REVERT_STATUS_INFO[ctx.status];
+  const prevReason = (document.getElementById('asset-resubmit-justification') || {}).value || ctx.justification || '';
+  const whoText = info
+    ? ' — returned by Admin Level ' + escapeHtml(String(info.level)) + (ctx.by ? ' (' + escapeHtml(ctx.by) + ')' : '') + '.'
+    : ' — still waiting on Admin Level 1, so you can correct it before anyone approves it.';
+  const goesTo = info ? info.resubmitTo : 'Level 1';
   banner.innerHTML =
-    '<div><strong>Editing ' + escapeHtml(isPendingAssetId(ctx.assetId) ? 'your reverted asset agreement' : 'Asset ID ' + ctx.assetId) +
-    '</strong> — returned by Admin Level ' + escapeHtml(String(info.level)) + (ctx.by ? ' (' + escapeHtml(ctx.by) + ')' : '') + '.</div>' +
+    '<div><strong>Editing ' + escapeHtml(isPendingAssetId(ctx.assetId) ? (info ? 'your reverted asset agreement' : 'your submitted asset agreement') : 'Asset ID ' + ctx.assetId) +
+    '</strong>' + whoText + '</div>' +
     (ctx.comment ? '<div style="margin-top:4px;"><strong>Comment:</strong> ' + escapeHtml(ctx.comment) + '</div>' : '') +
     (ctx.partial ? '<div style="margin-top:4px;">This agreement was saved before form copies were kept, so the details and devices were rebuilt from the saved record — please re-check <strong>Pricing &amp; Fees</strong> before resubmitting.</div>' : '') +
-    '<div style="margin-top:6px;">Make the change, press <strong>Generate table</strong>, then <strong>Resubmit for approval</strong> — it goes straight back to Pending ' + escapeHtml(info.resubmitTo) + '. ' +
+    '<div style="margin-top:8px;"><label for="asset-resubmit-justification" style="font-weight:600;margin:0 0 4px;display:block;">Reason for this change (required — saved in the edit history)</label>' +
+      '<textarea id="asset-resubmit-justification" rows="2" style="width:100%;" placeholder="e.g. Corrected device capacity per signed agreement"></textarea></div>' +
+    '<div style="margin-top:6px;">Make the change, press <strong>Generate table</strong>, then <strong>Resubmit for approval</strong> — it goes ' + (info ? 'straight back to' : 'back to') + ' Pending ' + escapeHtml(goesTo) + '. ' +
     '<button type="button" class="secondary" id="asset-resubmit-cancel" style="padding:3px 10px;font-size:12px;margin-left:6px;">Cancel edit</button></div>';
   banner.style.display = 'block';
+  const jEl = document.getElementById('asset-resubmit-justification');
+  if(jEl){ jEl.value = prevReason; jEl.addEventListener('input', ()=>{ if(assetResubmitCtx) assetResubmitCtx.justification = jEl.value; }); }
 }
 // Rebuilds the Asset form from a saved record when no submitted-form
 // snapshot exists (agreements saved before snapshots were introduced).
@@ -16689,7 +16708,7 @@ async function openAssetForResubmit(assetId){
   const group = findAssetRowGroupInCache(assetId);
   if(!group){ alert('This asset agreement could not be found — please refresh the page.'); return; }
   const status = assetGroupStatus(group);
-  if(!ASSET_RESUBMIT_TO_STATUS[status]){ alert('Only an asset agreement that was reverted to you can be edited and resent.'); return; }
+  if(!ASSET_RESUBMIT_TO_STATUS[status]){ alert('Only an asset agreement that is still Pending Level 1, or was reverted to you, can be edited and resent.'); return; }
   const me = (currentAccount && currentAccount.username || '').toLowerCase();
   if(!isAdmin && !isAssetOwnerEmail(me, group)){ alert('Only the submitter or BD in-charge can edit this asset agreement.'); return; }
   // Flush the person's own in-progress Asset draft first — it is restored
@@ -16723,9 +16742,74 @@ async function endAssetResubmit(){
   syncAssetResubmitUi();
   await loadAssetDraftAndHistory();
 }
+// Field labels for the Asset edit history; anything not listed falls back to
+// its key split into words.
+const ASSET_FIELD_LABELS = {
+  bdInCharge:'BD in-charge', entity:'Entity', agreementStart:'Agreement Start Date', agreementEnd:'Agreement End Date',
+  supplier:'Supplier', registry:'Registry', deviceStatus:'Device status', paymentTerm:'Payment Term', broker:'Broker',
+  bnmRate:'BNM Rate', currency:'Currency', specialRemarks:'Special Remarks', deviceOwnerName:'Device Owner Name',
+  recIssuanceStart:'REC Issuance start date', recIssuanceEnd:'REC Issuance end date', cod:'COD',
+  regNumber:'Registration Number', address:'Invoice Address', contactPerson:'Contact Person', phoneNumber:'Phone Number',
+  email:'Email', bankName:'Bank Name', bankAccountNumber:'Bank Account Number', agreementCompanyName:'Agreement Company Name',
+  swiftCode:'Swift Code', financeEmail:'Finance Email', residential:'Residential', deviceCountry:'Device Country', fuel:'Fuel',
+  minCommitmentVolume:'Min Commitment Volume', schemeType:'Scheme Type', capacityMwac:'Capacity (MWac)', coordinate:'Coordinate',
+  assetAddressLine:'Asset Address Line', assetCityState:'Asset City, State/Province', brokerFeeType:'Broker Fee Type',
+  brokerFeeCurrency:'Broker Fee Currency', brokerFeePrice:'Broker Fee Price', hybrid:'Hybrid', hybridDescription:'Hybrid terms',
+  profitRatioSaxon:'Profit Ratio - Saxon (%)', profitRatioOwner:'Profit Ratio - Device Owner (%)',
+  deviceRegFeeAmt:'Device registration fee', recsIssuanceFeeAmt:'RECs issuance fee', redemptionFeeAmt:'Redemption fee',
+  serviceType:'Service Type', serviceFrequency:'Frequency of Service', serviceFeeAmt:'Service fee / RECs',
+  specialChargeRemarks:'Special Charge Remarks'
+};
+const ASSET_DIFF_SKIP = new Set(['assetId','pricingSummary','submittedBy','submittedDate','generatedHtml','status','approvedBy1','approvedDate1',
+  'approvedBy2','approvedDate2','approvedBy3','approvedDate3','rejectedBy','rejectedDate','rejectReason','agreementFileName','agreementFileUrl',
+  'description','rowUid','approvedListItemId','invoicingAddress','invoicingSameAsAddress','acctDeptEmail','acctDeptEmailSameAsEmail']);
+function assetFieldLabel(key){
+  if(ASSET_FIELD_LABELS[key]) return ASSET_FIELD_LABELS[key];
+  let m = /^(price|service)(\d{4})(H[12])?Amt$/.exec(key);
+  if(m) return (m[1] === 'price' ? 'Price/RECs ' : 'Service fee/RECs ') + (m[3] ? (m[3] === 'H1' ? '1H' : '2H') : '') + m[2];
+  return key.replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase());
+}
+function assetDiffValue(key, v){
+  if(v === null || v === undefined || String(v).trim() === '') return '(blank)';
+  if(/start|end|cod/i.test(key) && !/Amt$/.test(key)){ const f = formatStoredDate(v); if(f) return f; }
+  return String(v).replace(/\s+/g, ' ').trim();
+}
+// Plain-text, line-per-field diff between the live rows and the rows about
+// to be written (one block per device), same format as the RECs history.
+function buildAssetEditDiff(live, built, oldId, newId){
+  const lines = [];
+  if(live.type !== built.agreementType) lines.push('Agreement Type: ' + live.type + ' → ' + built.agreementType);
+  if(live.rows.length !== built.rows.length) lines.push('Devices: ' + live.rows.length + ' → ' + built.rows.length);
+  if(newId !== oldId && !isPendingAssetId(oldId)) lines.push('Asset ID: ' + oldId + ' → ' + newId);
+  const multi = Math.max(live.rows.length, built.rows.length) > 1;
+  const norm = (v) => { const s = String(v == null ? '' : v).replace(/,/g, '').trim(); return /^-?\d+(\.\d+)?$/.test(s) ? String(Number(s)) : s.replace(/\s+/g, ' '); };
+  const keys = Object.keys(built.mc).filter(k => !ASSET_DIFF_SKIP.has(k));
+  for(let i = 0; i < Math.max(live.rows.length, built.rows.length); i++){
+    const ov = live.rows[i] ? live.rows[i].values[0] : null;
+    const nv = built.rows[i] || null;
+    const prefix = multi ? 'Device ' + (i+1) + ' — ' : '';
+    if(!ov){ lines.push(prefix + 'added'); continue; }
+    if(!nv){ lines.push(prefix + 'removed'); continue; }
+    keys.forEach(k=>{
+      const a = (live.mc[k] !== undefined) ? ov[live.mc[k]] : '';
+      const b = nv[built.mc[k]];
+      // Company/agreement fields are the same on every device row — only report them once.
+      if(i > 0 && !['deviceOwnerName','recIssuanceStart','recIssuanceEnd','cod','schemeType','capacityMwac','coordinate','assetAddressLine','assetCityState'].includes(k)) return;
+      if(norm(a) !== norm(b)) lines.push((i > 0 || ['deviceOwnerName','recIssuanceStart','recIssuanceEnd','cod','schemeType','capacityMwac','coordinate','assetAddressLine','assetCityState'].includes(k) ? prefix : '') +
+        assetFieldLabel(k) + ': ' + assetDiffValue(k, a) + ' → ' + assetDiffValue(k, b));
+    });
+  }
+  return lines.join('\n');
+}
 async function resubmitAssetDeal(){
   const ctx = assetResubmitCtx;
   if(!ctx) return;
+  const justification = ((document.getElementById('asset-resubmit-justification') || {}).value || ctx.justification || '').trim();
+  if(!justification){
+    const jEl = document.getElementById('asset-resubmit-justification');
+    if(jEl){ jEl.focus(); jEl.scrollIntoView({ block:'center' }); }
+    throw new Error('Please enter the reason for this change (top of the Asset form) — it\'s saved in the edit history and sent to the approver.');
+  }
   const missing = window.assetValidateForm ? window.assetValidateForm() : [];
   if(missing && missing.length){
     throw new Error('Please fill in all required fields before resubmitting (see the highlighted fields above).');
@@ -16736,7 +16820,7 @@ async function resubmitAssetDeal(){
   const oldV = live.rows[0].values[0], omc = live.mc;
   const liveStatus = oldV[omc.status];
   const target = ASSET_RESUBMIT_TO_STATUS[liveStatus];
-  if(!target) throw new Error('This asset agreement is no longer waiting on your changes (current status: ' + (liveStatus || 'Unknown') + '). Please refresh the page.');
+  if(!target) throw new Error('This asset agreement can no longer be edited (current status: ' + (liveStatus || 'Unknown') + ' — Level 1 may have just approved it). Please refresh the page.');
   const me = (currentAccount && currentAccount.username || '').toLowerCase();
   if(!isAdmin && !isAssetOwnerEmail(me, live)) throw new Error('Only the submitter or BD in-charge can resubmit this asset agreement.');
   // A real Asset ID keeps its running number; the type code and device
@@ -16767,6 +16851,20 @@ async function resubmitAssetDeal(){
     const oldRow = live.rows[idx];
     if(oldRow && oldRow.values[0][omc.rowUid]) row[nmc.rowUid] = oldRow.values[0][omc.rowUid];
   });
+  // ---- Edit history (audit trail), kept in the first row's Description
+  // column — appended to, never overwritten, newest entry at the bottom.
+  const info = REVERT_STATUS_INFO[liveStatus];
+  const fieldDiff = buildAssetEditDiff(live, built, ctx.assetId, newId);
+  const roundLabel = (info ? 'Edit after Admin Level ' + info.level + ' sent this back, on ' : 'Edit before Level 1 approval, on ') +
+    auditTimestampLabel() + ' by ' + (currentAccount.username || 'unknown');
+  const entry = roundLabel +
+    (info && oldV[omc.rejectReason] ? '\nAdmin Level ' + info.level + '’s comment: ' + oldV[omc.rejectReason] : '') +
+    '\nJustification: ' + justification +
+    '\n' + (fieldDiff || '(no field values changed)');
+  const prior = String(oldV[omc.description] || '').trim();
+  let history = prior ? prior + '\n\n---\n\n' + entry : entry;
+  if(history.length > EDIT_HISTORY_MAX_CHARS) history = trimEditHistoryToFit(history, EDIT_HISTORY_MAX_CHARS);
+  built.rows[0][nmc.description] = history;
   if(built.tableName === live.tableName){
     const n = Math.min(built.rows.length, live.rows.length);
     for(let i = 0; i < n; i++) await updateTableRow(live.tableName, live.rows[i].index, built.rows[i]);
@@ -16780,10 +16878,7 @@ async function resubmitAssetDeal(){
     for(const ix of old) await deleteTableRow(live.tableName, ix);
   }
   await saveAssetSubmissionSnapshot(built.rows[0][nmc.rowUid], gatherAssetFormData());
-  const info = REVERT_STATUS_INFO[liveStatus];
-  const changeSummary = 'Resubmitted by ' + currentAccount.username + ' after the Admin Level ' + (info ? info.level : '?') + ' revert.' +
-    (oldV[omc.rejectReason] ? '\nAdmin Level ' + (info ? info.level : '?') + '’s comment: ' + oldV[omc.rejectReason] : '') +
-    (newId !== ctx.assetId ? '\nAsset ID updated: ' + ctx.assetId + ' → ' + newId : '');
+  const changeSummary = entry;
   await endAssetResubmit();
   await notifyNextApproverAsset(target, newId, built.remarks, changeSummary);
 }
@@ -17121,13 +17216,20 @@ function assetHistoryRowsHtml(groups, scope, showOwner){
         '<button type="button" class="secondary asset-history-view-btn" data-assetid="'+id+'" style="padding:4px 10px;font-size:12px;">View</button>' +
         (canApprove ? ' <button type="button" class="secondary asset-history-approve-btn" data-assetid="'+id+'" style="padding:4px 10px;font-size:12px;">Approve</button>' : '') +
         (canRevert ? ' <button type="button" class="secondary asset-history-revert-btn" data-assetid="'+id+'" style="padding:4px 10px;font-size:12px;color:#8a6d1f;border-color:#e8c99a;" title="'+escapeHtml(revertTitle)+'">Revert</button>' : '') +
-        (canEditResend ? ' <button type="button" class="secondary asset-history-edit-btn" data-assetid="'+id+'" style="padding:4px 10px;font-size:12px;" title="Reopen this asset agreement in the Asset tab, make the change and resubmit — it goes straight back to the level that returned it.">Edit &amp; resend</button>' : '') +
+        (canEditResend ? ' <button type="button" class="secondary asset-history-edit-btn" data-assetid="'+id+'" style="padding:4px 10px;font-size:12px;" title="'+escapeHtml(status === STATUS_PENDING_1 ? 'Reopen this asset agreement in the Asset tab and correct it before Level 1 approves — it stays at Pending Level 1 and the change is saved in the edit history.' : 'Reopen this asset agreement in the Asset tab, make the change and resubmit — it goes straight back to the level that returned it.')+'">Edit &amp; resend</button>' : '') +
       '</td></tr>';
     if(status === STATUS_REJECTED && v[mc.rejectReason]){
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
         '<div style="background:#fdecea;border:1px solid #e2a49a;color:#8a2d1f;border-radius:6px;padding:8px 10px;font-size:12px;">' +
         '<strong>Rejected'+(v[mc.rejectedBy]?(' by '+escapeHtml(v[mc.rejectedBy])):'')+':</strong> '+escapeHtml(v[mc.rejectReason]) +
         '</div></td></tr>';
+    }
+    if(String(v[mc.description] || '').trim() && (isOwner || isAdmin)){
+      html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
+        '<details style="background:#eaf1fb;border:1px solid #b8cdec;color:#1f3a63;border-radius:6px;padding:8px 10px;font-size:12px;">' +
+        '<summary class="box-toggle"><strong>Edit history (audit trail), latest at bottom</strong> <span class="box-toggle-hint">(click to view)</span></summary>' +
+        '<div style="margin-top:6px;">' + escapeHtml(String(v[mc.description])).replace(/\n/g,'<br>') + '</div>' +
+        '</details></td></tr>';
     }
     const rowRevertInfo = REVERT_STATUS_INFO[status];
     if(rowRevertInfo && v[mc.rejectReason]){
