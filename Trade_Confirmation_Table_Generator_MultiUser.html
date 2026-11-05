@@ -6567,6 +6567,9 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
   // Volume change? (A volume change always goes to Level 3 — see below.)
   const rowSrcChanged = new Array(matching.length).fill(false);
   let volumeChangedAny = false;
+  // Same rule for Registry: BD can change it at any stage via this flow,
+  // but a Registry change is never applied without Level 3 sign-off.
+  let registryChangedAny = false;
   const isCCTable = dealLogTableName() === CC_LOG_TABLE_NAME;
   // True the moment any row actually changes one of the four real BD source
   // matching fields (Matching/Buyer-Seller/Which deal/No of RECs) \u2014 kept
@@ -6597,6 +6600,7 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
     }
     if((rv[MC.registry]||'') !== (edit.registry||'')){
       lines.push('Registry: ' + registryDisplayName(rv[MC.registry]) + ' \u2192 ' + registryDisplayName(edit.registry));
+      if(edit.registry) registryChangedAny = true;
     }
     if((rv[MC.tech]||'') !== (edit.tech||'')){
       lines.push('Tech: ' + techFullName(rv[MC.tech]) + ' \u2192 ' + techFullName(edit.tech));
@@ -6669,7 +6673,7 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
   // Route to Level 3 when the deal hasn't finished Level 3 yet (unchanged
   // behaviour) OR when any product's Volume changed — a quantity change is
   // never applied without Level 3 sign-off, even on an Approved deal.
-  const stageForLevel3 = currentStatus === STATUS_PENDING_3 || volumeChangedAny;
+  const stageForLevel3 = currentStatus === STATUS_PENDING_3 || volumeChangedAny || registryChangedAny;
   if(volumeChangedAny && matching[0].values[0].length <= MC.pendingVolume){
     throw new Error('Volume can\'t be changed yet: the ' + (isCCTable ? 'CCDealLog' : 'TradeDealLog') + ' table is missing its "Pending Volume" column. Ask an admin to add it, then try again.');
   }
@@ -6724,7 +6728,9 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue){
     }
     await finishTagWrite();
     await appendDealAuditEntry(dealId, buildAuditEntry('Change REQUESTED via "Request edit" (awaiting Level 3 approval, not yet live' +
-      (currentStatus === STATUS_APPROVED ? '; sent to Level 3 because Volume changed on an Approved deal' : '') + ')'));
+      (currentStatus === STATUS_APPROVED ? '; sent to Level 3 because ' +
+        [volumeChangedAny ? 'Volume' : '', registryChangedAny ? 'Registry' : ''].filter(Boolean).join(' and ') +
+        ' changed on an Approved deal' : '') + ')'));
     const notifyBody = changeLines.join('\n') + (matchNote ? '\n\nNote: ' + matchNote : '');
     await notifyNextApprover(STATUS_PENDING_CHANGE_3, dealId, matching[0].values[0][MC.description], notifyBody);
     await notifyAdmin3OfBdChange(dealId, matching[0].values[0][MC.description], changeLines, matchNote, 'pending', false);
@@ -8948,10 +8954,28 @@ document.addEventListener('change', (e)=>{
 // The <select> lists (SINGLE_REGISTRIES/SINGLE_TECHS) deliberately exclude
 // combo/"ANY" options — the whole point of this fix is landing on exactly
 // one Registry and exactly one, specific Tech.
-function editRequestRegistryTechHtml(idx, registry, tech, rowUid){
+function editRequestRegistryTechHtml(idx, registry, tech, rowUid, isCC){
   const uidAttr = ' data-uid="'+escapeHtml(rowUid||'')+'"';
   if(!needsRegistryTechFix(registry, tech)){
-    return '<input type="hidden" class="edit-request-registry" data-idx="'+idx+'"'+uidAttr+' value="'+escapeHtml(registry||'')+'"/>' +
+    // Registry is now always editable here by the BD/submitter (previously
+    // only when it held more than one value). Any change to it is ALWAYS
+    // routed to Level 3 for approval — even on an already-Approved deal —
+    // and recorded in the deal's audit trail (see requestBdMatchChange).
+    // data-orig lets the modal flip its submit button label live. Tech
+    // stays hidden/unchanged unless it needs the ambiguity fix below.
+    const cur = String(registry||'').trim();
+    const baseOpts = isCC ? CC_REGISTRY_OPTIONS.slice() : SINGLE_REGISTRIES.slice();
+    // Keep a legacy/unlisted current value selectable so opening the modal
+    // never silently changes it.
+    if(cur && baseOpts.indexOf(cur) === -1) baseOpts.unshift(cur);
+    const dispName = r => isCC ? (CC_REGISTRY_DISPLAY_NAMES[r] || r) : registryDisplayName(r);
+    const regOptions = (cur ? '' : '<option value="" selected>(none)</option>') +
+      baseOpts.map(r => '<option value="'+escapeHtml(r)+'"'+(r===cur?' selected':'')+'>'+escapeHtml(dispName(r))+'</option>').join('');
+    return '<div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px;">' +
+        '<div style="flex:0 1 220px;"><label style="margin:0 0 4px;display:block;font-size:12px;">Registry</label>' +
+          '<select class="edit-request-registry" data-idx="'+idx+'"'+uidAttr+' data-orig="'+escapeHtml(cur)+'">'+regOptions+'</select></div>' +
+        '<p style="margin:0 0 8px;font-size:11px;color:var(--text-secondary);flex:1 1 200px;">Changing the Registry needs Level 3 approval before it takes effect, and is logged in the deal\'s audit trail.</p>' +
+      '</div>' +
       '<input type="hidden" class="edit-request-tech" data-idx="'+idx+'"'+uidAttr+' value="'+escapeHtml(tech||'')+'"/>';
   }
   // Pre-select a starting point where a sensible one exists (first listed
@@ -8972,7 +8996,7 @@ function editRequestRegistryTechHtml(idx, registry, tech, rowUid){
         escapeHtml(registryDisplayName(registry))+' / '+escapeHtml(techFullName(tech))+
         '). Each product should only ever have ONE Registry and ONE Tech — please select a single value for each below and confirm before submitting.</p>' +
       '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Registry</label>' +
-        '<select class="edit-request-registry edit-request-regtech-fix" data-idx="'+idx+'"'+uidAttr+'>'+regOptions+'</select></div>' +
+        '<select class="edit-request-registry edit-request-regtech-fix" data-idx="'+idx+'"'+uidAttr+' data-orig="'+escapeHtml(String(registry||'').trim())+'">'+regOptions+'</select></div>' +
       '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Tech</label>' +
         '<select class="edit-request-tech edit-request-regtech-fix" data-idx="'+idx+'"'+uidAttr+'>'+techOptions+'</select></div>' +
       '<label style="display:flex;align-items:flex-start;gap:6px;font-size:12px;color:#8a2d1f;cursor:pointer;">' +
@@ -9031,7 +9055,7 @@ function openEditRequestModal(dealId){
   const currentStatus = group.length ? dealGroupStatus(group) : STATUS_APPROVED;
   editRequestModalStatus = currentStatus;
   document.getElementById('edit-request-modal-intro').textContent = currentStatus === STATUS_APPROVED
-    ? 'This deal is already Approved (Level 3 sign-off complete), so a BD source matching correction here needs no further approval — it\'s written to TradeDealLog as soon as you submit, and operations@saxonrenewables.com is emailed a summary of what changed. Exception: changing a product\'s Volume sends the whole request to Level 3 for approval first. Every change is recorded in the deal\'s Edit Change Summary.'
+    ? 'This deal is already Approved (Level 3 sign-off complete), so a BD source matching correction here needs no further approval — it\'s written to TradeDealLog as soon as you submit, and operations@saxonrenewables.com is emailed a summary of what changed. Exception: changing a product\'s Volume or Registry sends the whole request to Level 3 for approval first. Every change is recorded in the deal\'s Edit Change Summary.'
     : 'Level 2 has already approved this deal, so any correction here needs a fresh Level 3 sign-off before it takes effect. The current, live values stay in place everywhere until that happens. Every change is recorded in the deal\'s Edit Change Summary.';
   const submitBtn = document.getElementById('edit-request-modal-submit');
   if(submitBtn) submitBtn.textContent = currentStatus === STATUS_APPROVED ? 'Save changes' : 'Submit for Level 3 approval';
@@ -9056,7 +9080,7 @@ function openEditRequestModal(dealId){
       '<option value="'+escapeHtml(m)+'"'+(m===matchingVal?' selected':'')+'>'+escapeHtml(MATCHING_DISPLAY_NAMES[m]||m)+'</option>'
     ).join('');
     const label = group.length > 1 ? 'Product ' + (idx+1) : 'Product';
-    const regTechHtml = editRequestRegistryTechHtml(idx, v[MC.registry]||'', v[MC.tech]||'', v[MC.rowUid]||'');
+    const regTechHtml = editRequestRegistryTechHtml(idx, v[MC.registry]||'', v[MC.tech]||'', v[MC.rowUid]||'', isCC);
     const volumeHtml = editRequestVolumeHtml(idx, v[MC.volume]||'', v[MC.rowUid]||'', isCC);
     // data-uid carries this row's permanent Row Uid — requestBdMatchChange
     // uses it to confirm, at submit time, that it's still writing this
@@ -9109,9 +9133,21 @@ function editRequestVolumeChanged(){
   return Array.from(fields.querySelectorAll('.edit-request-volume[data-orig]'))
     .some(el => el.value.trim() !== (el.getAttribute('data-orig') || '').trim());
 }
-function editRequestSubmitLabel(){
-  return (editRequestModalStatus === STATUS_APPROVED && !editRequestVolumeChanged()) ? 'Save changes' : 'Submit for Level 3 approval';
+// Same idea for Registry — any Registry change always goes to Level 3.
+function editRequestRegistryChanged(){
+  const fields = document.getElementById('edit-request-modal-fields');
+  if(!fields) return false;
+  return Array.from(fields.querySelectorAll('.edit-request-registry[data-orig]'))
+    .some(el => (el.value || '').trim() !== (el.getAttribute('data-orig') || '').trim());
 }
+function editRequestSubmitLabel(){
+  return (editRequestModalStatus === STATUS_APPROVED && !editRequestVolumeChanged() && !editRequestRegistryChanged()) ? 'Save changes' : 'Submit for Level 3 approval';
+}
+document.addEventListener('change', (e)=>{
+  if(!e.target.classList || !e.target.classList.contains('edit-request-registry')) return;
+  const btn = document.getElementById('edit-request-modal-submit');
+  if(btn && !btn.disabled) btn.textContent = editRequestSubmitLabel();
+});
 document.addEventListener('input', (e)=>{
   if(!e.target.classList || !e.target.classList.contains('edit-request-volume')) return;
   const btn = document.getElementById('edit-request-modal-submit');
