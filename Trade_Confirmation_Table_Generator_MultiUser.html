@@ -14744,6 +14744,43 @@ async function onNotifPanelClick(e){
       if(wrap) wrap.classList.remove('field-missing');
     }
   });
+  // BNM Rate only applies to an MY-entity deal priced in a non-MYR
+  // currency (it's the rate used to convert into MYR):
+  //   - MY entity + MYR currency → no BNM Rate (hidden, saved as N/A)
+  //   - SG entity → never a BNM Rate, and MYR isn't offered as a currency
+  //     at all (an SG deal is never in MYR).
+  function assetBnmApplies(){
+    return val('asset-h-entity') !== 'SG' && val('asset-h-currency') !== 'MYR';
+  }
+  function syncAssetBnmCurrencyUi(){
+    const isSG = val('asset-h-entity') === 'SG';
+    const curEl = document.getElementById('asset-h-currency');
+    if(curEl){
+      const prev = curEl.value;
+      const opts = ASSET_CURRENCY_OPTIONS.filter(c => !(isSG && c === 'MYR'));
+      const have = Array.from(curEl.options).map(o => o.value);
+      if(have.join('|') !== opts.join('|')){
+        curEl.innerHTML = opts.map(c => '<option value="'+escapeHtml(c)+'">'+escapeHtml(c)+'</option>').join('');
+        curEl.value = opts.indexOf(prev) !== -1 ? prev : opts[0];
+      }
+    }
+    const wrap = document.getElementById('asset-h-bnm-rate,asset-h-bnm-standard-toggle-wrap');
+    if(wrap){
+      const applies = assetBnmApplies();
+      wrap.style.display = applies ? '' : 'none';
+      if(!applies){
+        // Reset to the default (Standard ticked, no details) so nothing
+        // stale is saved or required while it's hidden.
+        const t = document.getElementById('asset-h-bnm-standard-toggle');
+        if(t && !t.checked){ t.checked = true; t.dispatchEvent(new Event('change')); }
+        wrap.classList.remove('field-missing');
+      }
+    }
+  }
+  window.assetSyncBnmCurrencyUi = syncAssetBnmCurrencyUi;
+  document.addEventListener('change', (e)=>{
+    if(e.target && (e.target.id === 'asset-h-entity' || e.target.id === 'asset-h-currency')) syncAssetBnmCurrencyUi();
+  });
   // "Same as ..." copy field — used for Invoicing Address (copies Address)
   // and Account Department E-Mail (copies E-Mail). Ticked: the field
   // becomes readonly and always mirrors the source field's current value
@@ -14934,6 +14971,7 @@ async function onNotifPanelClick(e){
     initSectionLock('asset-company');
     initSectionLock('asset-agreement');
     syncAssetBrokerUi();
+    syncAssetBnmCurrencyUi();
   }
 
   function syncSegmentedUi(){
@@ -15072,6 +15110,9 @@ async function onNotifPanelClick(e){
     // load, reset), so a locked section stays locked across those changes.
     initLocksIn(body);
     initSectionLock('asset-pricing');
+    // Currency was just rebuilt with every option — drop MYR again for an
+    // SG entity and re-check whether BNM Rate applies.
+    syncAssetBnmCurrencyUi();
   }
   // ---- Self Manage per-selection-year service fee ----
   function isSmPerYearOn(){
@@ -15421,13 +15462,17 @@ async function onNotifPanelClick(e){
     // BNM Rate details are only required when "BNM Rate (Standard)" is
     // NOT ticked — see bnmRateFieldHtml().
     const bnmToggle = document.getElementById('asset-h-bnm-standard-toggle');
-    if(bnmToggle && !bnmToggle.checked && !val('asset-h-bnm-rate')){
+    if(assetBnmApplies() && bnmToggle && !bnmToggle.checked && !val('asset-h-bnm-rate')){
       missing.push({section:'Agreement', label:'BNM Rate (details required when not Standard)'});
       markMissing('asset-h-bnm-rate,asset-h-bnm-standard-toggle');
     }
     // Currency lives under Pricing & Fees now (shared across the whole
     // deal, not tied to any one year/fee row), so it's validated and
     // labelled under that section instead of Company/Agreement.
+    if(val('asset-h-entity') === 'SG' && val('asset-h-currency') === 'MYR'){
+      missing.push({section:'Pricing & Fees', label:'Currency (MYR is not allowed for an SG entity)'});
+      markMissing('asset-h-currency');
+    }
     if(!val('asset-h-currency')){
       missing.push({section:'Pricing & Fees', label:'Currency'});
       markMissing('asset-h-currency');
@@ -15559,7 +15604,9 @@ async function onNotifPanelClick(e){
     }
     // BNM Rate (Standard): Y when ticked; N plus the typed-in details when not.
     const bnmToggleForRows = document.getElementById('asset-h-bnm-standard-toggle');
-    if(bnmToggleForRows && bnmToggleForRows.checked){
+    if(!assetBnmApplies()){
+      // Not applicable (MY entity in MYR, or any SG entity) — no BNM rows.
+    } else if(bnmToggleForRows && bnmToggleForRows.checked){
       rows.push(['BNM Rate (Standard)', 'Y']);
     } else {
       rows.push(['BNM Rate (Standard)', 'N']);
@@ -16000,6 +16047,8 @@ function applyAssetDraftData(data){
   if(resEl && typeof resOld === 'boolean') resEl.value = resOld ? 'Y' : 'N';
   const bnmToggleEl = document.getElementById('asset-h-bnm-standard-toggle');
   if(bnmToggleEl) bnmToggleEl.dispatchEvent(new Event('change'));
+  // Entity/Currency decide whether BNM Rate applies and whether MYR is offered.
+  if(window.assetSyncBnmCurrencyUi) window.assetSyncBnmCurrencyUi();
   // Re-sync Hybrid's shown/hidden Profit Sharing terms block, same reason.
   const hybridToggleEl = document.getElementById('asset-op-hybrid-toggle');
   if(hybridToggleEl) hybridToggleEl.dispatchEvent(new Event('change'));
@@ -16239,7 +16288,8 @@ async function buildAssetRowsFromForm(assetId, nowIso){
     row[mc.brokerFeeCurrency] = brokerFeeTypeForSave ? v('asset-h-broker-fee-currency') : '';
     row[mc.brokerFeePrice] = brokerFeeTypeForSave ? v('asset-h-broker-fee-price') : '';
     const bnmStdToggle = document.getElementById('asset-h-bnm-standard-toggle');
-    row[mc.bnmRate] = (bnmStdToggle && bnmStdToggle.checked) ? 'Y' : v('asset-h-bnm-rate');
+    const bnmApplies = v('asset-h-entity') !== 'SG' && v('asset-h-currency') !== 'MYR';
+    row[mc.bnmRate] = !bnmApplies ? 'N/A' : ((bnmStdToggle && bnmStdToggle.checked) ? 'Y' : v('asset-h-bnm-rate'));
     row[mc.currency] = v('asset-h-currency');
     row[mc.specialRemarks] = v('asset-h-remarks') || 'N/A';
     // Filled in by the Level 3 approver (approveAssetDeal).
@@ -16845,8 +16895,11 @@ function applyAssetRowsToForm(group){
     }
   }
   const bnm = get('bnmRate');
-  allValues['asset-h-bnm-standard-toggle'] = bnm === 'Y';
-  allValues['asset-h-bnm-rate'] = bnm === 'Y' ? '' : bnm;
+  // 'N/A' (not applicable — MY/MYR or SG) or blank restores as the default
+  // Standard tick, so switching currency later doesn't demand details.
+  const bnmStd = bnm === 'Y' || bnm === 'N/A' || !bnm;
+  allValues['asset-h-bnm-standard-toggle'] = bnmStd;
+  allValues['asset-h-bnm-rate'] = bnmStd ? '' : bnm;
   rows.forEach((r, idx)=>{
     const rv = r.values[0], n = idx + 1;
     const g = (k) => (mc[k] === undefined || rv[mc[k]] === undefined || rv[mc[k]] === null) ? '' : String(rv[mc[k]]);
