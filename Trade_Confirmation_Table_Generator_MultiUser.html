@@ -14772,7 +14772,7 @@ async function onNotifPanelClick(e){
         // Reset to the default (Standard ticked, no details) so nothing
         // stale is saved or required while it's hidden.
         const t = document.getElementById('asset-h-bnm-standard-toggle');
-        if(t && !t.checked){ t.checked = true; t.dispatchEvent(new Event('change')); }
+        if(t && !t.checked){ t.checked = true; t.dispatchEvent(new Event('change', {bubbles:true})); }
         wrap.classList.remove('field-missing');
       }
     }
@@ -14955,7 +14955,6 @@ async function onNotifPanelClick(e){
       '<div class="asset-sm-only">'+lockableField('Service Type', selectInput('asset-h-service-type', ASSET_SM_SERVICE_TYPE_OPTIONS, ASSET_SM_SERVICE_TYPE_OPTIONS[0]), 'asset-h-service-type')+'</div>' +
       '<div class="asset-sm-only">'+lockableField('Frequency of Service', selectInput('asset-h-service-frequency', ASSET_SM_FREQUENCY_OPTIONS, ASSET_SM_FREQUENCY_OPTIONS[0]), 'asset-h-service-frequency')+'</div>' +
       brokerFieldHtml() +
-      bnmRateFieldHtml() +
       '<div style="grid-column:1 / -1;">'+
         lockableField('Special Remarks', '<textarea id="asset-h-remarks" placeholder="N/A"></textarea>', 'asset-h-remarks')+
       '</div>';
@@ -14993,9 +14992,16 @@ async function onNotifPanelClick(e){
     // Rendered first so Currency sits literally right below the "Pricing &
     // Fees" title, ahead of any of the type-specific content below —
     // instead of appended after it, which is how this used to work.
+    // BNM Rate sits right under Currency (it only applies to a non-MYR
+    // currency on an MY entity — see syncAssetBnmCurrencyUi). Its tick/text
+    // are captured here too so an agreement-type switch doesn't reset them.
+    const prevBnmToggleEl = document.getElementById('asset-h-bnm-standard-toggle');
+    const prevBnmStandard = prevBnmToggleEl ? prevBnmToggleEl.checked : true;
+    const prevBnmRate = val('asset-h-bnm-rate');
     const currencyHtml =
       '<div class="grid" style="margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border);">'+
         lockableField('Currency', selectInput('asset-h-currency', ASSET_CURRENCY_OPTIONS, prevCurrency), 'asset-h-currency')+
+        bnmRateFieldHtml()+
       '</div>';
     if(agreementType === 'Outright Purchase'){
       // Hybrid combines Outright Purchase with Profit Sharing on the same
@@ -15110,6 +15116,14 @@ async function onNotifPanelClick(e){
     // load, reset), so a locked section stays locked across those changes.
     initLocksIn(body);
     initSectionLock('asset-pricing');
+    // Put BNM Rate's tick/details back as they were before the rebuild.
+    const newBnmToggle = document.getElementById('asset-h-bnm-standard-toggle');
+    if(newBnmToggle){
+      newBnmToggle.checked = prevBnmStandard;
+      newBnmToggle.dispatchEvent(new Event('change', {bubbles:true}));
+      const rateEl = document.getElementById('asset-h-bnm-rate');
+      if(rateEl && !prevBnmStandard) rateEl.value = prevBnmRate;
+    }
     // Currency was just rebuilt with every option — drop MYR again for an
     // SG entity and re-check whether BNM Rate applies.
     syncAssetBnmCurrencyUi();
@@ -15463,7 +15477,7 @@ async function onNotifPanelClick(e){
     // NOT ticked — see bnmRateFieldHtml().
     const bnmToggle = document.getElementById('asset-h-bnm-standard-toggle');
     if(assetBnmApplies() && bnmToggle && !bnmToggle.checked && !val('asset-h-bnm-rate')){
-      missing.push({section:'Agreement', label:'BNM Rate (details required when not Standard)'});
+      missing.push({section:'Pricing & Fees', label:'BNM Rate (details required when not Standard)'});
       markMissing('asset-h-bnm-rate,asset-h-bnm-standard-toggle');
     }
     // Currency lives under Pricing & Fees now (shared across the whole
@@ -16046,7 +16060,7 @@ function applyAssetDraftData(data){
   const resOld = (data.allValues || {})['asset-h-residential'];
   if(resEl && typeof resOld === 'boolean') resEl.value = resOld ? 'Y' : 'N';
   const bnmToggleEl = document.getElementById('asset-h-bnm-standard-toggle');
-  if(bnmToggleEl) bnmToggleEl.dispatchEvent(new Event('change'));
+  if(bnmToggleEl) bnmToggleEl.dispatchEvent(new Event('change', {bubbles:true}));
   // Entity/Currency decide whether BNM Rate applies and whether MYR is offered.
   if(window.assetSyncBnmCurrencyUi) window.assetSyncBnmCurrencyUi();
   // Re-sync Hybrid's shown/hidden Profit Sharing terms block, same reason.
