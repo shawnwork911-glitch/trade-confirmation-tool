@@ -17420,18 +17420,22 @@ function assetApprovalTrail(v, mc){
   if(v[mc.approvedBy3]) parts.push('<span title="'+escapeHtml(v[mc.approvedBy3])+'">L3 ✓</span>');
   return parts.join(' · ');
 }
-function assetHistoryTableHeaderHtml(showOwner){
+// Asset-only lists (no RECs/CC rows above) leave out the Agreement Date
+// column so the table fits without scrolling sideways. When Asset rows are
+// appended under a RECs/CC table, that table already has the column, so
+// the Asset rows keep their cell to stay aligned (showDate = true).
+function assetHistoryTableHeaderHtml(showOwner, showDate){
   return '<table><tr>' + (showOwner ? '<th style="text-align:left;padding:6px;">BD in-charge</th>' : '') +
     '<th style="text-align:left;padding:6px;">Deal ID</th>' +
-    '<th style="text-align:left;padding:6px;">Agreement Date</th>' +
+    (showDate ? '<th style="text-align:left;padding:6px;">Agreement Date</th>' : '') +
     '<th style="text-align:left;padding:6px;">Counterparty</th>' +
     '<th style="text-align:left;padding:6px;">Products</th>' +
     '<th style="text-align:left;padding:6px;">Delivery Start Date</th>' +
     '<th style="text-align:left;padding:6px;">Status</th>' +
     '<th style="padding:6px;"></th></tr></table>';
 }
-function assetHistoryRowsHtml(groups, scope, showOwner){
-  const colCount = showOwner ? 8 : 7;
+function assetHistoryRowsHtml(groups, scope, showOwner, showDate){
+  const colCount = (showOwner ? 8 : 7) - (showDate ? 0 : 1);
   const me = (currentAccount && currentAccount.username || '').toLowerCase();
   let html = '';
   groups.forEach(g=>{
@@ -17443,7 +17447,7 @@ function assetHistoryRowsHtml(groups, scope, showOwner){
       html += '<tr class="confirmation-row-restricted" style="border-top:1px solid var(--border);">' +
         (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[mc.bdInCharge]||'')+'</td>' : '') +
         '<td style="padding:6px;">'+idCell+'</td>' +
-        '<td style="padding:6px;">'+escapeHtml(formatStoredDate(v[mc.agreementStart]))+'</td>' +
+        (showDate ? '<td style="padding:6px;">'+escapeHtml(formatStoredDate(v[mc.agreementStart]))+'</td>' : '') +
         '<td style="padding:6px;">'+escapeHtml(assetCounterparty(g))+'</td>' +
         '<td style="padding:6px;">—</td>' +
         '<td style="padding:6px;">'+escapeHtml(startDates || '—')+'</td>' +
@@ -17468,7 +17472,7 @@ function assetHistoryRowsHtml(groups, scope, showOwner){
     html += '<tr style="border-top:1px solid var(--border);">' +
       (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[mc.bdInCharge]||'')+'</td>' : '') +
       '<td style="padding:6px;">'+idCell+'</td>' +
-      '<td style="padding:6px;">'+escapeHtml(formatStoredDate(v[mc.agreementStart]))+'</td>' +
+      (showDate ? '<td style="padding:6px;">'+escapeHtml(formatStoredDate(v[mc.agreementStart]))+'</td>' : '') +
       '<td style="padding:6px;">'+escapeHtml(assetCounterparty(g))+'<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">'+escapeHtml(g.type)+'</div></td>' +
       '<td style="padding:6px;">'+g.rows.length+'</td>' +
       '<td style="padding:6px;">'+escapeHtml(startDates || '—')+'</td>' +
@@ -17518,12 +17522,13 @@ function appendAssetRowsToConfirmationTable(scope, listElId, countElId){
   const showOwner = scope !== 'mine';
   if(assets.length){
     let table = el.querySelector(':scope > table');
+    const showDate = !!table; // RECs/CC table already there → keep its column
     if(!table){
-      el.innerHTML = assetHistoryTableHeaderHtml(showOwner);
+      el.innerHTML = assetHistoryTableHeaderHtml(showOwner, false);
       table = el.querySelector(':scope > table');
     }
     const tbody = table.tBodies[0] || table;
-    tbody.insertAdjacentHTML('beforeend', assetHistoryRowsHtml(assets, scope, showOwner));
+    tbody.insertAdjacentHTML('beforeend', assetHistoryRowsHtml(assets, scope, showOwner, showDate));
   }
   const countEl = countElId ? document.getElementById(countElId) : null;
   if(countEl){
