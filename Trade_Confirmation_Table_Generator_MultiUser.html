@@ -11105,6 +11105,33 @@ document.addEventListener('input', (e)=>{
   }
 });
 
+// Asset tab → Device "Coordinate" (latitude, longitude): each number is
+// capped at 6 decimal places. Extra digits typed or pasted are dropped.
+function limitCoordDecimals(s){
+  return String(s == null ? '' : s).replace(/(\.\d{6})\d+/g, '$1');
+}
+// Block the keystroke itself: a 7th decimal digit (or a letter/symbol that
+// isn't part of a coordinate) simply doesn't go in.
+document.addEventListener('beforeinput', (e)=>{
+  const t = e.target;
+  if(!(t && t.classList && t.classList.contains('coord-6dp'))) return;
+  if(e.inputType !== 'insertText' || e.data == null) return;
+  if(/[^0-9.,\-\s]/.test(e.data)){ e.preventDefault(); return; }
+  const s = t.selectionStart, en = t.selectionEnd;
+  const next = t.value.slice(0, s) + e.data + t.value.slice(en);
+  if(/\.\d{7,}/.test(next)) e.preventDefault();
+});
+document.addEventListener('input', (e)=>{
+  if(e.target && e.target.classList && e.target.classList.contains('coord-6dp')){
+    const cleaned = limitCoordDecimals(e.target.value.replace(/[^0-9.,\-\s]/g, ''));
+    if(cleaned !== e.target.value){
+      const pos = e.target.selectionStart, diff = e.target.value.length - cleaned.length;
+      e.target.value = cleaned;
+      try{ e.target.setSelectionRange(Math.max(0,pos-diff), Math.max(0,pos-diff)); }catch(_){}
+    }
+  }
+});
+
 // Any "Price / REC" box — broker fees' shared field (label switches to
 // "Fixed price" when that's picked — see updateBrokerFeeUi) and each
 // product's own Price / REC field — accepts numbers only. Digits and at
@@ -15371,7 +15398,7 @@ async function onNotifPanelClick(e){
           lockableField('Device Owner Name', textInput(id('owner'),'Device owner name'), id('owner'))+
           lockableField('Scheme Type', selectInput(id('scheme-type'), ASSET_SCHEME_TYPES, ASSET_SCHEME_TYPES[0]), id('scheme-type'))+
           lockableField('Capacity (MWac)', '<input type="text" inputmode="decimal" class="numeric-decimal-only" id="'+id('capacity')+'" placeholder="e.g. 1.5"/>', id('capacity'))+
-          lockableField('Coordinate', textInput(id('coordinate'),'e.g. 3.073812, 101.518346'), id('coordinate'))+
+          lockableField('Coordinate', textInput(id('coordinate'),'e.g. 3.073812, 101.518346').replace('<input ','<input class="coord-6dp" inputmode="decimal" title="Latitude, Longitude — max 6 decimal places each" ')+'<div style="font-size:11px;opacity:.7;margin-top:2px;">Latitude, Longitude — max 6 decimal places each</div>', id('coordinate'))+
           '<div style="grid-column:1 / -1;">'+
             lockableField('Asset Address Line', textInput(id('asset-address'),'Street / lot address'), id('asset-address'))+
           '</div>'+
@@ -15699,7 +15726,7 @@ async function onNotifPanelClick(e){
         val('asset-p'+i+'-owner'),
         val('asset-p'+i+'-scheme-type'),
         val('asset-p'+i+'-capacity'),
-        val('asset-p'+i+'-coordinate'),
+        limitCoordDecimals(val('asset-p'+i+'-coordinate')),
         val('asset-p'+i+'-asset-address'),
         val('asset-p'+i+'-asset-city'),
         formatDisplayDate(val('asset-p'+i+'-rec-start')),
@@ -16347,7 +16374,7 @@ async function buildAssetRowsFromForm(assetId, nowIso){
     row[mc.cod] = v('asset-p'+i+'-cod');
     row[mc.schemeType] = v('asset-p'+i+'-scheme-type');
     row[mc.capacityMwac] = v('asset-p'+i+'-capacity');
-    row[mc.coordinate] = v('asset-p'+i+'-coordinate');
+    row[mc.coordinate] = limitCoordDecimals(v('asset-p'+i+'-coordinate'));
     row[mc.assetAddressLine] = v('asset-p'+i+'-asset-address');
     row[mc.assetCityState] = v('asset-p'+i+'-asset-city');
     row[mc.recIssuanceEnd] = v('asset-p'+i+'-rec-end');
@@ -16939,7 +16966,7 @@ function applyAssetRowsToForm(group){
     allValues['asset-p'+n+'-owner'] = g('deviceOwnerName');
     allValues['asset-p'+n+'-scheme-type'] = g('schemeType');
     allValues['asset-p'+n+'-capacity'] = g('capacityMwac');
-    allValues['asset-p'+n+'-coordinate'] = g('coordinate');
+    allValues['asset-p'+n+'-coordinate'] = limitCoordDecimals(g('coordinate'));
     allValues['asset-p'+n+'-asset-address'] = g('assetAddressLine');
     allValues['asset-p'+n+'-asset-city'] = g('assetCityState');
     allValues['asset-p'+n+'-rec-start'] = toDateInputValue(g('recIssuanceStart'));
