@@ -145,14 +145,17 @@
      up in tidy rows instead of auto-fitting an uneven number per row. */
   .grid.asset-grid-3{grid-template-columns:repeat(3,minmax(0,1fr));align-items:start;}
   .grid.asset-grid-4{grid-template-columns:repeat(4,minmax(0,1fr));align-items:start;}
-  .asset-under-email{grid-column:3;}
-  .asset-row-start{grid-column-start:1;}
+  .asset-full-row{grid-column:1 / -1;}
+  /* Self Manage: Min Commitment Volume sits at the far right of the
+     Service Type / Frequency of Service row. */
+  .asset-mcv-right{grid-column:4;}
   @media (max-width:900px){
     .grid.asset-grid-4{grid-template-columns:repeat(2,minmax(0,1fr));}
+    .asset-mcv-right{grid-column:auto;}
   }
   @media (max-width:700px){
     .grid.asset-grid-3,.grid.asset-grid-4{grid-template-columns:minmax(0,1fr);}
-    .asset-under-email,.asset-row-start{grid-column:auto;}
+    .asset-mcv-right{grid-column:auto;}
   }
   label{
     font-size:12px;
@@ -15007,6 +15010,8 @@ async function onNotifPanelClick(e){
     document.querySelectorAll('#asset-agreement-fields .asset-sm-only').forEach(el=>{
       el.style.display = (agreementType === 'Self Manage') ? '' : 'none';
     });
+    const mcvCell = document.getElementById('asset-mcv-cell');
+    if(mcvCell) mcvCell.classList.toggle('asset-mcv-right', agreementType === 'Self Manage');
   }
 
   function buildHeaderFields(){
@@ -15025,7 +15030,7 @@ async function onNotifPanelClick(e){
       // placed directly under Email. Stored in a "Tagged BD In-charge"
       // column found by HEADER NAME at the end of each of the 3 Asset
       // tables (see buildAssetRowsFromForm).
-      '<div class="asset-under-email">'+lockableField('Tag BD in-charge (optional — view only)', tagBdChecklistHtml('asset-h-tag-bd','','asset-h-bd'), 'asset-h-tag-bd')+'</div>' +
+      '<div class="asset-full-row">'+lockableField('Tag BD in-charge (optional — view only)', tagBdChecklistHtml('asset-h-tag-bd','','asset-h-bd'), 'asset-h-tag-bd')+'</div>' +
       '<div class="asset-l3-only-field" style="display:none;">'+lockableField('Finance Email', textInput('asset-h-finance-email','finance@company.com'), 'asset-h-finance-email')+'</div>' +
       '<div class="asset-l3-only-field" style="display:none;">'+lockableField('Bank Name', textInput('asset-h-bank-name','Bank name'), 'asset-h-bank-name')+'</div>' +
       '<div class="asset-l3-only-field" style="display:none;">'+lockableField('Bank Account Number', textInput('asset-h-bank-account-number','Bank account number'), 'asset-h-bank-account-number')+'</div>' +
@@ -15046,9 +15051,9 @@ async function onNotifPanelClick(e){
       lockableField('Device status', selectInput('asset-h-device-status', DEVICE_STATUS_OPTIONS, DEVICE_STATUS_OPTIONS[0]), 'asset-h-device-status') +
       residentialFieldHtml() +
       lockableField('Payment Term', textInput('asset-h-payment-term','e.g. 60 Days'), 'asset-h-payment-term') +
-      '<div class="asset-row-start">'+minCommitmentFieldHtml()+'</div>' +
       '<div class="asset-sm-only">'+lockableField('Service Type', selectInput('asset-h-service-type', ASSET_SM_SERVICE_TYPE_OPTIONS, ASSET_SM_SERVICE_TYPE_OPTIONS[0]), 'asset-h-service-type')+'</div>' +
       '<div class="asset-sm-only">'+lockableField('Frequency of Service', selectInput('asset-h-service-frequency', ASSET_SM_FREQUENCY_OPTIONS, ASSET_SM_FREQUENCY_OPTIONS[0]), 'asset-h-service-frequency')+'</div>' +
+      '<div id="asset-mcv-cell">'+minCommitmentFieldHtml()+'</div>' +
       brokerFieldHtml() +
       '<div style="grid-column:1 / -1;">'+
         lockableField('Special Remarks', '<textarea id="asset-h-remarks" placeholder="N/A"></textarea>', 'asset-h-remarks')+
