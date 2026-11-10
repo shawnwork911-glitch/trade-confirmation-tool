@@ -141,6 +141,19 @@
     grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
     gap:12px 16px;
   }
+  /* Asset tab: fixed column layouts so the Company / Agreement fields line
+     up in tidy rows instead of auto-fitting an uneven number per row. */
+  .grid.asset-grid-3{grid-template-columns:repeat(3,minmax(0,1fr));align-items:start;}
+  .grid.asset-grid-4{grid-template-columns:repeat(4,minmax(0,1fr));align-items:start;}
+  .asset-under-email{grid-column:3;}
+  .asset-row-start{grid-column-start:1;}
+  @media (max-width:900px){
+    .grid.asset-grid-4{grid-template-columns:repeat(2,minmax(0,1fr));}
+  }
+  @media (max-width:700px){
+    .grid.asset-grid-3,.grid.asset-grid-4{grid-template-columns:minmax(0,1fr);}
+    .asset-under-email,.asset-row-start{grid-column:auto;}
+  }
   label{
     font-size:12px;
     color:var(--text-secondary);
@@ -1168,7 +1181,7 @@ html.desk-nav-hidden #main-tabs{transform:translateX(-100%);visibility:hidden;}
       <button type="button" class="section-lock" data-section="asset-company" title="Lock this whole section">🔓 Lock section</button>
     </div>
     <p id="asset-company-lock-note">Click the 🔓 next to any field to lock just that field, or use "Lock section" above to lock every field in Company at once. Locked fields stay filled in and protected the next time you open this file, even when you change the number of devices. While a section is locked, its individual field locks are held in place — unlock the section to edit again.</p>
-    <div id="asset-company-fields" class="grid"></div>
+    <div id="asset-company-fields" class="grid asset-grid-3"></div>
   </div>
 
   <div class="card">
@@ -1187,7 +1200,7 @@ html.desk-nav-hidden #main-tabs{transform:translateX(-100%);visibility:hidden;}
       <button type="button" class="section-lock" data-section="asset-agreement" title="Lock this whole section">🔓 Lock section</button>
     </div>
     <p id="asset-agreement-lock-note">Click the 🔓 next to any field to lock just that field, or use "Lock section" above to lock every field in Agreement at once. Locked fields stay filled in and protected the next time you open this file, even when you change the number of devices. While a section is locked, its individual field locks are held in place — unlock the section to edit again.</p>
-    <div id="asset-agreement-fields" class="grid"></div>
+    <div id="asset-agreement-fields" class="grid asset-grid-4"></div>
   </div>
 
   <div class="card" id="asset-pricing-card">
@@ -14961,7 +14974,29 @@ async function onNotifPanelClick(e){
   });
 
   const DEVICE_STATUS_OPTIONS = ["New","Renew","Transfer"];
-  const ASSET_REGISTRY_OPTIONS = ["I-REC (MY)","I-REC (SG)","TIGR (MY)","TIGR (SG)"];
+  const ASSET_REGISTRY_OPTIONS = ["I-REC (MY)","I-REC (SG)"];
+  // Min Commitment Volume — optional. Tick box on top; ticked pops out the
+  // text box, unticked keeps it hidden/cleared and the value is "-".
+  // Reuses the .asset-fee-toggle change listener (show/hide + clear).
+  function minCommitmentFieldHtml(){
+    const amtId = 'asset-h-min-commitment-volume', toggleId = amtId+'-toggle';
+    return '<div id="'+amtId+','+toggleId+'-wrap">'+
+      '<div class="field-label-row">'+
+        '<label style="display:flex;align-items:center;gap:6px;margin:0;cursor:pointer;">'+
+          '<input type="checkbox" id="'+toggleId+'" class="asset-fee-toggle" data-amt-id="'+amtId+'" style="width:auto;margin:0;"/>Min Commitment Volume'+
+        '</label>'+
+        '<button type="button" class="field-lock" data-field="'+amtId+','+toggleId+'" title="Lock this field">🔓</button>'+
+      '</div>'+
+      '<input type="text" id="'+amtId+'" placeholder="e.g. 1,000 RECs" disabled style="width:100%;display:none;"/>'+
+    '</div>';
+  }
+  function minCommitmentOn(){
+    const t = document.getElementById('asset-h-min-commitment-volume-toggle');
+    return !!(t && t.checked);
+  }
+  function minCommitmentValue(){
+    return minCommitmentOn() ? val('asset-h-min-commitment-volume') : '-';
+  }
   const ASSET_DEVICE_COUNTRY_OPTIONS = ["MY","SG","VN","ID"];
   const ASSET_FUEL_OPTIONS = ["SLR","SHY","LHY","BGS"];
   // Self Manage only (hidden for the other agreement types — see
@@ -14979,10 +15014,6 @@ async function onNotifPanelClick(e){
       lockableField('BD in-charge', selectInput('asset-h-bd', BD_NAMES, BD_NAMES[0]), 'asset-h-bd') +
       lockableField('Entity', selectInput('asset-h-entity', ['MY','SG'], 'MY'), 'asset-h-entity') +
       lockableField('Agreement Company Name', textInput('asset-h-agreement-company-name','Company name as per agreement'), 'asset-h-agreement-company-name') +
-      // Tag BD in-charge (optional, view only) — same checklist as RECs/CC.
-      // Stored in a "Tagged BD In-charge" column found by HEADER NAME at the
-      // end of each of the 3 Asset tables (see buildAssetRowsFromForm).
-      '<div style="grid-column:1 / -1;">'+lockableField('Tag BD in-charge (optional — view only)', tagBdChecklistHtml('asset-h-tag-bd','','asset-h-bd'), 'asset-h-tag-bd')+'</div>' +
       // Registration Number, Finance Email, Bank Name, Bank Account Number,
       // Swift Code and Invoice Address are filled in by the Level 3 approver
       // (see the Level 3 approve modal) — hidden from the submitter's form.
@@ -14990,6 +15021,11 @@ async function onNotifPanelClick(e){
       lockableField('Contact Person', textInput('asset-h-contact-person','Contact person name'), 'asset-h-contact-person') +
       lockableField('Phone Number', textInput('asset-h-phone','e.g. +60 12-345 6789'), 'asset-h-phone') +
       lockableField('Email', textInput('asset-h-email','name@company.com'), 'asset-h-email') +
+      // Tag BD in-charge (optional, view only) — same checklist as RECs/CC,
+      // placed directly under Email. Stored in a "Tagged BD In-charge"
+      // column found by HEADER NAME at the end of each of the 3 Asset
+      // tables (see buildAssetRowsFromForm).
+      '<div class="asset-under-email">'+lockableField('Tag BD in-charge (optional — view only)', tagBdChecklistHtml('asset-h-tag-bd','','asset-h-bd'), 'asset-h-tag-bd')+'</div>' +
       '<div class="asset-l3-only-field" style="display:none;">'+lockableField('Finance Email', textInput('asset-h-finance-email','finance@company.com'), 'asset-h-finance-email')+'</div>' +
       '<div class="asset-l3-only-field" style="display:none;">'+lockableField('Bank Name', textInput('asset-h-bank-name','Bank name'), 'asset-h-bank-name')+'</div>' +
       '<div class="asset-l3-only-field" style="display:none;">'+lockableField('Bank Account Number', textInput('asset-h-bank-account-number','Bank account number'), 'asset-h-bank-account-number')+'</div>' +
@@ -15009,8 +15045,8 @@ async function onNotifPanelClick(e){
       lockableField('Fuel', selectInput('asset-h-fuel', ASSET_FUEL_OPTIONS, ASSET_FUEL_OPTIONS[0]), 'asset-h-fuel') +
       lockableField('Device status', selectInput('asset-h-device-status', DEVICE_STATUS_OPTIONS, DEVICE_STATUS_OPTIONS[0]), 'asset-h-device-status') +
       residentialFieldHtml() +
-      lockableField('Min Commitment Volume', textInput('asset-h-min-commitment-volume','e.g. 1,000 RECs'), 'asset-h-min-commitment-volume') +
       lockableField('Payment Term', textInput('asset-h-payment-term','e.g. 60 Days'), 'asset-h-payment-term') +
+      '<div class="asset-row-start">'+minCommitmentFieldHtml()+'</div>' +
       '<div class="asset-sm-only">'+lockableField('Service Type', selectInput('asset-h-service-type', ASSET_SM_SERVICE_TYPE_OPTIONS, ASSET_SM_SERVICE_TYPE_OPTIONS[0]), 'asset-h-service-type')+'</div>' +
       '<div class="asset-sm-only">'+lockableField('Frequency of Service', selectInput('asset-h-service-frequency', ASSET_SM_FREQUENCY_OPTIONS, ASSET_SM_FREQUENCY_OPTIONS[0]), 'asset-h-service-frequency')+'</div>' +
       brokerFieldHtml() +
@@ -15502,12 +15538,16 @@ async function onNotifPanelClick(e){
       ['asset-h-device-country','Device Country'],
       ['asset-h-fuel','Fuel'],
       ['asset-h-device-status','Device status'],
-      ['asset-h-min-commitment-volume','Min Commitment Volume'],
       ['asset-h-payment-term','Payment Term']
     ];
     agreementFields.forEach(([id,label])=>{
       if(!val(id)){ missing.push({section:'Agreement', label}); markMissing(id); }
     });
+    // Min Commitment Volume is optional — only required once ticked.
+    if(minCommitmentOn() && !val('asset-h-min-commitment-volume')){
+      missing.push({section:'Agreement', label:'Min Commitment Volume'});
+      markMissing('asset-h-min-commitment-volume,asset-h-min-commitment-volume-toggle');
+    }
     const companyFields = [
       ['asset-h-bd','BD in-charge'],
       ['asset-h-entity','Entity'],
@@ -15658,7 +15698,7 @@ async function onNotifPanelClick(e){
     rows.push(['Fuel', val('asset-h-fuel')]);
     rows.push(['Device status', val('asset-h-device-status')]);
     rows.push(['Residential', val('asset-h-residential') === 'Y' ? 'Yes' : 'No']);
-    rows.push(['Min Commitment Volume', val('asset-h-min-commitment-volume')]);
+    rows.push(['Min Commitment Volume', minCommitmentValue()]);
     const hybridToggleForType = document.getElementById('asset-op-hybrid-toggle');
     const isHybridForType = !!(agreementType === 'Outright Purchase' && hybridToggleForType && hybridToggleForType.checked);
     rows.push(['Agreement Type', agreementType + (isHybridForType ? ' (Hybrid — Profit Sharing)' : '')]);
@@ -15689,15 +15729,20 @@ async function onNotifPanelClick(e){
   }
   // Reads a one-time fee's amount for the generated table, same "only
   // ticked ones count" rule validateForm()/feeFieldHtml() use for the live
-  // form — an unticked fee shows blank rather than a leftover stale value.
+  // form — an unticked fee shows "-" rather than a blank or stale value.
   function feeAmtForRow(id){
     const toggle = document.getElementById(id+'-toggle');
-    return (toggle && toggle.checked) ? amountVal(id).text : '';
+    return (toggle && toggle.checked) ? (amountVal(id).text || '-') : '-';
   }
   // Tick-only Extra Charges Incurred: "Y" when ticked, blank otherwise.
+  // (Used as a true/false test by the Hybrid description — keep blank.)
   function feeTickForRow(id){
     const toggle = document.getElementById(id+'-toggle');
     return (toggle && toggle.checked) ? 'Y' : '';
+  }
+  // Same, for display in the generated table: "Y" when ticked, "-" if not.
+  function feeTickCell(id){
+    return feeTickForRow(id) || '-';
   }
   function buildPricingSectionData(){
     const out = [];
@@ -15737,9 +15782,9 @@ async function onNotifPanelClick(e){
         val('asset-ps-ratio-owner')+'% : '+val('asset-ps-ratio-saxon')+'%'
       ]]});
       out.push({heading:'Extra Charges Incurred', cols:['Device registration fee','RECs issuance fee','Redemption fee','Special Charge Remarks'], rows:[[
-        feeTickForRow('asset-ps-device-reg-fee'),
-        feeTickForRow('asset-ps-recs-issuance-fee'),
-        feeTickForRow('asset-ps-redemption-fee'),
+        feeTickCell('asset-ps-device-reg-fee'),
+        feeTickCell('asset-ps-recs-issuance-fee'),
+        feeTickCell('asset-ps-redemption-fee'),
         val('asset-ps-special-charge-remarks') || 'N/A'
       ]]});
     }
@@ -16099,10 +16144,33 @@ function applyAssetDraftData(data){
   // aren't options any more (the select would show blank). Map them to the
   // new "I-REC (MY)" style value using the restored Entity (MY/SG).
   const regEl = document.getElementById('asset-h-registry');
-  const oldReg = String((data.allValues || {})['asset-h-registry'] || '').trim().toUpperCase();
-  if(regEl && !regEl.value && (oldReg === 'IREC' || oldReg === 'TIGR')){
+  const rawReg = String((data.allValues || {})['asset-h-registry'] || '').trim();
+  const oldReg = rawReg.toUpperCase();
+  if(regEl && !regEl.value && rawReg){
     const ent = (document.getElementById('asset-h-entity') || {}).value === 'SG' ? 'SG' : 'MY';
-    regEl.value = (oldReg === 'IREC' ? 'I-REC' : 'TIGR') + ' (' + ent + ')';
+    if(oldReg === 'IREC'){
+      regEl.value = 'I-REC (' + ent + ')';
+    } else {
+      // TIGR (MY) / TIGR (SG) were removed from the list. Records saved
+      // with them keep their value as a one-off option so nothing is lost.
+      const legacy = oldReg === 'TIGR' ? 'TIGR (' + ent + ')' : rawReg;
+      const opt = document.createElement('option');
+      opt.value = legacy; opt.textContent = legacy;
+      regEl.appendChild(opt);
+      regEl.value = legacy;
+    }
+  }
+  // Min Commitment Volume became an optional tick box. Older drafts/records
+  // with no tick state: tick it when a real value was saved ("-" = none).
+  {
+    const av = data.allValues || {};
+    const mcvT = document.getElementById('asset-h-min-commitment-volume-toggle');
+    const mcvEl = document.getElementById('asset-h-min-commitment-volume');
+    const mcv = String(av['asset-h-min-commitment-volume'] || '').trim();
+    if(mcvT && mcvEl){
+      if(!('asset-h-min-commitment-volume-toggle' in av)) mcvT.checked = !!mcv && mcv !== '-';
+      if(mcv === '-') mcvEl.value = '';
+    }
   }
   if(window.assetSyncBrokerUi){
     // syncAssetBrokerUi clears hidden fields, so re-apply the saved broker
@@ -16403,7 +16471,11 @@ async function buildAssetRowsFromForm(assetId, nowIso){
     row[mc.residential] = v('asset-h-residential') === 'Y' ? 'Y' : 'N';
     row[mc.deviceCountry] = v('asset-h-device-country');
     row[mc.fuel] = v('asset-h-fuel');
-    row[mc.minCommitmentVolume] = v('asset-h-min-commitment-volume');
+    {
+      // Unticked Min Commitment Volume is saved as "-".
+      const mcvToggle = document.getElementById('asset-h-min-commitment-volume-toggle');
+      row[mc.minCommitmentVolume] = (mcvToggle && mcvToggle.checked) ? v('asset-h-min-commitment-volume') : '-';
+    }
     row[mc.deviceOwnerName] = v('asset-p'+i+'-owner');
     row[mc.recIssuanceStart] = v('asset-p'+i+'-rec-start');
     row[mc.cod] = v('asset-p'+i+'-cod');
