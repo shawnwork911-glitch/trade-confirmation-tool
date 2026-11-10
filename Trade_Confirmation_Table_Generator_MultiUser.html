@@ -3563,6 +3563,34 @@ async function notifySubmitterAsset(status, assetId, submitterEmail, reason){
     console.error('Asset outcome notification email failed', err);
   }
 }
+// Asset version of notifyTaggedBds — emails each newly tagged BD (view-only
+// access). Best-effort; never emails the person doing the tagging.
+async function notifyTaggedBdsAsset(assetId, description, names, taggerEmail, bdInChargeName){
+  const me = String(taggerEmail || '').trim().toLowerCase();
+  const seen = new Set();
+  const toEmails = [];
+  (names || []).forEach(n => {
+    const e = bdInChargeEmail(n);
+    if(!e){ console.warn('No email on file (BD_NAME_EMAILS) for tagged BD: ' + n + ' — skipping their tag notification for Asset ID ' + assetId); return; }
+    if(e === me || seen.has(e)) return;
+    seen.add(e); toEmails.push(e);
+  });
+  if(!toEmails.length) return;
+  const pending = isPendingAssetId(assetId);
+  const displayId = friendlyAssetId(assetId);
+  const label = pending ? 'a new asset agreement (Asset ID pending Level 1 approval)' : 'Asset ID <strong>' + escapeHtml(displayId) + '</strong>';
+  const bdBlock = bdInChargeName ? '<p><strong>BD in-charge:</strong> ' + escapeHtml(bdInChargeName) + '</p>' : '';
+  const descBlock = (description && String(description).trim()) ? '<p><strong>Remarks:</strong> ' + escapeHtml(description) + '</p>' : '';
+  const html = '<p>' + escapeHtml(taggerEmail || 'Someone') + ' has tagged you on ' + label + ' in the Trade Confirmation app.</p>' +
+    bdBlock + descBlock +
+    '<p>You have <strong>view-only</strong> access to this asset agreement. It also appears in your saved confirmations list.</p>' +
+    '<p><a href="' + assetDeepLink(assetId) + '">Open it in the Trade Confirmation app</a></p>';
+  try{
+    await sendMailGraph(toEmails, 'You\'ve been tagged — ' + (pending ? 'new asset agreement' : 'Asset ' + displayId), html);
+  }catch(err){
+    console.error('Asset tag BD notification email failed', err);
+  }
+}
 // Same "your ID is ready" email as notifyDealIdAssigned, sent the moment
 // Level 1 approval assigns the real 5-digit Asset ID.
 async function notifyAssetIdAssigned(assetId, submitterEmail){
@@ -3596,7 +3624,7 @@ function tryOpenAssetFromUrl(){
   if(!withHtml) return;
   // Same "creator or admin only" rule as tryOpenDealFromUrl.
   const myEmailLower = (currentAccount && currentAccount.username || '').toLowerCase();
-  if(!isAdmin && !isAssetOwnerEmail(myEmailLower, group)){ urlAssetOpened = true; return; }
+  if(!isAdmin && !isAssetOwnerEmail(myEmailLower, group) && !isAssetTaggedViewer(myEmailLower, group)){ urlAssetOpened = true; return; }
   openAssetViewModal(assetId, withHtml.values[0][group.mc.generatedHtml], withHtml.values[0][group.mc.agreementFileUrl]);
   urlAssetOpened = true;
 }
@@ -14951,6 +14979,10 @@ async function onNotifPanelClick(e){
       lockableField('BD in-charge', selectInput('asset-h-bd', BD_NAMES, BD_NAMES[0]), 'asset-h-bd') +
       lockableField('Entity', selectInput('asset-h-entity', ['MY','SG'], 'MY'), 'asset-h-entity') +
       lockableField('Agreement Company Name', textInput('asset-h-agreement-company-name','Company name as per agreement'), 'asset-h-agreement-company-name') +
+      // Tag BD in-charge (optional, view only) — same checklist as RECs/CC.
+      // Stored in a "Tagged BD In-charge" column found by HEADER NAME at the
+      // end of each of the 3 Asset tables (see buildAssetRowsFromForm).
+      '<div style="grid-column:1 / -1;">'+lockableField('Tag BD in-charge (optional — view only)', tagBdChecklistHtml('asset-h-tag-bd','','asset-h-bd'), 'asset-h-tag-bd')+'</div>' +
       // Registration Number, Finance Email, Bank Name, Bank Account Number,
       // Swift Code and Invoice Address are filled in by the Level 3 approver
       // (see the Level 3 approve modal) — hidden from the submitter's form.
@@ -16103,6 +16135,7 @@ function applyAssetDraftData(data){
   if(window.assetSyncSmYearUi) window.assetSyncSmYearUi();
   currentAssetDocId = data.assetId || null;
   currentAssetSubmittedDate = data.submittedDate || null;
+  syncAllTagBdChecklists(document.getElementById('tab-panel-asset'));
   suppressAssetAutosave = false;
 }
 /* ---- Loads all 3 split tables into assetLogRowsCache (keyed by agreement
@@ -16114,6 +16147,8 @@ async function loadAllAssetLogTables(){
   for(const type of ASSET_ALL_TYPES){
     try{
       next[type] = await getTableRows(ASSET_TABLE_BY_TYPE[type]);
+      // Header names are needed to find the "Tagged BD In-charge" column.
+      try{ await getTableColumnCount(ASSET_TABLE_BY_TYPE[type]); }catch(_){}
     }catch(err){
       console.error('Could not load ' + ASSET_TABLE_BY_TYPE[type], err);
       next[type] = [];
@@ -16440,8 +16475,17 @@ async function buildAssetRowsFromForm(assetId, nowIso){
     row[mc.approvedListItemId] = '';
     rowsToWrite.push(row);
   }
+  // Tag BD in-charge — written into the "Tagged BD In-charge" column (found
+  // by header name) on every device row. Rows are padded out to reach it.
+  const tagBdValue = normalizeTagBdValue(v('asset-h-tag-bd'), v('asset-h-bd'));
+  let tagIdx = tagBdColumnIndex(tableName);
+  if(tagIdx < 0 && tagBdValue){ await getTableColumnCount(tableName, true); tagIdx = tagBdColumnIndex(tableName); }
+  if(tagIdx < 0 && tagBdValue){
+    throw new Error('The ' + tableName + ' table in SharePoint is missing the "' + TAG_BD_COLUMN_NAME + '" column needed for "Tag BD in-charge". Ask an admin to add it at the end of the table, or untick the tag box.');
+  }
+  if(tagIdx >= 0) rowsToWrite.forEach(row => { while(row.length <= tagIdx) row.push(''); row[tagIdx] = tagBdValue; });
   const remarksEl = document.getElementById('asset-h-remarks');
-  return { agreementType, tableName, mc, colCount, rows: rowsToWrite, preview, remarks: remarksEl ? (remarksEl.value||'').trim() : '' };
+  return { agreementType, tableName, mc, colCount, rows: rowsToWrite, preview, remarks: remarksEl ? (remarksEl.value||'').trim() : '', tagBdValue };
 }
 async function saveAssetToLog(){
   if(!currentAccount) return;
@@ -16469,6 +16513,10 @@ async function saveAssetToLog(){
   // Same as RECs' initial submit — email (and bell-notify) whoever holds
   // Level 1 today that a new asset agreement is waiting on them.
   await notifyNextApproverAsset(STATUS_PENDING_1, assetId, built.remarks);
+  if(built.tagBdValue){
+    try{ await notifyTaggedBdsAsset(assetId, built.remarks, parseTagBdList(built.tagBdValue), currentAccount.username, built.rows[0][built.mc.bdInCharge]); }
+    catch(err){ console.error('Asset tag BD notification failed', err); }
+  }
 }
 
 /* ---- "Asset Approval Record List" SharePoint list ----
@@ -16715,6 +16763,22 @@ function isAssetOwnerEmail(emailLower, group){
   if(!group || !group.rows || !group.rows[0]) return false;
   const v = group.rows[0].values[0], mc = group.mc;
   return isDealOwnerEmail(emailLower, v[mc.bdInCharge], v[mc.submittedBy]);
+}
+// Tag BD in-charge on an Asset agreement ("; "-joined, or ''), read from the
+// "Tagged BD In-charge" column of whichever of the 3 tables it lives in.
+function assetGroupTaggedBd(g){
+  if(!g || !g.rows) return '';
+  const idx = tagBdColumnIndex(g.tableName || ASSET_TABLE_BY_TYPE[g.type]);
+  if(idx < 0) return '';
+  for(const r of g.rows){
+    const t = String(((r.values && r.values[0]) || [])[idx] ?? '').trim();
+    if(t) return t;
+  }
+  return '';
+}
+// View-only access, same rule as RECs (isTaggedBdViewer).
+function isAssetTaggedViewer(emailLower, g){
+  return isTaggedBdEmail(emailLower, assetGroupTaggedBd(g));
 }
 
 /* ---- Submitted-form snapshots ----
@@ -17015,6 +17079,9 @@ async function openAssetForResubmit(assetId){
   assetResubmitCtx = { assetId, type: group.type, status, comment: v[mc.rejectReason] || '', by: v[mc.rejectedBy] || '', partial: !snap };
   if(snap) applyAssetDraftData(Object.assign({}, snap, { assetId, submittedDate: v[mc.submittedDate] || null }));
   else applyAssetRowsToForm(group);
+  // The table is the source of truth for the tag (older snapshots predate it).
+  const tagEl = document.getElementById('asset-h-tag-bd');
+  if(tagEl){ tagEl.value = assetGroupTaggedBd(group); syncAllTagBdChecklists(document.getElementById('tab-panel-asset')); }
   currentAssetDocId = assetId;
   currentAssetSubmittedDate = v[mc.submittedDate] || null;
   const out = document.getElementById('asset-output-section');
@@ -17145,7 +17212,10 @@ async function resubmitAssetDeal(){
   // ---- Edit history (audit trail), kept in the first row's Description
   // column — appended to, never overwritten, newest entry at the bottom.
   const info = REVERT_STATUS_INFO[liveStatus];
-  const fieldDiff = buildAssetEditDiff(live, built, ctx.assetId, newId);
+  const oldTagBd = assetGroupTaggedBd(live);
+  const oldTagTxt = parseTagBdList(oldTagBd).join(', '), newTagTxt = parseTagBdList(built.tagBdValue).join(', ');
+  const tagDiffLine = oldTagTxt !== newTagTxt ? 'Tag BD in-charge: ' + (oldTagTxt || '(none)') + ' → ' + (newTagTxt || '(none)') : '';
+  const fieldDiff = [buildAssetEditDiff(live, built, ctx.assetId, newId), tagDiffLine].filter(Boolean).join('\n');
   const roundLabel = (info ? 'Edit after Admin Level ' + info.level + ' sent this back, on ' : 'Edit before Level 1 approval, on ') +
     auditTimestampLabel() + ' by ' + (currentAccount.username || 'unknown');
   const entry = roundLabel +
@@ -17172,6 +17242,11 @@ async function resubmitAssetDeal(){
   const changeSummary = entry;
   await endAssetResubmit();
   await notifyNextApproverAsset(target, newId, built.remarks, changeSummary);
+  const newlyTagged = newlyTaggedBdNames(oldTagBd, built.tagBdValue);
+  if(newlyTagged.length){
+    try{ await notifyTaggedBdsAsset(newId, built.remarks, newlyTagged, currentAccount.username, built.rows[0][nmc.bdInCharge]); }
+    catch(err){ console.error('Asset tag BD notification failed', err); }
+  }
 }
 
 /* ---- Asset Approve / Revert modals ---- */
@@ -17404,7 +17479,7 @@ function assetDeliveryStartDates(g){
 function getAssetGroupsForScope(scope){
   const all = buildAllAssetGroups();
   const me = (currentAccount && currentAccount.username || '').toLowerCase();
-  if(scope === 'mine') return all.filter(g => isAssetOwnerEmail(me, g));
+  if(scope === 'mine') return all.filter(g => isAssetOwnerEmail(me, g) || isAssetTaggedViewer(me, g));
   if(scope === 'queue') return isAdmin ? all.filter(g => PENDING_STATUSES.includes(assetGroupStatus(g))) : [];
   return all;
 }
@@ -17468,9 +17543,11 @@ function assetHistoryRowsHtml(groups, scope, showOwner, showDate){
   groups.forEach(g=>{
     const v = g.rows[0].values[0], mc = g.mc, status = assetGroupStatus(g);
     const isOwner = isAssetOwnerEmail(me, g);
+    const isTaggedViewer = !isOwner && !isAdmin && isAssetTaggedViewer(me, g);
+    const taggedBdName = parseTagBdList(assetGroupTaggedBd(g)).join(', ');
     const idCell = (isPendingAssetId(g.assetId) ? '-' : escapeHtml(g.assetId)) + ' <span class="confirm-type-badge type-asset" title="'+escapeHtml(g.type)+'">Asset</span>';
     const startDates = assetDeliveryStartDates(g).map(d => formatStoredDate(d.toISOString().slice(0,10))).join(', ');
-    if(scope === 'admin' && !isAdmin && !isOwner){
+    if(scope === 'admin' && !isAdmin && !isOwner && !isTaggedViewer){
       html += '<tr class="confirmation-row-restricted" style="border-top:1px solid var(--border);">' +
         (showOwner ? '<td style="padding:6px;">'+escapeHtml(v[mc.bdInCharge]||'')+'</td>' : '') +
         '<td style="padding:6px;">'+idCell+'</td>' +
@@ -17506,6 +17583,9 @@ function assetHistoryRowsHtml(groups, scope, showOwner, showDate){
       '<td style="padding:6px;">'+statusBadge(status)+
         (trail ? '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">'+trail+'</div>' : '')+
         (agreementUrl ? '<div style="font-size:11px;margin-top:2px;"><a href="'+escapeHtml(agreementUrl)+'" target="_blank" rel="noopener">📄 View agreement</a></div>' : '')+
+        (isTaggedViewer
+          ? '<div style="font-size:11px;color:#4a2d63;margin-top:2px;">👁 You\'re tagged on this agreement — view only</div>'
+          : (taggedBdName ? '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">Tagged: '+escapeHtml(taggedBdName)+' (view only)</div>' : ''))+
       '</td>' +
       '<td style="padding:6px;white-space:nowrap;">' +
         '<button type="button" class="secondary asset-history-view-btn" data-assetid="'+id+'" style="padding:4px 10px;font-size:12px;">View</button>' +
