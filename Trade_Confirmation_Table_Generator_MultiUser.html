@@ -14977,7 +14977,7 @@ async function onNotifPanelClick(e){
   });
 
   const DEVICE_STATUS_OPTIONS = ["New","Renew","Transfer"];
-  const ASSET_REGISTRY_OPTIONS = ["I-REC (MY)","I-REC (SG)"];
+  const ASSET_REGISTRY_OPTIONS = ["I-REC (MY)","I-REC (SG)","TIGR to IREC(MY)","TIGR to IREC(SG)"];
   // Min Commitment Volume — optional. Tick box on top; ticked pops out the
   // text box, unticked keeps it hidden/cleared and the value is "-".
   // Reuses the .asset-fee-toggle change listener (show/hide + clear).
@@ -15119,32 +15119,15 @@ async function onNotifPanelClick(e){
           '</label>'+
         '</div>'+
         '<div id="asset-op-hybrid-fields" style="display:'+(prevHybrid?'block':'none')+';margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border);">'+
-          '<p class="trade-title">Hybrid terms</p>'+
-          '<div class="grid">'+
-            lockableField('Hybrid Model', selectWithFullNamesHtml('asset-op-hybrid-model', ['','Price threshold','Volume split'], {'':'— Select —','Price threshold':'Fixed Price + Revenue Sharing (price threshold)','Volume split':'Revenue Sharing + Outright (volume split)'}, ''), 'asset-op-hybrid-model').replace('<div id=','<div style="grid-column:1 / -1;" id=')+
-          '</div>'+
-          '<div id="asset-op-hybrid-threshold-fields" class="grid" style="display:none;margin-top:12px;">'+
-            lockableField('Threshold price / REC', '<input type="text" inputmode="decimal" class="numeric-decimal-only" id="asset-op-hybrid-threshold-price" placeholder="e.g. 3.00"/>', 'asset-op-hybrid-threshold-price')+
-            lockableField('Fixed price to Device Owner / REC', '<input type="text" inputmode="decimal" class="numeric-decimal-only" id="asset-op-hybrid-fixed-price" placeholder="e.g. 2.40"/>', 'asset-op-hybrid-fixed-price')+
-            lockableField('Surplus share — Device Owner (%)', '<input type="text" inputmode="decimal" class="profit-ratio-owner-input" data-saxon-id="asset-op-hybrid-surplus-saxon" id="asset-op-hybrid-surplus-owner" placeholder="e.g. 60"/>', 'asset-op-hybrid-surplus-owner')+
-            lockableField('Surplus share — Saxon (%)', '<input type="text" id="asset-op-hybrid-surplus-saxon" placeholder="Auto-filled" readonly/>', 'asset-op-hybrid-surplus-saxon')+
-            '<p style="grid-column:1 / -1;font-size:12px;color:var(--text-secondary);margin:0;">At or below the threshold, the Device Owner gets the fixed price. Above it, the Device Owner gets the fixed price plus their share of the surplus above the threshold. Hybrid selections below don\'t need their own Price / RECs.</p>'+
-          '</div>'+
-          '<div id="asset-op-hybrid-volume-fields" class="grid" style="display:none;margin-top:12px;">'+
-            lockableField('Volume under Revenue Sharing (%)', '<input type="text" inputmode="decimal" class="profit-ratio-owner-input" data-saxon-id="asset-op-hybrid-outright-pct" id="asset-op-hybrid-revshare-pct" placeholder="e.g. 50"/>', 'asset-op-hybrid-revshare-pct')+
-            lockableField('Volume under Outright Purchase (%)', '<input type="text" id="asset-op-hybrid-outright-pct" placeholder="Auto-filled" readonly/>', 'asset-op-hybrid-outright-pct')+
-            lockableField('Revenue share — Device Owner (%)', '<input type="text" inputmode="decimal" class="profit-ratio-owner-input" data-saxon-id="asset-op-hybrid-ratio-saxon" id="asset-op-hybrid-ratio-owner" placeholder="e.g. 70"/>', 'asset-op-hybrid-ratio-owner')+
-            lockableField('Revenue share — Saxon (%)', '<input type="text" id="asset-op-hybrid-ratio-saxon" placeholder="Auto-filled" readonly/>', 'asset-op-hybrid-ratio-saxon')+
-            '<p style="grid-column:1 / -1;font-size:12px;color:var(--text-secondary);margin:0;">The outright part is priced at each Hybrid selection\'s Price / RECs below.</p>'+
-          '</div>'+
-          '<p class="trade-title" style="margin-top:16px;">Extra Charges Incurred</p>'+
+          '<p style="font-size:12px;color:var(--text-secondary);margin:0 0 4px;">Hybrid Model and its pricing are set per Year Selection below, so each year can carry its own threshold / fixed price / sharing terms.</p>'+
+          '<p class="trade-title" style="margin-top:16px;">Extra Charges Incurred (all years)</p>'+
           '<div class="grid">'+
             feeTickHtml('Device registration fee', 'asset-op-hybrid-device-reg-fee')+
             feeTickHtml('RECs issuance fee', 'asset-op-hybrid-recs-issuance-fee')+
             feeTickHtml('Redemption fee', 'asset-op-hybrid-redemption-fee')+
           '</div>'+
           specialChargeRemarksHtml('asset-op-hybrid-special-charge-remarks')+
-          '<p style="font-size:12px;color:var(--text-secondary);margin:12px 0 0;">Mark each Year Selection below as Hybrid or Outright.</p>'+
+          '<p style="font-size:12px;color:var(--text-secondary);margin:12px 0 0;">Mark each Year Selection below as Hybrid or Outright, then fill in that year\'s Hybrid terms.</p>'+
         '</div>'+
         '<div class="trade-count-row">'+
           '<label style="margin:0;">Year Selections</label>'+
@@ -15154,7 +15137,6 @@ async function onNotifPanelClick(e){
       document.getElementById('asset-year-count').addEventListener('input', onYearCountChange);
       const hybridToggleEl = document.getElementById('asset-op-hybrid-toggle');
       hybridToggleEl.addEventListener('change', syncHybridUi);
-      document.getElementById('asset-op-hybrid-model').addEventListener('change', syncHybridUi);
       renderYearRows();
     } else if(agreementType === 'Self Manage'){
       // Device registration fee / RECs issuance fee / Redemption fee are
@@ -15247,63 +15229,128 @@ async function onNotifPanelClick(e){
     const t = document.getElementById('asset-op-hybrid-toggle');
     return !!(agreementType === 'Outright Purchase' && t && t.checked);
   }
-  function hybridModel(){ return isHybridOn() ? val('asset-op-hybrid-model') : ''; }
+  // Hybrid Model + its terms are now held per Year Selection (asset-y<N>-hy-*)
+  // so each vintage can have its own threshold / fixed price / sharing split.
+  const ASSET_YEAR_HY_SUFFIXES = ['hy-model','hy-threshold','hy-fixed','hy-surplus-owner','hy-surplus-saxon','hy-revshare-pct','hy-outright-pct','hy-ratio-owner','hy-ratio-saxon'];
+  const HY_MODEL_LABELS = {'':'— Select —','Price threshold':'Fixed Price + Revenue Sharing (price threshold)','Volume split':'Revenue Sharing + Outright (volume split)'};
   // A selection's structure only matters while Hybrid is ticked; otherwise
   // every selection is plain Outright.
   function selStructure(i){ return isHybridOn() ? (val('asset-y'+i+'-structure') || 'Hybrid') : 'Outright'; }
-  // Under the price-threshold model a Hybrid selection is priced by the
-  // hybrid terms (fixed price + surplus share), so it has no Price / RECs of
-  // its own. Every other selection does.
-  function selPriceApplies(i){ return !(selStructure(i) === 'Hybrid' && hybridModel() === 'Price threshold'); }
+  // Hybrid Model of selection i ('' when not a Hybrid selection).
+  function selHybridModel(i){ return selStructure(i) === 'Hybrid' ? val('asset-y'+i+'-hy-model') : ''; }
+  // Back-compat: the single model shared by every Hybrid selection, or
+  // 'Mixed' when the years use different models.
+  function hybridModel(){
+    if(!isHybridOn()) return '';
+    const set = {};
+    for(let i=1;i<=yearCount;i++){ const m = selHybridModel(i); if(m) set[m] = 1; }
+    const ks = Object.keys(set);
+    return ks.length === 1 ? ks[0] : (ks.length ? 'Mixed' : '');
+  }
+  // Under the price-threshold model a Hybrid selection is priced by its own
+  // hybrid terms (fixed price + surplus share), so it has no Price / RECs.
+  function selPriceApplies(i){ return !(selStructure(i) === 'Hybrid' && selHybridModel(i) === 'Price threshold'); }
+  function yearHybridBlockHtml(i){
+    const id = s => 'asset-y'+i+'-'+s;
+    return '<div id="'+id('hy-block')+'" style="display:none;margin-top:12px;padding-top:12px;border-top:1px dashed var(--border);">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">'+
+        '<p class="trade-title" style="margin:0;">Hybrid terms — Selection '+i+'</p>'+
+        (i>1 ? '<button type="button" class="remove-row-btn" style="float:none;" data-copy-asset-hybrid="'+i+'">Copy from Selection '+(i-1)+'</button>' : '')+
+      '</div>'+
+      '<div class="grid">'+
+        lockableField('Hybrid Model', selectWithFullNamesHtml(id('hy-model'), ['','Price threshold','Volume split'], HY_MODEL_LABELS, ''), id('hy-model')).replace('<div id=','<div style="grid-column:1 / -1;" id=')+
+      '</div>'+
+      '<div id="'+id('hy-threshold-fields')+'" class="grid" style="display:none;margin-top:12px;">'+
+        lockableField('Threshold price / REC (optional)', '<input type="text" inputmode="decimal" class="numeric-decimal-only" id="'+id('hy-threshold')+'" placeholder="e.g. 3.00 (optional)"/>', id('hy-threshold'))+
+        lockableField('Fixed price to Device Owner / REC', '<input type="text" inputmode="decimal" class="numeric-decimal-only" id="'+id('hy-fixed')+'" placeholder="e.g. 2.40"/>', id('hy-fixed'))+
+        lockableField('Surplus share — Device Owner (%)', '<input type="text" inputmode="decimal" class="profit-ratio-owner-input" data-saxon-id="'+id('hy-surplus-saxon')+'" id="'+id('hy-surplus-owner')+'" placeholder="e.g. 60"/>', id('hy-surplus-owner'))+
+        lockableField('Surplus share — Saxon (%)', '<input type="text" id="'+id('hy-surplus-saxon')+'" placeholder="Auto-filled" readonly/>', id('hy-surplus-saxon'))+
+        '<p style="grid-column:1 / -1;font-size:12px;color:var(--text-secondary);margin:0;">At or below the threshold, the Device Owner gets the fixed price. Above it, the Device Owner gets the fixed price plus their share of the surplus above the threshold. Threshold is optional — left blank, the surplus is counted above the fixed price.</p>'+
+      '</div>'+
+      '<div id="'+id('hy-volume-fields')+'" class="grid" style="display:none;margin-top:12px;">'+
+        lockableField('Volume under Revenue Sharing (%)', '<input type="text" inputmode="decimal" class="profit-ratio-owner-input" data-saxon-id="'+id('hy-outright-pct')+'" id="'+id('hy-revshare-pct')+'" placeholder="e.g. 50"/>', id('hy-revshare-pct'))+
+        lockableField('Volume under Outright Purchase (%)', '<input type="text" id="'+id('hy-outright-pct')+'" placeholder="Auto-filled" readonly/>', id('hy-outright-pct'))+
+        lockableField('Revenue share — Device Owner (%)', '<input type="text" inputmode="decimal" class="profit-ratio-owner-input" data-saxon-id="'+id('hy-ratio-saxon')+'" id="'+id('hy-ratio-owner')+'" placeholder="e.g. 70"/>', id('hy-ratio-owner'))+
+        lockableField('Revenue share — Saxon (%)', '<input type="text" id="'+id('hy-ratio-saxon')+'" placeholder="Auto-filled" readonly/>', id('hy-ratio-saxon'))+
+        '<p style="grid-column:1 / -1;font-size:12px;color:var(--text-secondary);margin:0;">The outright part is priced at this selection\'s Price / RECs above.</p>'+
+      '</div>'+
+    '</div>';
+  }
   function syncHybridUi(){
     const on = isHybridOn();
-    const model = hybridModel();
     const show = (id, yes, disp) => { const el = document.getElementById(id); if(el) el.style.display = yes ? (disp||'block') : 'none'; };
     show('asset-op-hybrid-fields', on);
-    show('asset-op-hybrid-threshold-fields', on && model === 'Price threshold', 'grid');
-    show('asset-op-hybrid-volume-fields', on && model === 'Volume split', 'grid');
     for(let i=1;i<=yearCount;i++){
+      const isHy = on && selStructure(i) === 'Hybrid';
+      const m = selHybridModel(i);
       show('asset-y'+i+'-structure-wrap', on, '');
+      show('asset-y'+i+'-hy-block', isHy);
+      show('asset-y'+i+'-hy-threshold-fields', isHy && m === 'Price threshold', 'grid');
+      show('asset-y'+i+'-hy-volume-fields', isHy && m === 'Volume split', 'grid');
       show('asset-y'+i+'-price-amt-wrap', selPriceApplies(i), '');
       const note = document.getElementById('asset-y'+i+'-price-note');
       if(note) note.style.display = selPriceApplies(i) ? 'none' : '';
     }
   }
   document.addEventListener('change', (e)=>{
-    if(e.target && e.target.matches && e.target.matches('.asset-structure-select')) syncHybridUi();
+    if(e.target && e.target.matches && (e.target.matches('.asset-structure-select') || /^asset-y\d+-hy-model$/.test(e.target.id||''))) syncHybridUi();
+  });
+  // "Copy from Selection N-1" — most agreements reuse similar terms year to
+  // year, so this saves retyping before tweaking the numbers.
+  document.addEventListener('click', (e)=>{
+    const btn = e.target.closest && e.target.closest('[data-copy-asset-hybrid]');
+    if(!btn) return;
+    const i = parseInt(btn.getAttribute('data-copy-asset-hybrid'), 10);
+    ASSET_YEAR_HY_SUFFIXES.forEach(sfx=>{
+      const f = document.getElementById('asset-y'+(i-1)+'-'+sfx), t = document.getElementById('asset-y'+i+'-'+sfx);
+      if(f && t && !t.disabled) t.value = f.value;
+    });
+    const fp = document.getElementById('asset-y'+(i-1)+'-price-amt'), tp = document.getElementById('asset-y'+i+'-price-amt');
+    if(fp && tp && !tp.value && !tp.disabled) tp.value = fp.value;
+    syncHybridUi();
+    const anyEl = document.getElementById('asset-y'+i+'-hy-model');
+    if(anyEl) anyEl.dispatchEvent(new Event('input', {bubbles:true}));
   });
   function fmtMoney(x){ return (val('asset-h-currency') || '') + ' ' + x; }
-  // One readable paragraph describing the Hybrid terms — shown in the
-  // generated table and saved to the Outright Purchase "Hybrid Description"
-  // column (and the approval list). Blank when Hybrid isn't ticked.
+  // Short vintage label ("V25", "1HV25") for compact per-year summaries.
+  function shortPeriod(i){
+    const v = val('asset-y'+i+'-year');
+    const m = ASSET_PERIOD_RE.exec(String(v||''));
+    if(!m) return 'Selection '+i;
+    const short = m[1].slice(2);
+    return (m[2] === 'H1' ? '1HV' : m[2] === 'H2' ? '2HV' : 'V') + short;
+  }
+  // Terms of a single Hybrid selection, as one sentence.
+  function selHybridTerms(i){
+    const g = s => val('asset-y'+i+'-'+s);
+    const m = selHybridModel(i);
+    if(m === 'Price threshold'){
+      const t = g('hy-threshold'), f = g('hy-fixed'), o = g('hy-surplus-owner'), sx = g('hy-surplus-saxon');
+      if(!t) return 'Fixed Price + Revenue Sharing: the Device Owner receives a fixed '+fmtMoney(f)+'/REC plus '+o+'% of the surplus revenue above '+fmtMoney(f)+'/REC, Saxon retains '+sx+'%.';
+      return 'Fixed Price + Revenue Sharing (price threshold): at or below '+fmtMoney(t)+'/REC the Device Owner receives a fixed '+fmtMoney(f)+'/REC; above '+fmtMoney(t)+'/REC the Device Owner receives '+fmtMoney(f)+'/REC plus '+o+'% of the surplus above '+fmtMoney(t)+'/REC, Saxon retains '+sx+'%.';
+    }
+    if(m === 'Volume split'){
+      const vp = g('hy-revshare-pct'), op = g('hy-outright-pct'), o = g('hy-ratio-owner'), sx = g('hy-ratio-saxon');
+      const price = amountVal('asset-y'+i+'-price').text;
+      return 'Revenue Sharing + Outright (volume split): '+vp+'% of RECs under revenue sharing (Device Owner '+o+' : Saxon '+sx+'); '+op+'% under outright purchase'+(price ? ' at '+fmtMoney(price)+'/REC' : '')+'.';
+    }
+    return '';
+  }
+  // One readable paragraph describing the Hybrid terms — saved to the
+  // Outright Purchase "Hybrid Description" column (and the approval list).
+  // Blank when Hybrid isn't ticked.
   function buildHybridDescription(){
     if(!isHybridOn()) return '';
-    const model = hybridModel();
     const parts = [];
-    const hybridSel = [], outrightSel = [];
     for(let i=1;i<=yearCount;i++){
       const label = assetPeriodLabel(val('asset-y'+i+'-year')) || ('Selection '+i);
-      const price = amountVal('asset-y'+i+'-price').text;
       if(selStructure(i) === 'Hybrid'){
-        hybridSel.push(model === 'Volume split' && price ? label+' (outright part at '+fmtMoney(price)+'/REC)' : label);
+        parts.push(label+' — Hybrid, '+selHybridTerms(i));
       } else {
-        outrightSel.push(label + (price ? ' at '+fmtMoney(price)+'/REC' : ''));
+        const price = amountVal('asset-y'+i+'-price').text;
+        parts.push(label+' — Outright Purchase'+(price ? ' at '+fmtMoney(price)+'/REC' : '')+'.');
       }
     }
-    if(model === 'Price threshold'){
-      const t = val('asset-op-hybrid-threshold-price'), f = val('asset-op-hybrid-fixed-price');
-      const o = val('asset-op-hybrid-surplus-owner'), sx = val('asset-op-hybrid-surplus-saxon');
-      parts.push('Hybrid model: Fixed Price + Revenue Sharing (price threshold).');
-      parts.push('Model 1 (Fixed Price): where Saxon sells the RECs at '+fmtMoney(t)+' or below per REC, the Device Owner receives a fixed price of '+fmtMoney(f)+' per REC.');
-      parts.push('Model 2 (Revenue Sharing): where Saxon sells the RECs above '+fmtMoney(t)+' per REC, the Device Owner receives '+fmtMoney(f)+' per REC plus '+o+'% of the surplus revenue above '+fmtMoney(t)+' per REC; Saxon retains the balance '+sx+'%.');
-    } else if(model === 'Volume split'){
-      const vp = val('asset-op-hybrid-revshare-pct'), op = val('asset-op-hybrid-outright-pct');
-      const o = val('asset-op-hybrid-ratio-owner'), sx = val('asset-op-hybrid-ratio-saxon');
-      parts.push('Hybrid model: Revenue Sharing + Outright Purchase (volume split).');
-      parts.push(vp+'% of generated RECs under revenue sharing (Device Owner '+o+' : Saxon '+sx+'); '+op+'% under outright purchase at the Price / RECs of each Hybrid selection.');
-    }
-    if(hybridSel.length) parts.push('Hybrid selections: '+hybridSel.join('; ')+'.');
-    if(outrightSel.length) parts.push('Outright Purchase selections: '+outrightSel.join('; ')+'.');
     const fees = [];
     [['asset-op-hybrid-device-reg-fee','Device registration fee'],['asset-op-hybrid-recs-issuance-fee','RECs issuance fee'],['asset-op-hybrid-redemption-fee','Redemption fee']].forEach(([id,label])=>{
       if(feeTickForRow(id)) fees.push(label);
@@ -15313,6 +15360,24 @@ async function onNotifPanelClick(e){
     if(scr) parts.push('Special charge remarks: '+scr);
     return parts.join(' ');
   }
+  // Values for the Profit Ratio (Device Owner / Saxon) columns: the revenue
+  // share of the volume-split selections. One value when every such year
+  // shares it, otherwise per year ("V25: 70; V26: 65").
+  function hybridRatioCols(){
+    const owner = [], saxon = [];
+    for(let i=1;i<=yearCount;i++){
+      if(selHybridModel(i) !== 'Volume split') continue;
+      owner.push([shortPeriod(i), val('asset-y'+i+'-hy-ratio-owner')]);
+      saxon.push([shortPeriod(i), val('asset-y'+i+'-hy-ratio-saxon')]);
+    }
+    const fold = arr => {
+      if(!arr.length) return '';
+      const uniq = Array.from(new Set(arr.map(a=>a[1])));
+      return uniq.length === 1 ? uniq[0] : arr.map(a=>a[0]+': '+a[1]).join('; ');
+    };
+    return { owner: fold(owner), saxon: fold(saxon) };
+  }
+  window.assetHybridRatioCols = hybridRatioCols;
   window.assetGetHybridDescription = buildHybridDescription;
   window.assetSyncHybridUi = syncHybridUi;
   window.assetSelPriceApplies = selPriceApplies;
@@ -15384,13 +15449,15 @@ async function onNotifPanelClick(e){
   function renderYearRows(){
     const container = document.getElementById('asset-year-rows');
     if(!container) return;
-    const prevYear = {}, prevPrice = {}, prevSvc = {}, prevStructure = {};
+    const prevYear = {}, prevPrice = {}, prevSvc = {}, prevStructure = {}, prevHy = {};
     for(let i=1;i<=50;i++){
       const yEl = document.getElementById('asset-y'+i+'-year');
       if(!yEl) continue;
       prevYear[i] = yEl.value;
       const stEl = document.getElementById('asset-y'+i+'-structure');
       if(stEl) prevStructure[i] = stEl.value;
+      prevHy[i] = {};
+      ASSET_YEAR_HY_SUFFIXES.forEach(sfx=>{ const el = document.getElementById('asset-y'+i+'-'+sfx); if(el) prevHy[i][sfx] = el.value; });
       prevPrice[i] = amountVal('asset-y'+i+'-price');
       if(agreementType === 'Self Manage'){
         prevSvc[i] = amountVal('asset-y'+i+'-service-fee');
@@ -15414,15 +15481,23 @@ async function onNotifPanelClick(e){
       if(agreementType !== 'Self Manage'){
         html +=
           lockableField('Price / RECs', amountInput('asset-y'+i+'-price', prevPrice[i]), 'asset-y'+i+'-price-amt')+
-          '<div id="asset-y'+i+'-price-note" style="display:none;align-self:end;font-size:12px;color:var(--text-secondary);padding-bottom:10px;">Priced per the Hybrid terms above.</div>';
+          '<div id="asset-y'+i+'-price-note" style="display:none;align-self:end;font-size:12px;color:var(--text-secondary);padding-bottom:10px;">Priced per this selection\'s Hybrid terms below.</div>';
       }
       if(agreementType === 'Self Manage'){
         html +=
           lockableField('Service fee / RECs', amountInput('asset-y'+i+'-service-fee', prevSvc[i]), 'asset-y'+i+'-service-fee-amt');
       }
-      html += '</div></div>';
+      html += '</div>';
+      if(agreementType === 'Outright Purchase') html += yearHybridBlockHtml(i);
+      html += '</div>';
     }
     container.innerHTML = html;
+    Object.keys(prevHy).forEach(i=>{
+      ASSET_YEAR_HY_SUFFIXES.forEach(sfx=>{
+        const el = document.getElementById('asset-y'+i+'-'+sfx);
+        if(el && prevHy[i][sfx] !== undefined) el.value = prevHy[i][sfx];
+      });
+    });
     // Restore/re-apply locks for the freshly-rendered year rows — needed
     // here too (not just in renderPricingSection()) because "Number of
     // years" changes and row removal call this function directly.
@@ -15437,6 +15512,10 @@ async function onNotifPanelClick(e){
     const fromSt = document.getElementById('asset-y'+fromIdx+'-structure');
     const toSt = document.getElementById('asset-y'+toIdx+'-structure');
     if(fromSt && toSt) toSt.value = fromSt.value;
+    ASSET_YEAR_HY_SUFFIXES.forEach(sfx=>{
+      const f = document.getElementById('asset-y'+fromIdx+'-'+sfx), t = document.getElementById('asset-y'+toIdx+'-'+sfx);
+      if(f && t) t.value = f.value;
+    });
     ['price','service-fee'].forEach(suffix=>{
       const fromAmt = document.getElementById('asset-y'+fromIdx+'-'+suffix+'-amt');
       const toAmt = document.getElementById('asset-y'+toIdx+'-'+suffix+'-amt');
@@ -15636,15 +15715,18 @@ async function onNotifPanelClick(e){
         // count" pattern as Self Manage/Profit Sharing's one-time fees.
         if(isHybridOn()){
           const req = (id, label) => { if(!val(id)){ missing.push({section:'Pricing & Fees', label:'Hybrid — '+label}); markMissing(id); } };
-          const model = hybridModel();
-          if(!model){ req('asset-op-hybrid-model', 'Hybrid Model'); }
-          else if(model === 'Price threshold'){
-            req('asset-op-hybrid-threshold-price', 'Threshold price / REC');
-            req('asset-op-hybrid-fixed-price', 'Fixed price to Device Owner / REC');
-            req('asset-op-hybrid-surplus-owner', 'Surplus share — Device Owner (%)');
-          } else {
-            req('asset-op-hybrid-revshare-pct', 'Volume under Revenue Sharing (%)');
-            req('asset-op-hybrid-ratio-owner', 'Revenue share — Device Owner (%)');
+          for(let k=1;k<=yearCount;k++){
+            if(selStructure(k) !== 'Hybrid') continue;
+            const yreq = (sfx, label) => { const id = 'asset-y'+k+'-'+sfx; if(!val(id)){ missing.push({section:'Pricing & Fees', label:'Selection '+k+' Hybrid — '+label}); markMissing(id); } };
+            const m = selHybridModel(k);
+            if(!m){ yreq('hy-model', 'Hybrid Model'); }
+            else if(m === 'Price threshold'){
+              yreq('hy-fixed', 'Fixed price to Device Owner / REC');
+              yreq('hy-surplus-owner', 'Surplus share — Device Owner (%)');
+            } else {
+              yreq('hy-revshare-pct', 'Volume under Revenue Sharing (%)');
+              yreq('hy-ratio-owner', 'Revenue share — Device Owner (%)');
+            }
           }
           let anyHybridSel = false;
           for(let k=1;k<=yearCount;k++){ if(selStructure(k) === 'Hybrid') anyHybridSel = true; }
@@ -15753,15 +15835,20 @@ async function onNotifPanelClick(e){
     const out = [];
     if(agreementType === 'Outright Purchase'){
       const hyOn = isHybridOn();
-      out.push({heading:'Outright Purchase', cols: hyOn ? ['Year','Structure','Price / RECs'] : ['Year','Price / RECs'], rows:[]});
+      out.push({heading:'Outright Purchase', cols: hyOn ? ['Year','Structure','Price / RECs','Hybrid terms'] : ['Year','Price / RECs'], rows:[]});
       for(let i=1;i<=yearCount;i++){
         const price = selPriceApplies(i) ? amountVal('asset-y'+i+'-price').text : 'Per hybrid terms';
         out[out.length-1].rows.push(hyOn
-          ? [assetPeriodLabel(val('asset-y'+i+'-year')), selStructure(i), price]
+          ? [assetPeriodLabel(val('asset-y'+i+'-year')), selStructure(i), price, selStructure(i) === 'Hybrid' ? selHybridTerms(i) : '-']
           : [assetPeriodLabel(val('asset-y'+i+'-year')), price]);
       }
       if(hyOn){
-        out.push({heading:'Hybrid terms', cols:['Details'], rows:[[buildHybridDescription()]]});
+        out.push({heading:'Hybrid — Extra Charges Incurred (all years)', cols:['Device registration fee','RECs issuance fee','Redemption fee','Special Charge Remarks'], rows:[[
+          feeTickCell('asset-op-hybrid-device-reg-fee'),
+          feeTickCell('asset-op-hybrid-recs-issuance-fee'),
+          feeTickCell('asset-op-hybrid-redemption-fee'),
+          val('asset-op-hybrid-special-charge-remarks') || 'N/A'
+        ]]});
       }
     } else if(agreementType === 'Self Manage'){
       // Ticked-off fee tick boxes leave their amount blank here too — same
@@ -16195,6 +16282,27 @@ function applyAssetDraftData(data){
   if(bnmToggleEl) bnmToggleEl.dispatchEvent(new Event('change', {bubbles:true}));
   // Entity/Currency decide whether BNM Rate applies and whether MYR is offered.
   if(window.assetSyncBnmCurrencyUi) window.assetSyncBnmCurrencyUi();
+  // Drafts/snapshots saved before Hybrid terms went per-year hold one global
+  // set (asset-op-hybrid-*). Copy it into every Hybrid selection that has no
+  // terms of its own yet so nothing is lost.
+  {
+    const av = data.allValues || {};
+    const oldModel = String(av['asset-op-hybrid-model'] || '');
+    if(oldModel){
+      const map = {'hy-model':'model','hy-threshold':'threshold-price','hy-fixed':'fixed-price','hy-surplus-owner':'surplus-owner','hy-surplus-saxon':'surplus-saxon','hy-revshare-pct':'revshare-pct','hy-outright-pct':'outright-pct','hy-ratio-owner':'ratio-owner','hy-ratio-saxon':'ratio-saxon'};
+      const n = parseInt((state && state.yearCount) || 1, 10) || 1;
+      for(let i=1;i<=n;i++){
+        const st = document.getElementById('asset-y'+i+'-structure');
+        const m = document.getElementById('asset-y'+i+'-hy-model');
+        if(!m || m.value || (st && st.value === 'Outright')) continue;
+        Object.keys(map).forEach(sfx=>{
+          const el = document.getElementById('asset-y'+i+'-'+sfx);
+          const old = av['asset-op-hybrid-'+map[sfx]];
+          if(el && old !== undefined) el.value = old;
+        });
+      }
+    }
+  }
   // Re-sync Hybrid's shown/hidden Profit Sharing terms block, same reason.
   const hybridToggleEl = document.getElementById('asset-op-hybrid-toggle');
   if(hybridToggleEl) hybridToggleEl.dispatchEvent(new Event('change'));
@@ -16503,9 +16611,11 @@ async function buildAssetRowsFromForm(assetId, nowIso){
       if(hybridOn){
         // Profit Ratio columns hold the revenue share for the volume-split
         // model; the price-threshold model's terms live in Hybrid Description.
-        const isVolumeSplit = window.assetHybridModel && window.assetHybridModel() === 'Volume split';
-        row[mc.profitRatioOwner] = isVolumeSplit ? v('asset-op-hybrid-ratio-owner') : '';
-        row[mc.profitRatioSaxon] = isVolumeSplit ? v('asset-op-hybrid-ratio-saxon') : '';
+        // Per-year now: one value if every volume-split year shares it,
+        // otherwise "V25: 70; V26: 65" (see hybridRatioCols).
+        const ratioCols = window.assetHybridRatioCols ? window.assetHybridRatioCols() : {owner:'', saxon:''};
+        row[mc.profitRatioOwner] = ratioCols.owner;
+        row[mc.profitRatioSaxon] = ratioCols.saxon;
         writeTick(row, 'deviceRegFeeAmt', 'asset-op-hybrid-device-reg-fee');
         writeTick(row, 'recsIssuanceFeeAmt', 'asset-op-hybrid-recs-issuance-fee');
         writeTick(row, 'redemptionFeeAmt', 'asset-op-hybrid-redemption-fee');
