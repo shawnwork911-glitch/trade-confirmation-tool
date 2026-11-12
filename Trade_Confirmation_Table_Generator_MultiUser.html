@@ -590,6 +590,28 @@
   #view-modal-table{max-width:calc(100% - 252px);}
   #view-modal-table td{word-break:break-word;}
   .deal-timeline-panel{flex:none;min-width:180px;max-width:230px;}
+  /* Phone / narrow screens: the side-by-side layout above left the recap
+     table only ~150px wide (100% - 252px), so the bold, no-wrap labels
+     pushed every value off-screen. Stack the recap full-width with the
+     Deal Timeline underneath, let labels wrap, and tidy the header buttons. */
+  @media (max-width:700px){
+    #view-modal-overlay{padding:8px !important;}
+    #view-modal-overlay > div{padding:14px !important;max-height:94vh !important;gap:8px !important;}
+    #view-modal-overlay > div > div:first-child > div{flex-wrap:wrap;gap:8px !important;width:100%;}
+    #view-modal-overlay > div > div:first-child > div > button{flex:1 1 auto;padding:8px 10px;font-size:13px;}
+    #view-modal-agreement-link{flex-basis:100%;}
+    .view-modal-body{flex-direction:column;flex-wrap:nowrap;gap:14px;}
+    #view-modal-table{max-width:100%;width:100%;overflow-x:auto;}
+    #view-modal-table table.point-format-table{width:100% !important;}
+    #view-modal-table table.point-format-table td:first-child{white-space:normal !important;width:38%;min-width:96px;}
+    #view-modal-table td{word-break:normal;overflow-wrap:anywhere;}
+    .deal-timeline-panel{max-width:none;min-width:0;width:100%;border-top:1px solid var(--border);padding-top:12px;}
+    /* Asset View: label/value device cards stack two-up per row. */
+    .asset-view-html table{table-layout:auto;font-size:12.5px;}
+    .asset-view-html .asset-device-card tr{display:grid;grid-template-columns:minmax(90px,40%) 1fr;}
+    .asset-view-html .asset-device-card th{grid-column:1 / -1;}
+    .asset-view-html .asset-device-card td{width:auto !important;white-space:normal !important;}
+  }
   .deal-timeline-panel .card-title,
   .deal-timeline-title{font-size:12px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.03em;margin:0 0 12px;}
   .deal-timeline-v-step{display:flex;gap:10px;position:relative;}
@@ -15929,13 +15951,9 @@ async function onNotifPanelClick(e){
       html += '</table>';
     });
 
-    html += '<table style="margin-top:14px;">';
-    html += '<tr><th colspan="'+ASSET_PRODUCT_COLS.length+'">Device</th></tr>';
-    html += '<tr>'+ASSET_PRODUCT_COLS.map(c=>'<th>'+escapeHtml(c)+'</th>').join('')+'</tr>';
-    products.forEach(r=>{
-      html += '<tr>'+r.map(v=>'<td>'+escapeHtml(v)+'</td>').join('')+'</tr>';
-    });
-    html += '</table>';
+    // One compact label/value card per device instead of a 9-column table
+    // (which squeezed long addresses/dates into unreadable slivers).
+    html += window.assetDeviceCardsHtml(ASSET_PRODUCT_COLS, products);
 
     return html;
   }
@@ -16435,6 +16453,29 @@ function assetSectionHeaderIsRedundant(section){
 }
 // Agreements saved before the fix above still carry the repeated
 // single-column header (e.g. "Currency" / "Currency") — drop it on display.
+// Agreements saved before the device-card layout hold the Device section as
+// one wide table (header row of column names, one row per device). Rebuild
+// it as the per-device cards so old and new records look the same.
+function upgradeAssetDeviceTables(html){
+  if(!window.assetDeviceCardsHtml || !/>Device<\/th>/.test(String(html||''))) return html;
+  try{
+    const box = document.createElement('div');
+    box.innerHTML = html;
+    box.querySelectorAll('table').forEach(t=>{
+      const trs = t.querySelectorAll('tr');
+      if(trs.length < 3) return;
+      const first = trs[0].querySelectorAll('th');
+      if(first.length !== 1 || first[0].textContent.trim() !== 'Device') return;
+      const headers = Array.from(trs[1].querySelectorAll('th')).map(th=>th.textContent.trim());
+      if(!headers.length) return;
+      const rows = Array.from(trs).slice(2).map(tr=>Array.from(tr.querySelectorAll('td')).map(td=>td.textContent.trim())).filter(r=>r.length);
+      const holder = document.createElement('div');
+      holder.innerHTML = window.assetDeviceCardsHtml(headers, rows);
+      t.replaceWith(...holder.childNodes);
+    });
+    return box.innerHTML;
+  }catch(err){ console.warn('Device table upgrade failed', err); return html; }
+}
 function dedupeAssetSectionHeaders(html){
   return String(html || '').replace(/(<tr><th colspan="1">([^<]*)<\/th><\/tr>)<tr><th>\2<\/th><\/tr>/g, '$1');
 }
@@ -16458,7 +16499,7 @@ function openAssetViewModal(assetId, html, agreementUrl){
   if(bnmGroup && bnmGroup.rows.length && assetBnmNotApplicable(bnmGroup.rows[0].values[0], bnmGroup.mc)){
     html = stripAssetBnmRows(html);
   }
-  openViewModal(assetId, '<div class="asset-view-html">' + dedupeAssetSectionHeaders(html) + '</div>', agreementUrl, []);
+  openViewModal(assetId, '<div class="asset-view-html">' + upgradeAssetDeviceTables(dedupeAssetSectionHeaders(html)) + '</div>', agreementUrl, []);
   const labelEl = document.getElementById('view-modal-label');
   if(labelEl) labelEl.textContent = 'Asset ID';
   document.getElementById('view-modal-dealid').textContent = friendlyAssetId(assetId);
@@ -19033,6 +19074,194 @@ document.getElementById('redemption-refresh-btn').addEventListener('click', ()=>
   }
   new MutationObserver(sync).observe(label,{childList:true,characterData:true,subtree:true});
   sync();
+})();
+</script>
+<style>
+  /* dd/mm/yyyy typed date fields (see the "Typed dd/mm/yyyy date fields"
+     script at the end of the page). The visible box is a plain text input
+     that always reads/accepts dd/mm/yyyy; the native date input shrinks to
+     just its calendar button on the right and still holds the ISO value
+     every other piece of code reads/writes. */
+  .date-field-wrap.dtx{position:relative;}
+  .date-field-wrap.dtx.dtx-inline{display:inline-block;width:auto;}
+  .date-field-wrap.dtx input.date-text{padding-right:36px;}
+  .date-field-wrap.dtx input[type="date"]{
+    position:absolute !important;top:0;right:0;bottom:0;height:auto;
+    width:34px !important;min-width:0 !important;max-width:none !important;
+    padding:0 !important;margin:0 !important;border:0 !important;outline:none !important;
+    background:transparent !important;color:transparent !important;-webkit-text-fill-color:transparent;
+    cursor:pointer;box-shadow:none !important;
+  }
+  .date-field-wrap.dtx input[type="date"]::-webkit-datetime-edit{display:none;}
+  .date-field-wrap.dtx input[type="date"]::-webkit-calendar-picker-indicator{margin:0 auto;cursor:pointer;padding:0;}
+  .date-field-wrap.dtx input[type="date"]:disabled{cursor:not-allowed;opacity:.5;}
+  .date-field-wrap.dtx input.date-text.dtx-invalid{border-color:#d9534f;}
+  .confirmation-filter-bar .date-field-wrap.dtx input.date-text{width:132px;padding:6px 34px 6px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text);}
+  #tab-panel-analysis .confirmation-filter-bar .date-field-wrap.dtx input.date-text{width:112px;padding:5px 30px 5px 6px;font-size:11px;}
+  .asset-device-card td.adc-label{font-weight:600;width:20%;white-space:normal;color:var(--text-secondary);}
+  .asset-device-card td.adc-value{width:30%;}
+  .asset-device-card td.adc-nowrap{white-space:nowrap;}
+</style>
+<script>
+/* ---- Typed dd/mm/yyyy date fields ----
+   A native <input type=date> takes typed digits in the browser's own locale
+   order. On a US-locale PC that's month first, while the field shows a
+   "dd/mm/yyyy" hint — so typing 03/11/2026 (3 Nov) saved 11 Mar 2026. Every
+   date input on the page now gets a visible text box that only ever reads
+   and accepts dd/mm/yyyy, with the native input kept as the calendar
+   button + ISO value holder (so saving/loading/filters are unchanged). */
+(function(){
+  const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+  const protoDisabled = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'disabled');
+  function isoToDmy(iso){
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso||''));
+    return m ? m[3]+'/'+m[2]+'/'+m[1] : '';
+  }
+  // dd/mm/yyyy (or d/m/yyyy, -, . separators, 2-digit year, or 8 digits
+  // ddmmyyyy) -> ISO, or null when incomplete/invalid.
+  function dmyToIso(text, allowShortYear){
+    const s = String(text||'').trim();
+    let d, mo, y;
+    let m = /^(\d{1,2})[\/\-.\s](\d{1,2})[\/\-.\s](\d{4}|\d{2})$/.exec(s);
+    if(m){ d = +m[1]; mo = +m[2]; y = m[3]; }
+    else if((m = /^(\d{2})(\d{2})(\d{4})$/.exec(s))){ d = +m[1]; mo = +m[2]; y = m[3]; }
+    else return null;
+    if(y.length === 2){ if(!allowShortYear) return null; y = '20' + y; }
+    y = +y;
+    const dt = new Date(Date.UTC(y, mo-1, d));
+    if(dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo-1 || dt.getUTCDate() !== d) return null;
+    return y + '-' + String(mo).padStart(2,'0') + '-' + String(d).padStart(2,'0');
+  }
+  function commit(native, iso){
+    if(proto.get.call(native) === iso) return;
+    proto.set.call(native, iso);
+    native.dispatchEvent(new Event('input', {bubbles:true}));
+    native.dispatchEvent(new Event('change', {bubbles:true}));
+  }
+  function enhance(native){
+    if(native._dtx || native.type !== 'date') return;
+    native._dtx = true;
+    let wrap = native.parentElement;
+    const inFilterBar = !!native.closest('.confirmation-filter-bar');
+    if(!wrap || !wrap.classList.contains('date-field-wrap')){
+      wrap = document.createElement(inFilterBar ? 'span' : 'div');
+      wrap.className = 'date-field-wrap';
+      native.parentNode.insertBefore(wrap, native);
+      wrap.appendChild(native);
+    }
+    wrap.classList.add('dtx');
+    if(inFilterBar) wrap.classList.add('dtx-inline');
+    const oldSpan = wrap.querySelector('.date-display');
+    if(oldSpan) oldSpan.remove();
+    const text = document.createElement('input');
+    text.type = 'text';
+    text.className = 'date-text';
+    text.placeholder = 'dd/mm/yyyy';
+    text.autocomplete = 'off';
+    text.setAttribute('inputmode', 'numeric');
+    text.setAttribute('aria-label', (native.getAttribute('aria-label') || 'Date') + ' (dd/mm/yyyy)');
+    wrap.insertBefore(text, native);
+    native.tabIndex = -1;
+    native.title = 'Pick a date';
+    // Move a <label for=…> onto the visible box.
+    if(native.id){
+      text.dataset.for = native.id;
+      document.querySelectorAll('label[for="'+native.id+'"]').forEach(l=>{ l.addEventListener('click', ev=>{ ev.preventDefault(); text.focus(); }); });
+    }
+    const sync = () => {
+      if(document.activeElement === text && text.dataset.typing === '1') return;
+      text.value = isoToDmy(proto.get.call(native));
+      text.classList.remove('dtx-invalid');
+    };
+    const syncDisabled = () => { text.disabled = protoDisabled.get.call(native); text.readOnly = native.readOnly; };
+    // Any code that sets .value / .disabled on the native input (draft
+    // restore, locks, resets) keeps the visible box in step.
+    Object.defineProperty(native, 'value', {
+      configurable:true,
+      get(){ return proto.get.call(this); },
+      set(v){ proto.set.call(this, v); sync(); }
+    });
+    Object.defineProperty(native, 'disabled', {
+      configurable:true,
+      get(){ return protoDisabled.get.call(this); },
+      set(v){ protoDisabled.set.call(this, v); syncDisabled(); }
+    });
+    native.addEventListener('input', sync);
+    native.addEventListener('change', sync);
+    native.addEventListener('click', ()=>{ try{ if(native.showPicker && !native.disabled) native.showPicker(); }catch(_){} });
+    text.addEventListener('input', ()=>{
+      text.dataset.typing = '1';
+      const v = text.value.trim();
+      if(!v){ commit(native, ''); }
+      else {
+        const iso = dmyToIso(v, false);
+        if(iso) commit(native, iso);
+      }
+      text.dataset.typing = '';
+      text.classList.remove('dtx-invalid');
+    });
+    const finish = () => {
+      const v = text.value.trim();
+      if(!v){ commit(native, ''); sync(); return; }
+      const iso = dmyToIso(v, true);
+      if(iso){ commit(native, iso); sync(); }
+      else { text.classList.add('dtx-invalid'); text.title = 'Enter the date as dd/mm/yyyy'; }
+    };
+    text.addEventListener('blur', finish);
+    text.addEventListener('keydown', ev=>{ if(ev.key === 'Enter') finish(); });
+    sync(); syncDisabled();
+  }
+  function scan(root){
+    if(!root || !root.querySelectorAll) return;
+    if(root.matches && root.matches('input[type="date"]')) enhance(root);
+    root.querySelectorAll('input[type="date"]').forEach(enhance);
+  }
+  scan(document);
+  new MutationObserver(muts=>{
+    muts.forEach(m=>m.addedNodes.forEach(n=>{ if(n.nodeType === 1) scan(n); }));
+  }).observe(document.documentElement, {childList:true, subtree:true});
+  window.dtxDmyToIso = dmyToIso;
+})();
+
+/* ---- Asset Device section as per-device cards (used by the Asset preview
+   and the View modal). Plain tables so Copy table still pastes cleanly. ---- */
+(function(){
+  const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const PAIRS = [
+    ['Device Owner Name','Scheme Type'],
+    ['Capacity (MWac)','COD'],
+    ['REC Issuance start date','REC Issuance end date'],
+    ['Coordinate','Asset City, State/Province']
+  ];
+  const WIDE = /address/i;
+  const DATE = /date|^cod$/i;
+  const LBL = 'class="adc-label" style="font-weight:600;width:20%;"';
+  window.assetDeviceCardsHtml = function(headers, rows){
+    let html = '';
+    rows.forEach((r, idx)=>{
+      const get = h => { const i = headers.indexOf(h); return i < 0 ? '' : r[i]; };
+      const shown = v => esc(v==null||v==='' ? '-' : v);
+      const used = new Set();
+      const cell = h => { used.add(h); const d = DATE.test(h);
+        return '<td '+LBL+'>'+esc(h)+'</td><td class="adc-value" style="width:30%;'+(d?'white-space:nowrap;':'')+'">'+shown(get(h))+'</td>'; };
+      const full = h => { used.add(h); return '<tr><td '+LBL+'>'+esc(h)+'</td><td colspan="3">'+shown(get(h))+'</td></tr>'; };
+      const owner = get('Device Owner Name');
+      html += '<table class="asset-device-card" style="margin-top:14px;">';
+      html += '<tr><th colspan="4">Device '+(idx+1)+(owner ? ' — '+esc(owner) : '')+'</th></tr>';
+      PAIRS.forEach(([a,b])=>{
+        const ha = headers.indexOf(a) >= 0, hb = headers.indexOf(b) >= 0;
+        if(ha && hb) html += '<tr>'+cell(a)+cell(b)+'</tr>';
+        else if(ha || hb) html += full(ha ? a : b);
+      });
+      const rest = headers.filter(h=>!used.has(h) && !WIDE.test(h));
+      for(let i=0;i<rest.length;i+=2){
+        html += '<tr>'+cell(rest[i])+(rest[i+1] ? cell(rest[i+1]) : '<td></td><td></td>')+'</tr>';
+      }
+      headers.filter(h=>WIDE.test(h)).forEach(h=>{ html += full(h); });
+      html += '</table>';
+    });
+    return html;
+  };
 })();
 </script>
 </body>
