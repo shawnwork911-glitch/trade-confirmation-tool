@@ -1517,7 +1517,7 @@ html.desk-nav-hidden #main-tabs{transform:translateX(-100%);visibility:hidden;}
 <div id="reject-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
   <div style="width:100%;max-width:420px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:10px;">
     <h2 style="margin:0;font-size:16px;">Reject BD source matching change — <span id="reject-modal-dealid"></span></h2>
-    <p style="margin:0;font-size:13px;color:var(--text-secondary);">This only discards the requested BD source matching correction — the deal's already-Approved details are left untouched. This comment is shown to the person who requested the change so they know why.</p>
+    <p id="reject-modal-intro" style="margin:0;font-size:13px;color:var(--text-secondary);">This only discards the requested BD source matching correction — the deal's already-Approved details are left untouched. This comment is shown to the person who requested the change so they know why.</p>
     <label style="margin:4px 0 0;">Comment (required)</label>
     <textarea id="reject-comment" placeholder="e.g. Price/REC doesn't match the agreed rate — please confirm and resubmit." style="min-height:90px;"></textarea>
     <div id="reject-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
@@ -2307,6 +2307,45 @@ const STATUS_REVERTED_3 = "Reverted - Level 3";
 // Level 3 approver applies (or rejects) the request; see
 // requestBdMatchChange/approveBdMatchChange/rejectBdMatchChange.
 const STATUS_PENDING_CHANGE_3 = "Pending Change - Level 3";
+// ---- RECs: late Delivery Start Date change (3-day rule) ----
+// After Level 2 has approved a RECs deal (Pending Level 3) or Level 3 has
+// (Approved), BD can change a product's Delivery Start Date from "Request
+// edit". If the NEW Delivery Start Date is within DELIVERY_NOTICE_DAYS of
+// today (e.g. today 16/11 -> 17/11, 18/11, 19/11 — or today/past), BD must
+// give a reason and the request goes to Admin Level 1 first
+// (STATUS_PENDING_DELIVERY_1). Level 1 approves -> straight to Level 3
+// (STATUS_PENDING_CHANGE_3, same as any other post-approval change);
+// Level 1 rejects -> the change is discarded, the deal goes back to where it
+// was (Pending Level 3 / Approved) and BD is told to request a Delivery
+// Start Date MORE than DELIVERY_NOTICE_DAYS away instead (e.g. 20/11).
+// A new date beyond the window needs no Level 1 step and goes straight to
+// Level 3. Staged in the existing "Pending Source Vintage/Note" JSON column
+// ({"dstart","dend","dreason","l1By","l1Date"}) — no new SharePoint column.
+const STATUS_PENDING_DELIVERY_1 = "Pending Delivery Change - Level 1";
+const DELIVERY_NOTICE_DAYS = 3;
+// Whole days from today (local date) to an ISO "YYYY-MM-DD" date; NaN if unparseable.
+function deliveryDaysFromToday(iso){
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(!m) return NaN;
+  const t = new Date();
+  const todayUtc = Date.UTC(t.getFullYear(), t.getMonth(), t.getDate());
+  return Math.round((Date.UTC(Number(m[1]), Number(m[2])-1, Number(m[3])) - todayUtc) / 86400000);
+}
+// True when the date is today, in the past, or within the next DELIVERY_NOTICE_DAYS days.
+function deliveryWithinNotice(iso){
+  const d = deliveryDaysFromToday(iso);
+  return !isNaN(d) && d <= DELIVERY_NOTICE_DAYS;
+}
+// [label, oldDisplay, newDisplay] for each Delivery date a staged request
+// actually changes on this row (values = the ORIGINAL row array; ps = parsePendingSrc()).
+function deliveryDiffPairs(values, ps){
+  const out = [];
+  if(!ps || !ps.hasDelivery) return out;
+  const oS = toDateInputValue(values[MC.deliveryStart]), oE = toDateInputValue(values[MC.deliveryEnd]);
+  if(ps.dstart && ps.dstart !== oS) out.push(['Delivery Start Date', formatStoredDate(oS), formatStoredDate(ps.dstart)]);
+  if(ps.dend && ps.dend !== oE) out.push(['Delivery End Date', formatStoredDate(oE), formatStoredDate(ps.dend)]);
+  return out;
+}
 // Every "still in flight" status, regardless of which level it's currently
 // sitting at. Used to decide what shows up in the Approval queue list —
 // all admin levels (1/2/3) and the superadmin see every pending deal here,
@@ -2334,7 +2373,7 @@ const STATUS_PENDING_CHANGE_3 = "Pending Change - Level 3";
 const STATUS_PENDING_CANCEL_1 = "Pending Cancel - Level 1";
 const STATUS_PENDING_CANCEL_2 = "Pending Cancel - Level 2";
 const STATUS_CANCELLED = "Cancelled";
-const PENDING_STATUSES = [STATUS_PENDING_1, STATUS_PENDING_2, STATUS_PENDING_3, STATUS_PENDING_CHANGE_3, STATUS_PENDING_CANCEL_1, STATUS_PENDING_CANCEL_2];
+const PENDING_STATUSES = [STATUS_PENDING_1, STATUS_PENDING_2, STATUS_PENDING_3, STATUS_PENDING_DELIVERY_1, STATUS_PENDING_CHANGE_3, STATUS_PENDING_CANCEL_1, STATUS_PENDING_CANCEL_2];
 
 /* ---- Deal ID is now only assigned once Level 1 approval happens ----
    Before that, a submitted agreement is tracked internally with a temporary
@@ -2744,8 +2783,8 @@ function applyRoleUi(){
 /* Which pending status (if any) the current user's role is allowed to act
    on. Superadmin can act on any pending stage. */
 function actionableStatusesForRole(role){
-  if(role === 'superadmin') return [STATUS_PENDING_1, STATUS_PENDING_2, STATUS_PENDING_3, STATUS_PENDING_CHANGE_3, STATUS_PENDING_CANCEL_1, STATUS_PENDING_CANCEL_2];
-  if(role === 'admin1') return [STATUS_PENDING_1, STATUS_PENDING_CANCEL_1];
+  if(role === 'superadmin') return [STATUS_PENDING_1, STATUS_PENDING_2, STATUS_PENDING_3, STATUS_PENDING_DELIVERY_1, STATUS_PENDING_CHANGE_3, STATUS_PENDING_CANCEL_1, STATUS_PENDING_CANCEL_2];
+  if(role === 'admin1') return [STATUS_PENDING_1, STATUS_PENDING_DELIVERY_1, STATUS_PENDING_CANCEL_1];
   if(role === 'admin2') return [STATUS_PENDING_2, STATUS_PENDING_CANCEL_2];
   if(role === 'admin3') return [STATUS_PENDING_3, STATUS_PENDING_CHANGE_3];
   return [];
@@ -2803,6 +2842,7 @@ APPROVER_ROLE_FOR_STATUS[STATUS_PENDING_1] = 'admin1';
 APPROVER_ROLE_FOR_STATUS[STATUS_PENDING_2] = 'admin2';
 APPROVER_ROLE_FOR_STATUS[STATUS_PENDING_3] = 'admin3';
 APPROVER_ROLE_FOR_STATUS[STATUS_PENDING_CHANGE_3] = 'admin3';
+APPROVER_ROLE_FOR_STATUS[STATUS_PENDING_DELIVERY_1] = 'admin1';
 function emailsForRole(role){
   const seen = new Set();
   const emails = [];
@@ -3117,6 +3157,7 @@ function pendingChangeDiffLines(values){
     ];
     pairs.forEach(([label, a, b]) => { if(a !== b) out.push(label + ': ' + (a||'(blank)') + ' → ' + (b||'(blank)')); });
   }
+  deliveryDiffPairs(values, ps).forEach(([label, a, b]) => out.push(label + ': ' + (a||'(blank)') + ' → ' + (b||'(blank)')));
   return out;
 }
 
@@ -3990,6 +4031,12 @@ function buildBdMatchingParts(values){
 // Approved" list has a "BD Source Matching" column (any existing old
 // columns can stay — past rows keep their history — new writes just won't
 // use them any more).
+// Overwrite the product's existing Approved-list item (if it has one) so the
+// list only ever holds the latest data; creates a new item otherwise.
+function approvedListUpdateOpts(values){
+  const id = String(values[MC.approvedListItemId] || '').trim();
+  return id ? { updateItemId: id } : undefined;
+}
 async function addApprovedDealToList(values, changeNote, opts){
     const ctx = await getApprovedListContext();
     const columnMap = ctx.columnMap;
@@ -4119,6 +4166,19 @@ async function addApprovedDealToList(values, changeNote, opts){
         console.warn('"' + ctx.listName + '" list has no column matching these labels — skipped: ' + skipped.join(', '));
     }
 
+    // opts.updateItemId: overwrite that existing item with the latest values
+    // instead of appending a new row (used after a Level 3 change approval so
+    // the list holds only the latest data). Falls back to creating a new item
+    // if the old one can't be updated (e.g. it was deleted).
+    if(opts && opts.updateItemId){
+        try{
+            await graphFetch("/sites/" + siteId + "/lists/" + ctx.listId + "/items/" + encodeURIComponent(opts.updateItemId) + "/fields",
+                { method:"PATCH", body:JSON.stringify(fields) });
+            return opts.updateItemId;
+        }catch(err){
+            console.warn('Could not update existing "' + ctx.listName + '" item ' + opts.updateItemId + ' — creating a new one instead.', err);
+        }
+    }
     try{
         const created = await graphFetch(
             "/sites/" + siteId +
@@ -4151,7 +4211,7 @@ async function pushApprovedRowsToList(rows, changeNote){
     try{
       let dirty = false;
       if(!String(values[MC.rowUid] || '').trim()){ values[MC.rowUid] = generateRowUid(); dirty = true; }
-      const itemId = await addApprovedDealToList(values, changeNote);
+      const itemId = await addApprovedDealToList(values, changeNote, approvedListUpdateOpts(values));
       if(itemId){ values[MC.approvedListItemId] = String(itemId); dirty = true; }
       if(dirty) await updateCanonicalTableRow(dealLogTableName(), rows[k].index, values);
       rows[k].values[0] = values;
@@ -4268,7 +4328,10 @@ function parsePendingSrc(raw){
     // requestBdMatchChange). orderType: staged deal-level Order Type, '' if none.
     return { vstart: String(o.vstart || ''), vend: String(o.vend || ''), note: String(o.note || ''),
       hasSrc: ('vstart' in o) || ('vend' in o) || ('note' in o), orderType: String(o.orderType || ''),
-      hasTransfer: ('transfer' in o), transfer: String(o.transfer || '') };
+      hasTransfer: ('transfer' in o), transfer: String(o.transfer || ''),
+      // Staged Delivery Start/End Date (RECs, 3-day rule — see STATUS_PENDING_DELIVERY_1).
+      hasDelivery: ('dstart' in o) || ('dend' in o), dstart: String(o.dstart || ''), dend: String(o.dend || ''),
+      dreason: String(o.dreason || ''), l1By: String(o.l1By || ''), l1Date: String(o.l1Date || ''), raw: o };
   }catch(e){ return null; }
 }
 // 0-based positions of the "Hourly Deal" / "New Device" columns in this
@@ -6184,7 +6247,7 @@ async function approveDeal(dealId, file, transferOverrides){
     // trade, and each write can fail independently of the others.
     if(nextStatus === STATUS_APPROVED){
       try{
-        const approvedItemId = await addApprovedDealToList(values);
+        const approvedItemId = await addApprovedDealToList(values, undefined, approvedListUpdateOpts(values));
         if(approvedItemId){
           values[MC.approvedListItemId] = String(approvedItemId);
           await updateCanonicalTableRow(dealLogTableName(), r.index, values);
@@ -6586,7 +6649,7 @@ async function notifyCancellationOutcome(dealId, stage, confirmed, requestedBy, 
    registry/tech/volume are always included (even for products that didn't
    need a fix) carrying that product's current, unchanged value, so the diff
    below only picks up a real change. */
-async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue, orderTypeValue, transferValues){
+async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue, orderTypeValue, transferValues, deliveryReason){
   if(!dealId) return;
   await ensureFreshWorkbookSession();
   const rows = await getCanonicalTableRows(dealLogTableName());
@@ -6646,6 +6709,13 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue, orderT
   // Volume change? (A volume change always goes to Level 3 — see below.)
   const rowSrcChanged = new Array(matching.length).fill(false);
   let volumeChangedAny = false;
+  // Delivery Start/End Date edits (RECs only — see STATUS_PENDING_DELIVERY_1).
+  // deliveryNeedsL1: a changed Delivery Start Date lands within
+  // DELIVERY_NOTICE_DAYS of today, so Level 1 must approve (with BD's reason)
+  // before this reaches Level 3.
+  let deliveryChangedAny = false, deliveryNeedsL1 = false;
+  const deliveryRowChanged = new Array(matching.length).fill(false);
+  const deliveryErrors = [];
   // Same rule for Registry: BD can change it at any stage via this flow,
   // but a Registry change is never applied without Level 3 sign-off.
   let registryChangedAny = false;
@@ -6691,6 +6761,23 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue, orderT
       lines.push((isCCTable ? 'Volume (VCUs): ' : 'Volume (RECs): ') + (String(rv[MC.volume] ?? '') || '(blank)') + ' \u2192 ' + (edit.volume||'(blank)'));
       volumeChangedAny = true;
     }
+    if(!isCCTable && edit.dlvStart !== undefined){
+      const oS = toDateInputValue(rv[MC.deliveryStart]), oE = toDateInputValue(rv[MC.deliveryEnd]);
+      const nS = String(edit.dlvStart || '').trim(), nE = String(edit.dlvEnd || '').trim();
+      const pLabel = matching.length > 1 ? 'Product ' + (i+1) : 'this product';
+      if(!nS) deliveryErrors.push('Delivery Start Date for ' + pLabel + ' can\'t be blank.');
+      else if(!nE) deliveryErrors.push('Delivery End Date for ' + pLabel + ' can\'t be blank.');
+      else if(nE < nS) deliveryErrors.push('Delivery End Date for ' + pLabel + ' can\'t be before its Delivery Start Date.');
+      else if(nS !== oS || nE !== oE){
+        if(nS !== oS){
+          lines.push('Delivery Start Date: ' + (formatStoredDate(oS)||'(blank)') + ' → ' + formatStoredDate(nS));
+          if(deliveryWithinNotice(nS)) deliveryNeedsL1 = true;
+        }
+        if(nE !== oE) lines.push('Delivery End Date: ' + (formatStoredDate(oE)||'(blank)') + ' → ' + formatStoredDate(nE));
+        deliveryRowChanged[i] = true;
+        deliveryChangedAny = true;
+      }
+    }
     // Per-source Vintage / Matching note (see srcVintageNoteFieldsHtml).
     if(edit.vstart !== undefined){
       const before = { vs: normSrcVintage(rv[MC.sourceVintageStart]), ve: normSrcVintage(rv[MC.sourceVintageEnd]), nt: normSrcNote(rv[MC.sourceMatchNote]) };
@@ -6705,6 +6792,11 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue, orderT
       rowChangeLines[i] = lines.join(', ');
       changeLines.push((matching.length > 1 ? 'Product ' + (i+1) + ' \u2014 ' : '') + rowChangeLines[i]);
     }
+  }
+  if(deliveryErrors.length) throw new Error(deliveryErrors.join(' '));
+  const deliveryReasonText = String(deliveryReason || '').trim();
+  if(deliveryNeedsL1 && !deliveryReasonText){
+    throw new Error('The new Delivery Start Date is within ' + DELIVERY_NOTICE_DAYS + ' days of today, so a reason is required for Admin Level 1 approval — or choose a Delivery Start Date more than ' + DELIVERY_NOTICE_DAYS + ' days from today.');
   }
   // Order Type (deal-level, stored on every product row). BD can change it
   // at any stage via this flow, but it's ALWAYS staged for Level 3 approval
@@ -6785,13 +6877,16 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue, orderT
   // Route to Level 3 when the deal hasn't finished Level 3 yet (unchanged
   // behaviour) OR when any product's Volume changed — a quantity change is
   // never applied without Level 3 sign-off, even on an Approved deal.
-  const stageForLevel3 = currentStatus === STATUS_PENDING_3 || volumeChangedAny || registryChangedAny || orderTypeChanged;
+  const stageForLevel3 = currentStatus === STATUS_PENDING_3 || volumeChangedAny || registryChangedAny || orderTypeChanged || deliveryChangedAny;
   if(volumeChangedAny && matching[0].values[0].length <= MC.pendingVolume){
     throw new Error('Volume can\'t be changed yet: the ' + (isCCTable ? 'CCDealLog' : 'TradeDealLog') + ' table is missing its "Pending Volume" column. Ask an admin to add it, then try again.');
   }
   const pendSrcColIdx = pendingSrcColumnIndex(dealLogTableName());
   if(orderTypeChanged && pendSrcColIdx < 0){
     throw new Error('Order Type can\'t be changed yet: the ' + (isCCTable ? 'CCDealLog' : 'TradeDealLog') + ' table is missing the "' + PENDING_SRC_COLUMN_NAME + '" column (used to stage the change for Level 3). Ask an admin to add it at the end of the table, then try again.');
+  }
+  if(deliveryChangedAny && pendSrcColIdx < 0){
+    throw new Error('Delivery date changes can\'t be staged yet: the ' + (isCCTable ? 'CCDealLog' : 'TradeDealLog') + ' table is missing the "' + PENDING_SRC_COLUMN_NAME + '" column. Ask an admin to add it at the end of the table, then try again.');
   }
   if(stageForLevel3 && rowSrcChanged.some(Boolean) && pendSrcColIdx < 0){
     throw new Error('Vintage / Matching note changes that need Level 3 approval can\'t be staged yet: the ' + (isCCTable ? 'CCDealLog' : 'TradeDealLog') + ' table is missing the "' + PENDING_SRC_COLUMN_NAME + '" column. Ask an admin to add it at the end of the table, then try again.');
@@ -6826,17 +6921,19 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue, orderT
       // Per-source Vintage/Note staged as JSON (see PENDING_SRC_COLUMN_NAME)
       // whenever the column exists, so approval re-aligns them with the
       // staged Buyer/Seller/No of RECs/Which deal in the same source order.
-      if(pendSrcColIdx >= 0 && (edit.vstart !== undefined || orderTypeChanged)){
+      if(pendSrcColIdx >= 0 && (edit.vstart !== undefined || orderTypeChanged || deliveryRowChanged[i] || deliveryNeedsL1)){
         const staged = {};
         if(edit.vstart !== undefined){ staged.vstart = edit.vstart || ''; staged.vend = edit.vend || ''; staged.note = edit.note || ''; }
         if(orderTypeChanged) staged.orderType = newOrderType;
         if(orderTypeChanged && transferChanged[i]) staged.transfer = newTransfers[i];
+        if(deliveryRowChanged[i]){ staged.dstart = String(edit.dlvStart || '').trim(); staged.dend = String(edit.dlvEnd || '').trim(); }
+        if(deliveryNeedsL1) staged.dreason = deliveryReasonText;
         values.__pendingSrcWrite = JSON.stringify(staged);
       }
       values[MC.pendingMatchNote] = matchNote || '';
       values[MC.pendingRequestedBy] = currentAccount.username;
       values[MC.pendingRequestedDate] = nowIso;
-      values[MC.status] = STATUS_PENDING_CHANGE_3;
+      values[MC.status] = deliveryNeedsL1 ? STATUS_PENDING_DELIVERY_1 : STATUS_PENDING_CHANGE_3;
       // Clear out any note from a previous, already-resolved change request
       // so it doesn't linger next to this new one.
       values[MC.rejectedBy] = '';
@@ -6846,9 +6943,19 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue, orderT
       await updateCanonicalTableRow(dealLogTableName(), r.index, values);
     }
     await finishTagWrite();
+    if(deliveryNeedsL1){
+      // 3-day rule: Level 1 must approve (BD's reason attached) before this
+      // goes to Level 3 — see STATUS_PENDING_DELIVERY_1.
+      await appendDealAuditEntry(dealId, buildAuditEntry('Change REQUESTED via "Request edit" — Delivery Start Date within ' + DELIVERY_NOTICE_DAYS + ' days of today, awaiting Admin Level 1 approval (then Level 3); not yet live') +
+        '\nReason for the short-notice delivery date: ' + deliveryReasonText);
+      await notifyNextApprover(STATUS_PENDING_DELIVERY_1, dealId, matching[0].values[0][MC.description],
+        changeLines.join('\n') + '\n\nReason for the short-notice delivery date: ' + deliveryReasonText + (matchNote ? '\n\nNote: ' + matchNote : ''));
+      await loadHistory();
+      return;
+    }
     await appendDealAuditEntry(dealId, buildAuditEntry('Change REQUESTED via "Request edit" (awaiting Level 3 approval, not yet live' +
       (currentStatus === STATUS_APPROVED ? '; sent to Level 3 because ' +
-        [volumeChangedAny ? 'Volume' : '', registryChangedAny ? 'Registry' : '', orderTypeChanged ? 'Order Type' : ''].filter(Boolean).join(' / ') +
+        [volumeChangedAny ? 'Volume' : '', registryChangedAny ? 'Registry' : '', orderTypeChanged ? 'Order Type' : '', deliveryChangedAny ? 'Delivery date' : ''].filter(Boolean).join(' / ') +
         ' changed on an Approved deal' : '') + ')'));
     const notifyBody = changeLines.join('\n') + (matchNote ? '\n\nNote: ' + matchNote : '');
     await notifyNextApprover(STATUS_PENDING_CHANGE_3, dealId, matching[0].values[0][MC.description], notifyBody);
@@ -6908,7 +7015,7 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue, orderT
     if(tagChanged) applyTagBdWrite(values, tagWrite);
     await updateCanonicalTableRow(dealLogTableName(), r.index, values);
     try{
-      const approvedItemId = await addApprovedDealToList(values, changeNote);
+      const approvedItemId = await addApprovedDealToList(values, changeNote, approvedListUpdateOpts(values));
       if(approvedItemId){
         values[MC.approvedListItemId] = String(approvedItemId);
         await updateCanonicalTableRow(dealLogTableName(), r.index, values);
@@ -7032,6 +7139,7 @@ async function approveBdMatchChange(dealId){
     if(stagedSrc && stagedSrc.hasTransfer && stagedSrc.transfer !== String(values[MC.tigrsIrecName] || '').trim()){
       noteLines.push('Receiving Account: ' + (String(values[MC.tigrsIrecName] || '').trim() || '(blank)') + ' \u2192 ' + (stagedSrc.transfer || '(blank)'));
     }
+    deliveryDiffPairs(r.values[0], stagedSrc).forEach(([label, a, b]) => noteLines.push(label + ': ' + (a||'(blank)') + ' → ' + (b||'(blank)')));
     if(stagedSrc && stagedSrc.hasSrc){
       const sv = (label, a, b) => { if(a !== b) noteLines.push(label + ': ' + (a||'(blank)') + ' \u2192 ' + (b||'(blank)')); };
       sv('Source Vintage Start', normSrcVintage(values[MC.sourceVintageStart]), normSrcVintage(stagedSrc.vstart));
@@ -7065,6 +7173,10 @@ async function approveBdMatchChange(dealId){
     // an older request staged before this column existed leaves the live
     // vintage/note untouched. (stagedSrc was parsed above, before the
     // Approved-list change note was built.)
+    if(stagedSrc && stagedSrc.hasDelivery){
+      if(stagedSrc.dstart) values[MC.deliveryStart] = stagedSrc.dstart;
+      if(stagedSrc.dend) values[MC.deliveryEnd] = stagedSrc.dend;
+    }
     if(stagedSrc && stagedSrc.hasTransfer) values[MC.tigrsIrecName] = stagedSrc.transfer;
     if(stagedSrc && stagedSrc.orderType){
       values[MC.supplyDemand] = stagedSrc.orderType;
@@ -7105,7 +7217,8 @@ async function approveBdMatchChange(dealId){
     values[MC.approvedDate3] = nowIso;
     await updateCanonicalTableRow(dealLogTableName(), r.index, values);
     try{
-      const approvedItemId = await addApprovedDealToList(values, changeNote);
+      // Only the latest data is kept: overwrite this product's existing list item.
+      const approvedItemId = await addApprovedDealToList(values, changeNote, approvedListUpdateOpts(values));
       if(approvedItemId){
         // "Approved" list is append-only (a fresh entry per change, kept
         // as history), so this always advances to point at the newest one.
@@ -7193,6 +7306,133 @@ async function rejectBdMatchChange(dealId, reason){
   await notifyChangeSubmitter(dealId, submitterEmail, 'rejected', trimmedReason);
   await loadHistory();
 }
+// ---- Level 1 decision on a short-notice Delivery Start Date change ----
+// See STATUS_PENDING_DELIVERY_1. Approve -> the same staged request moves on
+// to Level 3 (STATUS_PENDING_CHANGE_3); Reject -> discarded, the deal goes
+// back to Pending Level 3 / Approved (whichever it was), and BD is told to
+// request a Delivery Start Date more than DELIVERY_NOTICE_DAYS days away.
+async function approveDeliveryChangeL1(dealId){
+  if(!dealId) return;
+  await ensureFreshWorkbookSession();
+  const rows = await getCanonicalTableRows(dealLogTableName());
+  const allMatching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
+  if(!allMatching.length) return;
+  const matching = allMatching.filter(r => r.values[0][MC.status] === STATUS_PENDING_DELIVERY_1);
+  if(!matching.length) throw new Error('This deal is not awaiting a delivery date approval.');
+  if(!canActOnStatus(STATUS_PENDING_DELIVERY_1)) throw new Error('You are not able to approve this change.');
+  const nowIso = new Date().toISOString();
+  const auditLines = [];
+  let requestedBy = '', reason = '', note = '';
+  allMatching.forEach((r, i)=>{
+    const v = r.values[0];
+    if(v[MC.status] !== STATUS_PENDING_DELIVERY_1) return;
+    const lines = pendingChangeDiffLines(v);
+    if(lines.length) auditLines.push((allMatching.length > 1 ? 'Product ' + (i+1) + ' — ' : '') + lines.join(', '));
+    if(!requestedBy && v[MC.pendingRequestedBy]) requestedBy = v[MC.pendingRequestedBy];
+    const ps = parsePendingSrc(v.__pendingSrc);
+    if(!reason && ps && ps.dreason) reason = ps.dreason;
+    if(!note && v[MC.pendingMatchNote]) note = v[MC.pendingMatchNote];
+  });
+  // Re-check right before writing (same guard as approveBdMatchChange).
+  const recheck = await getCanonicalTableRows(dealLogTableName());
+  if(!recheck.some(r => String(r.values[0][MC.dealId] || '').trim() === dealId && r.values[0][MC.status] === STATUS_PENDING_DELIVERY_1)){
+    await loadHistory();
+    throw new Error('This request was already actioned by someone else a moment ago. Your approval was not applied — please refresh and check the latest status.');
+  }
+  for(const r of matching){
+    const values = r.values[0].slice();
+    const ps = parsePendingSrc(r.values[0].__pendingSrc);
+    if(ps){
+      const o = Object.assign({}, ps.raw, { l1By: currentAccount.username || '', l1Date: nowIso });
+      values.__pendingSrcWrite = JSON.stringify(o);
+    }
+    values[MC.status] = STATUS_PENDING_CHANGE_3;
+    await updateCanonicalTableRow(dealLogTableName(), r.index, values);
+  }
+  await appendDealAuditEntry(dealId,
+    'Short-notice delivery date change APPROVED by Level 1 — now awaiting Level 3, on ' + auditTimestampLabel() + ' by ' + (currentAccount.username || 'unknown') +
+    (requestedBy ? '\nRequested by ' + requestedBy : '') +
+    (reason ? '\nBD reason: ' + reason : '') +
+    (auditLines.length ? '\n' + auditLines.join('\n') : ''));
+  const desc = allMatching[0].values[0][MC.description];
+  const summary = auditLines.join('\n') + (reason ? '\n\nBD reason for the short-notice delivery date: ' + reason : '') +
+    '\n\nApproved by Admin Level 1: ' + (currentAccount.username || '') + (note ? '\n\nNote: ' + note : '');
+  await notifyNextApprover(STATUS_PENDING_CHANGE_3, dealId, desc, summary);
+  await notifyAdmin3OfBdChange(dealId, desc, auditLines, note, 'pending', false);
+  await notifyDeliveryChangeSubmitter(dealId, allMatching[0].values[0][MC.submittedBy], 'l1-approved', '');
+  await loadHistory();
+}
+async function rejectDeliveryChangeL1(dealId, reason){
+  if(!dealId) return;
+  const trimmed = (reason || '').trim();
+  if(!trimmed) throw new Error('A comment is required so BD knows why this was rejected.');
+  await ensureFreshWorkbookSession();
+  const rows = await getCanonicalTableRows(dealLogTableName());
+  const allMatching = rows.filter(r => String(r.values[0][MC.dealId] || '').trim() === dealId).sort((a,b)=> a.index - b.index);
+  if(!allMatching.length) return;
+  const matching = allMatching.filter(r => r.values[0][MC.status] === STATUS_PENDING_DELIVERY_1);
+  if(!matching.length) throw new Error('This deal is not awaiting a delivery date approval.');
+  if(!canActOnStatus(STATUS_PENDING_DELIVERY_1)) throw new Error('You are not able to reject this change.');
+  const nowIso = new Date().toISOString();
+  const discarded = [];
+  let requestedBy = '';
+  allMatching.forEach((r, i)=>{
+    const v = r.values[0];
+    if(v[MC.status] !== STATUS_PENDING_DELIVERY_1) return;
+    const lines = pendingChangeDiffLines(v);
+    if(lines.length) discarded.push((allMatching.length > 1 ? 'Product ' + (i+1) + ' — ' : '') + lines.join(', '));
+    if(!requestedBy && v[MC.pendingRequestedBy]) requestedBy = v[MC.pendingRequestedBy];
+  });
+  const stored = 'Level 1 declined the short-notice delivery date change: ' + trimmed +
+    ' — please use “Request edit” to choose a Delivery Start Date more than ' + DELIVERY_NOTICE_DAYS + ' days from today.';
+  for(const r of matching){
+    const values = r.values[0].slice();
+    // Put the row back exactly where it was: approvedBy3 is untouched while a
+    // change is staged, so it's blank for a Pending Level 3 deal and filled
+    // for an already-Approved one (same trick as rejectBdMatchChange).
+    values[MC.status] = values[MC.approvedBy3] ? STATUS_APPROVED : STATUS_PENDING_3;
+    values[MC.pendingMatching] = '';
+    values[MC.pendingBuyerSeller] = '';
+    values[MC.pendingWhichDeal] = '';
+    values[MC.pendingNoOfRecs] = '';
+    values[MC.pendingDeliveryDateM] = '';
+    values[MC.pendingRegistry] = '';
+    values[MC.pendingTech] = '';
+    if(values.length > MC.pendingVolume) values[MC.pendingVolume] = '';
+    values.__pendingSrcWrite = '';
+    values[MC.pendingMatchNote] = '';
+    values[MC.pendingRequestedBy] = '';
+    values[MC.pendingRequestedDate] = '';
+    values[MC.rejectedBy] = currentAccount.username;
+    values[MC.rejectedDate] = nowIso;
+    values[MC.rejectReason] = stored;
+    await updateCanonicalTableRow(dealLogTableName(), r.index, values);
+  }
+  await appendDealAuditEntry(dealId,
+    'Short-notice delivery date change REJECTED by Level 1 (discarded, live values unchanged; sent back to BD) on ' + auditTimestampLabel() + ' by ' + (currentAccount.username || 'unknown') +
+    (requestedBy ? '\nRequested by ' + requestedBy : '') +
+    '\nReason: ' + trimmed +
+    (discarded.length ? '\nDiscarded: ' + discarded.join('\nDiscarded: ') : ''));
+  await notifyDeliveryChangeSubmitter(dealId, allMatching[0].values[0][MC.submittedBy], 'l1-rejected', trimmed);
+  await loadHistory();
+}
+async function notifyDeliveryChangeSubmitter(dealId, submitterEmail, outcome, reason){
+  const email = (submitterEmail || '').trim();
+  if(!email) return;
+  const displayId = friendlyDealId(dealId);
+  const link = dealDeepLink(dealId);
+  const label = 'Deal ID <strong>' + escapeHtml(displayId) + '</strong>';
+  const approved = outcome === 'l1-approved';
+  const html = approved
+    ? '<p>Admin Level 1 has approved your short-notice delivery date change for ' + label + '. It is now waiting on Admin Level 3 approval; the current delivery dates stay live until then.</p>'
+    : '<p>Admin Level 1 has <strong>rejected</strong> your delivery date change for ' + label + ' because the new Delivery Start Date is within ' + DELIVERY_NOTICE_DAYS + ' days of today.</p>' +
+      '<p><strong>Reason:</strong> ' + escapeHtml(reason || '') + '</p>' +
+      '<p>The deal is unchanged. Please use “Request edit” to choose a Delivery Start Date <strong>more than ' + DELIVERY_NOTICE_DAYS + ' days from today</strong>.</p>';
+  try{
+    await sendMailGraph([email], (approved ? 'Delivery date change approved by Level 1 — ' : 'Delivery date change rejected — ') + displayId,
+      html + '<p><a href="' + link + '">Open it in the Trade Confirmation app</a></p>');
+  }catch(err){ console.error('Delivery-change outcome email failed', err); }
+}
 // A deal's overall status for display/routing purposes. Normally every row
 // of a deal shares the same Status — the 3-level approval chain always
 // writes it to every row of the deal together — but a BD source matching
@@ -7205,6 +7445,7 @@ async function rejectBdMatchChange(dealId, reason){
 // actually waiting on — falling back to the first row's status covers the
 // normal case where every row agrees.
 function dealGroupStatus(rows){
+  if(rows.some(r => r.values[0][MC.status] === STATUS_PENDING_DELIVERY_1)) return STATUS_PENDING_DELIVERY_1;
   if(rows.some(r => r.values[0][MC.status] === STATUS_PENDING_CHANGE_3)) return STATUS_PENDING_CHANGE_3;
   return (rows[0] && rows[0].values[0][MC.status]) || STATUS_PENDING_1;
 }
@@ -7230,7 +7471,7 @@ const CONFIRMATION_FILTER_OPTS = {
   admin: {showOwner:true, showActions:false, restrictOthers:true},
   queue: {showOwner:true, showActions:true, emptyText:'Nothing pending right now.'}
 };
-const ALL_CONFIRMATION_STATUSES = [STATUS_PENDING_1, STATUS_REVERTED_1, STATUS_PENDING_2, STATUS_REVERTED_2, STATUS_PENDING_3, STATUS_REVERTED_3, STATUS_PENDING_CHANGE_3, STATUS_PENDING_CANCEL_1, STATUS_PENDING_CANCEL_2, STATUS_APPROVED, STATUS_REJECTED, STATUS_CANCELLED];
+const ALL_CONFIRMATION_STATUSES = [STATUS_PENDING_1, STATUS_REVERTED_1, STATUS_PENDING_2, STATUS_REVERTED_2, STATUS_PENDING_3, STATUS_REVERTED_3, STATUS_PENDING_DELIVERY_1, STATUS_PENDING_CHANGE_3, STATUS_PENDING_CANCEL_1, STATUS_PENDING_CANCEL_2, STATUS_APPROVED, STATUS_REJECTED, STATUS_CANCELLED];
 function confirmationGroupType(g){
   return (g && g.sourceTable === CC_LOG_TABLE_NAME) ? 'carboncredit' : 'recs';
 }
@@ -7295,6 +7536,7 @@ function groupEarliestDeliveryEndMs(g){
 // chain, and those done deals keep the old newest-submitted-first order.
 function groupHasPassedLevel3(g){
   const status = dealGroupStatus(g.rows);
+  if(status === STATUS_PENDING_DELIVERY_1) return g.rows.some(r => r.values[0][MC.approvedBy3]);
   return status === STATUS_APPROVED || status === STATUS_PENDING_CHANGE_3;
 }
 function compareGroupsBySubmittedDesc(a, b){
@@ -7569,6 +7811,7 @@ const ANALYSIS_STATUS_COLORS = {
   [STATUS_REVERTED_2]: '#b3560f',
   [STATUS_PENDING_3]: '#9c6d15',
   [STATUS_REVERTED_3]: '#b3560f',
+  [STATUS_PENDING_DELIVERY_1]: '#7a4d9f',
   [STATUS_PENDING_CHANGE_3]: '#7a4d9f',
   [STATUS_PENDING_CANCEL_1]: '#a8432f',
   [STATUS_PENDING_CANCEL_2]: '#a8432f',
@@ -7968,7 +8211,7 @@ function statusBadge(status){
     : s === STATUS_REJECTED ? '#8a2d1f'
     : s === STATUS_CANCELLED ? '#5a5a5a'
     : isPendingCancelStatus(s) ? '#a8432f'
-    : s === STATUS_PENDING_CHANGE_3 ? '#7a4d9f'
+    : (s === STATUS_PENDING_CHANGE_3 || s === STATUS_PENDING_DELIVERY_1) ? '#7a4d9f'
     : (s === STATUS_REVERTED_1 || s === STATUS_REVERTED_2 || s === STATUS_REVERTED_3) ? '#b3560f'
     : '#8a6d1f';
   return '<span style="font-weight:600;color:'+color+';">'+escapeHtml(s)+'</span>';
@@ -8066,7 +8309,7 @@ function renderHistoryTable(el, groups, opts){
     // rejecting one of those just discards the requested correction and
     // leaves the already-Approved deal itself untouched — there's no deal
     // detail for the submitter to revert.
-    const canReject = canAct && status === STATUS_PENDING_CHANGE_3;
+    const canReject = canAct && (status === STATUS_PENDING_CHANGE_3 || status === STATUS_PENDING_DELIVERY_1);
     const canRevert = canAct && (status === STATUS_PENDING_1 || status === STATUS_PENDING_2 || status === STATUS_PENDING_3);
     // Revert button tooltip/title, worded per level so it's clear the
     // submitter's resubmission lands back at the SAME level rather than
@@ -8208,7 +8451,7 @@ function renderHistoryTable(el, groups, opts){
         '<button type="button" class="secondary history-view-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;">View</button>' +
         (canAct && !isCancelDecision ? ' <button type="button" class="secondary history-approve-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;">Approve</button>' : '') +
         (canRevert ? ' <button type="button" class="secondary history-revert-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#8a6d1f;border-color:#e8c99a;" title="'+escapeHtml(revertTitle)+'">Revert to submitter</button>' : '') +
-        (canReject ? ' <button type="button" class="secondary history-reject-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#8a2d1f;border-color:#c1493a;" title="Discards this requested BD source matching correction — the deal\'s already-Approved details are left untouched.">Reject change</button>' : '') +
+        (canReject ? ' <button type="button" class="secondary history-reject-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#8a2d1f;border-color:#c1493a;" title="'+(status === STATUS_PENDING_DELIVERY_1 ? 'Discards this short-notice delivery date change and sends it back to BD, who must choose a Delivery Start Date more than '+DELIVERY_NOTICE_DAYS+' days from today.' : 'Discards this requested BD source matching correction — the deal\'s already-Approved details are left untouched.')+'">Reject change</button>' : '') +
         (isCancelDecision ? ' <button type="button" class="secondary history-cancel-confirm-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#8a2d1f;border-color:#c1493a;" title="Confirm BD\'s request — the deal becomes Cancelled.">Confirm cancellation</button>' +
             ' <button type="button" class="secondary history-cancel-decline-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;" title="Decline BD\'s request — the deal goes back to its pending level for normal approval.">Decline</button>' : '') +
         (canCancelRequest ? ' <button type="button" class="secondary history-cancel-request-btn" data-dealid="'+escapeHtml(v[MC.dealId]||'')+'"'+sourceAttr+' style="padding:4px 10px;font-size:12px;color:#8a2d1f;border-color:#c1493a;" title="Cancel this deal. A justification is required and the current approval level must confirm before it is cancelled.">Reject deal</button>' : '') +
@@ -8272,7 +8515,7 @@ function renderHistoryTable(el, groups, opts){
         '<strong>Change request rejected'+(v[MC.rejectedBy]?(' by '+escapeHtml(v[MC.rejectedBy])):'')+':</strong> '+escapeHtml(v[MC.rejectReason]) +
         '</div></td></tr>';
     }
-    if(status === STATUS_PENDING_CHANGE_3){
+    if(status === STATUS_PENDING_CHANGE_3 || status === STATUS_PENDING_DELIVERY_1){
       const rows = g.rows.map((r, idx)=>{
         const rv = r.values[0];
         const lines = [];
@@ -8297,6 +8540,9 @@ function renderHistoryTable(el, groups, opts){
         if((rv[MC.tech]||'') !== (rv[MC.pendingTech]||'')){
           lines.push('Tech: <s>'+escapeHtml(techFullName(rv[MC.tech])||'(blank)')+'</s> → <strong>'+escapeHtml(techFullName(rv[MC.pendingTech])||'(blank)')+'</strong>');
         }
+        deliveryDiffPairs(rv, parsePendingSrc(rv.__pendingSrc)).forEach(([label, a, b])=>{
+          lines.push('<strong style="color:#8a2d1f;">'+escapeHtml(label)+'</strong>: <s>'+escapeHtml(a||'(blank)')+'</s> → <strong>'+escapeHtml(b||'(blank)')+'</strong>');
+        });
         if(rv.length > MC.pendingVolume && rv[MC.pendingVolume] && String(rv[MC.volume] ?? '').trim() !== String(rv[MC.pendingVolume]).trim()){
           lines.push('<strong style="color:#8a2d1f;">Volume</strong>: <s>'+escapeHtml(String(rv[MC.volume] ?? '')||'(blank)')+'</s> → <strong>'+escapeHtml(rv[MC.pendingVolume])+'</strong>');
         }
@@ -8317,11 +8563,18 @@ function renderHistoryTable(el, groups, opts){
         }
         // A sibling product that isn't part of this request has blank
         // pending* columns — don't show those as "changes".
-        if(rv[MC.status] !== STATUS_PENDING_CHANGE_3) return '';
+        if(rv[MC.status] !== status) return '';
         if(!lines.length) return '';
         return '<div style="margin-top:'+(idx>0?'6px':'0')+';">'+(g.rows.length>1?'<strong>Product '+(idx+1)+':</strong> ':'')+lines.join(' · ')+'</div>';
       }).join('');
       const requestedBy = v[MC.pendingRequestedBy] ? ' by '+escapeHtml(v[MC.pendingRequestedBy]) : '';
+      const dPs = g.rows.map(r => parsePendingSrc(r.values[0].__pendingSrc)).find(p => p && (p.dreason || p.l1By)) || null;
+      const deliveryReasonHtml = dPs
+        ? (dPs.dreason ? '<div style="margin-top:6px;"><strong>BD reason for the short-notice delivery date:</strong> '+escapeHtml(dPs.dreason)+'</div>' : '') +
+          (status === STATUS_PENDING_DELIVERY_1
+            ? '<div style="margin-top:6px;"><em>'+(canAct ? 'Approve to send this on to Level 3, or Reject to send it back to BD to choose a date more than '+DELIVERY_NOTICE_DAYS+' days away.' : 'Waiting on Admin Level 1.')+'</em></div>'
+            : (dPs.l1By ? '<div style="margin-top:6px;">Level 1 approved by '+escapeHtml(dPs.l1By)+(dPs.l1Date ? ' · '+escapeHtml(formatStoredDateTime(dPs.l1Date)) : '')+'.</div>' : ''))
+        : '';
       // The note is written onto every changed row identically (see
       // requestBdMatchChange), so the first row in the group always has it.
       const noteHtml = v[MC.pendingMatchNote]
@@ -8329,7 +8582,8 @@ function renderHistoryTable(el, groups, opts){
         : '';
       html += '<tr><td colspan="'+colCount+'" style="padding:0 6px 10px;">' +
         '<div style="background:#f2ecf7;border:1px solid #d3bfe6;color:#4a2d63;border-radius:6px;padding:8px 10px;font-size:12px;">' +
-        '<strong>BD source matching change requested'+requestedBy+':</strong>' + rows + noteHtml +
+        '<strong>'+(status === STATUS_PENDING_DELIVERY_1 ? 'Short-notice delivery date change requested'+requestedBy+' (new Delivery Start Date is within '+DELIVERY_NOTICE_DAYS+' days of today)' : 'BD source matching change requested'+requestedBy)+':</strong>' + rows + noteHtml +
+        deliveryReasonHtml +
         '</div></td></tr>';
     }
     // Level 2 waiting reason (see l2DelayInfo/saveL2DelayReason). Shown once
@@ -8641,6 +8895,12 @@ function openRejectModal(dealId){
   document.getElementById('reject-modal-dealid').textContent = friendlyDealId(dealId);
   document.getElementById('reject-comment').value = '';
   document.getElementById('reject-modal-error').style.display = 'none';
+  const rejIntro = document.getElementById('reject-modal-intro');
+  if(rejIntro){
+    rejIntro.textContent = submittedDealStatus(dealId) === STATUS_PENDING_DELIVERY_1
+      ? 'This discards the requested delivery date change and sends it back to BD — the deal\'s current delivery dates are left untouched. BD will be told to request a Delivery Start Date more than ' + DELIVERY_NOTICE_DAYS + ' days from today. This comment is shown to them.'
+      : 'This only discards the requested BD source matching correction — the deal\'s already-Approved details are left untouched. This comment is shown to the person who requested the change so they know why.';
+  }
   document.getElementById('reject-modal-overlay').style.display = 'flex';
   document.getElementById('reject-comment').focus();
 }
@@ -8660,7 +8920,10 @@ document.getElementById('reject-modal-submit').addEventListener('click', async (
   errEl.style.display = 'none';
   btn.disabled = true;
   try{
-    if(submittedDealStatus(dealId) === STATUS_PENDING_CHANGE_3){
+    const rejStatus = submittedDealStatus(dealId);
+    if(rejStatus === STATUS_PENDING_DELIVERY_1){
+      await rejectDeliveryChangeL1(dealId, reason);
+    }else if(rejStatus === STATUS_PENDING_CHANGE_3){
       await rejectBdMatchChange(dealId, reason);
     }else{
       await rejectDeal(dealId, reason);
@@ -9194,9 +9457,13 @@ function openEditRequestModal(dealId){
   document.getElementById('edit-request-modal-intro').textContent = currentStatus === STATUS_APPROVED
     ? 'This deal is already Approved (Level 3 sign-off complete), so a BD source matching correction here needs no further approval — it\'s written to TradeDealLog as soon as you submit, and operations@saxonrenewables.com is emailed a summary of what changed. Exception: changing the Order Type, or a product\'s Volume or Registry, sends the whole request to Level 3 for approval first. Every change is recorded in the deal\'s Edit Change Summary.'
     : 'Level 2 has already approved this deal, so any correction here needs a fresh Level 3 sign-off before it takes effect. The current, live values stay in place everywhere until that happens. Every change is recorded in the deal\'s Edit Change Summary.';
+  const isCC = dealLogTableName() === CC_LOG_TABLE_NAME;
+  if(!isCC){
+    const introEl = document.getElementById('edit-request-modal-intro');
+    introEl.textContent += ' Delivery dates: any change always needs Level 3 approval. If the new Delivery Start Date is within ' + DELIVERY_NOTICE_DAYS + ' days of today it needs Admin Level 1 approval first (with a reason); choose a date more than ' + DELIVERY_NOTICE_DAYS + ' days away to skip that step.';
+  }
   const submitBtn = document.getElementById('edit-request-modal-submit');
   if(submitBtn) submitBtn.textContent = currentStatus === STATUS_APPROVED ? 'Save changes' : 'Submit for Level 3 approval';
-  const isCC = dealLogTableName() === CC_LOG_TABLE_NAME;
   const noOfRecsLabel = isCC ? 'No of VCUs' : 'No of RECs';
   const fieldsEl = document.getElementById('edit-request-modal-fields');
   // Tag BD in-charge — view-only access, so it's saved straight away and
@@ -9237,6 +9504,18 @@ function openEditRequestModal(dealId){
     const label = group.length > 1 ? 'Product ' + (idx+1) : 'Product';
     const regTechHtml = editRequestRegistryTechHtml(idx, v[MC.registry]||'', v[MC.tech]||'', v[MC.rowUid]||'', isCC);
     const volumeHtml = editRequestVolumeHtml(idx, v[MC.volume]||'', v[MC.rowUid]||'', isCC);
+    // RECs only: Delivery Start/End Date (3-day rule — see STATUS_PENDING_DELIVERY_1).
+    const dStartIso = toDateInputValue(v[MC.deliveryStart]), dEndIso = toDateInputValue(v[MC.deliveryEnd]);
+    const deliveryHtml = isCC ? '' :
+      '<div style="display:flex;flex-direction:column;gap:6px;">' +
+        '<div style="display:flex;flex-wrap:wrap;gap:8px;">' +
+          '<div style="flex:1 1 150px;"><label style="margin:0 0 4px;display:block;font-size:12px;">Delivery Start Date</label>' +
+            '<input type="date" class="edit-request-dstart" data-idx="'+idx+'" data-orig="'+escapeHtml(dStartIso)+'" value="'+escapeHtml(dStartIso)+'"/></div>' +
+          '<div style="flex:1 1 150px;"><label style="margin:0 0 4px;display:block;font-size:12px;">Delivery End Date</label>' +
+            '<input type="date" class="edit-request-dend" data-idx="'+idx+'" data-orig="'+escapeHtml(dEndIso)+'" value="'+escapeHtml(dEndIso)+'"/></div>' +
+        '</div>' +
+        '<div class="er-delivery-warn" data-idx="'+idx+'" style="display:none;font-size:12px;color:#7a3b12;background:#fdf1e6;border:1px solid #e8b88a;border-radius:6px;padding:6px 8px;"></div>' +
+      '</div>';
     // data-uid carries this row's permanent Row Uid — requestBdMatchChange
     // uses it to confirm, at submit time, that it's still writing this
     // edit onto the exact same physical row the modal showed (rather than
@@ -9255,6 +9534,7 @@ function openEditRequestModal(dealId){
     return '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;">' +
       '<p style="margin:0;font-size:13px;font-weight:600;">'+escapeHtml(label)+'</p>' +
       volumeHtml +
+      deliveryHtml +
       '<div><label style="margin:0 0 4px;display:block;font-size:12px;">Matching</label>' +
         '<select class="edit-request-matching" data-idx="'+idx+'"'+uidAttr+'>'+matchOptions+'</select></div>' +
       '<div id="er-'+idx+'-dependent" style="display:flex;flex-direction:column;gap:8px;'+(active?'':'display:none;')+'">' +
@@ -9272,11 +9552,18 @@ function openEditRequestModal(dealId){
       '<label style="margin:0;font-size:13px;font-weight:600;" for="edit-request-match-note">Matching Edit Note</label>' +
       '<p style="margin:0;font-size:12px;color:var(--text-secondary);">Explain why this correction is needed — kept alongside the changes above in the deal\'s history, and shown to the Level 3 approver too if this deal hasn\'t completed Level 3 approval yet.</p>' +
       '<textarea id="edit-request-match-note" rows="3" placeholder="e.g. BD confirmed wrong buyer name was entered at submission"></textarea>' +
-    '</div>';
+    '</div>' +
+    // Shown only while a changed Delivery Start Date is within the 3-day window.
+    (isCC ? '' : '<div id="er-delivery-reason-box" style="display:none;border:1px solid #e8b88a;background:#fdf1e6;border-radius:8px;padding:12px;flex-direction:column;gap:8px;">' +
+      '<label style="margin:0;font-size:13px;font-weight:600;color:#7a3b12;" for="er-delivery-reason">Reason for the short-notice Delivery Start Date (required)</label>' +
+      '<p style="margin:0;font-size:12px;color:#7a3b12;">A Delivery Start Date within '+DELIVERY_NOTICE_DAYS+' days of today needs Admin Level 1 approval first (then Level 3). If Level 1 rejects it, the request comes back to you to choose a date more than '+DELIVERY_NOTICE_DAYS+' days from today — or you can choose such a date now and skip the Level 1 step.</p>' +
+      '<textarea id="er-delivery-reason" rows="3" maxlength="1000" placeholder="e.g. Buyer needs the RECs before month-end for their reporting deadline"></textarea>' +
+    '</div>');
   document.getElementById('edit-request-modal-overlay').style.display = 'flex';
   syncAllTagBdChecklists(fieldsEl);
   refreshAllDateDisplays(fieldsEl);
   group.forEach((r, idx)=> erSourceKeysFor(idx).forEach(key => syncEditRequestBuyerSeller(key)));
+  syncEditRequestDelivery();
 }
 // True when any product's Volume in the open Request-edit modal differs from
 // its saved value — such a request always goes to Level 3 (see
@@ -9306,8 +9593,53 @@ function editRequestOrderTypeChanged(){
   const el = document.getElementById('er-h-order');
   return !!(el && el.value && el.value.trim() !== (el.getAttribute('data-orig') || '').trim());
 }
+// Delivery Start/End Date state in the open Request-edit modal:
+// {changed: any date differs from saved, needsL1: a CHANGED Start Date is within the 3-day window}.
+function editRequestDeliveryState(){
+  const fields = document.getElementById('edit-request-modal-fields');
+  const st = {changed:false, needsL1:false};
+  if(!fields) return st;
+  fields.querySelectorAll('.edit-request-dstart').forEach(el=>{
+    const idx = el.getAttribute('data-idx');
+    const endEl = fields.querySelector('.edit-request-dend[data-idx="'+idx+'"]');
+    const startChanged = el.value !== (el.getAttribute('data-orig') || '');
+    const endChanged = !!endEl && endEl.value !== (endEl.getAttribute('data-orig') || '');
+    if(startChanged || endChanged) st.changed = true;
+    if(startChanged && el.value && deliveryWithinNotice(el.value)) st.needsL1 = true;
+  });
+  return st;
+}
+// Shows/hides the per-product 3-day warning and the reason box, and keeps the submit label in step.
+function syncEditRequestDelivery(){
+  const fields = document.getElementById('edit-request-modal-fields');
+  if(!fields) return;
+  let any = false;
+  fields.querySelectorAll('.edit-request-dstart').forEach(el=>{
+    const idx = el.getAttribute('data-idx');
+    const warn = fields.querySelector('.er-delivery-warn[data-idx="'+idx+'"]');
+    const changed = el.value !== (el.getAttribute('data-orig') || '');
+    const within = changed && el.value && deliveryWithinNotice(el.value);
+    if(within) any = true;
+    if(warn){
+      warn.style.display = within ? 'block' : 'none';
+      warn.textContent = within ? 'This Delivery Start Date is within ' + DELIVERY_NOTICE_DAYS + ' days of today — it needs Admin Level 1 approval with a reason. Choose a date more than ' + DELIVERY_NOTICE_DAYS + ' days from today to skip that step.' : '';
+    }
+  });
+  const box = document.getElementById('er-delivery-reason-box');
+  if(box) box.style.display = any ? 'flex' : 'none';
+  const btn = document.getElementById('edit-request-modal-submit');
+  if(btn && !btn.disabled) btn.textContent = editRequestSubmitLabel();
+}
+document.addEventListener('input', (e)=>{
+  if(e.target.classList && (e.target.classList.contains('edit-request-dstart') || e.target.classList.contains('edit-request-dend'))) syncEditRequestDelivery();
+});
+document.addEventListener('change', (e)=>{
+  if(e.target.classList && (e.target.classList.contains('edit-request-dstart') || e.target.classList.contains('edit-request-dend'))) syncEditRequestDelivery();
+});
 function editRequestSubmitLabel(){
-  return (editRequestModalStatus === STATUS_APPROVED && !editRequestVolumeChanged() && !editRequestRegistryChanged() && !editRequestOrderTypeChanged()) ? 'Save changes' : 'Submit for Level 3 approval';
+  const dl = editRequestDeliveryState();
+  if(dl.needsL1) return 'Submit for Level 1 approval';
+  return (editRequestModalStatus === STATUS_APPROVED && !editRequestVolumeChanged() && !editRequestRegistryChanged() && !editRequestOrderTypeChanged() && !dl.changed) ? 'Save changes' : 'Submit for Level 3 approval';
 }
 document.addEventListener('change', (e)=>{
   if(!e.target.classList || !(e.target.classList.contains('edit-request-registry') || e.target.id === 'er-h-order')) return;
@@ -9377,6 +9709,16 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
     edits[idx] = edits[idx] || {};
     edits[idx].tech = el.value;
     edits[idx].rowUid = edits[idx].rowUid || el.getAttribute('data-uid') || '';
+  });
+  document.querySelectorAll('#edit-request-modal-fields .edit-request-dstart').forEach(el=>{
+    const idx = parseInt(el.getAttribute('data-idx'), 10);
+    edits[idx] = edits[idx] || {};
+    edits[idx].dlvStart = el.value;
+  });
+  document.querySelectorAll('#edit-request-modal-fields .edit-request-dend').forEach(el=>{
+    const idx = parseInt(el.getAttribute('data-idx'), 10);
+    edits[idx] = edits[idx] || {};
+    edits[idx].dlvEnd = el.value;
   });
   document.querySelectorAll('#edit-request-modal-fields .edit-request-volume').forEach(el=>{
     const idx = parseInt(el.getAttribute('data-idx'), 10);
@@ -9463,8 +9805,25 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
   edits.forEach((ed, idx)=>{
     if(ed && ed.srcError) srcErrors.push((productCount > 1 ? 'Product ' + (idx+1) : 'This product') + ' — ' + ed.srcError + '.');
   });
-  if(regTechErrors.length || volumeErrors.length || whichDealErrors.length || srcErrors.length){
-    errEl.textContent = regTechErrors.concat(volumeErrors).concat(whichDealErrors).concat(srcErrors).join(' ');
+  // Delivery dates (RECs): both required, End not before Start, and a reason
+  // when a changed Start Date is within the 3-day window.
+  const deliveryErrors = [];
+  document.querySelectorAll('#edit-request-modal-fields .edit-request-dstart').forEach(el=>{
+    const idx = parseInt(el.getAttribute('data-idx'), 10);
+    const endEl = document.querySelector('#edit-request-modal-fields .edit-request-dend[data-idx="'+idx+'"]');
+    const productLabel = productCount > 1 ? 'Product ' + (idx+1) : 'this product';
+    if(!el.value) deliveryErrors.push('Enter a Delivery Start Date for ' + productLabel + '.');
+    else if(!endEl || !endEl.value) deliveryErrors.push('Enter a Delivery End Date for ' + productLabel + '.');
+    else if(endEl.value < el.value) deliveryErrors.push('Delivery End Date for ' + productLabel + ' can\'t be before its Delivery Start Date.');
+  });
+  const dlState = editRequestDeliveryState();
+  const deliveryReasonEl = document.getElementById('er-delivery-reason');
+  const deliveryReason = deliveryReasonEl ? deliveryReasonEl.value.trim() : '';
+  if(dlState.needsL1 && !deliveryReason){
+    deliveryErrors.push('A Delivery Start Date within ' + DELIVERY_NOTICE_DAYS + ' days of today needs a reason for Admin Level 1 — enter one, or choose a date more than ' + DELIVERY_NOTICE_DAYS + ' days from today.');
+  }
+  if(regTechErrors.length || volumeErrors.length || whichDealErrors.length || srcErrors.length || deliveryErrors.length){
+    errEl.textContent = regTechErrors.concat(volumeErrors).concat(whichDealErrors).concat(srcErrors).concat(deliveryErrors).join(' ');
     errEl.style.display = 'block';
     return;
   }
@@ -9477,7 +9836,7 @@ document.getElementById('edit-request-modal-submit').addEventListener('click', a
     document.querySelectorAll('#edit-request-modal-fields .er-order-transfer-input').forEach(el=>{
       erTransfers[parseInt(el.getAttribute('data-idx'), 10)] = el.value.trim();
     });
-    await requestBdMatchChange(dealId, edits, matchNote, val('er-h-tag-bd'), val('er-h-order'), erTransfers);
+    await requestBdMatchChange(dealId, edits, matchNote, val('er-h-tag-bd'), val('er-h-order'), erTransfers, deliveryReason);
     closeEditRequestModal();
   }catch(err){
     errEl.textContent = err.message;
@@ -9853,6 +10212,15 @@ document.addEventListener('click', (e)=>{
         return;
       }
       openApproveModal(dealId);
+      return;
+    }
+    if(dealStatus === STATUS_PENDING_DELIVERY_1){
+      if(confirm('Approve this short-notice delivery date change for Deal ID ' + friendlyDealId(dealId) + '? It will then go to Admin Level 3 for approval; the current delivery dates stay live until Level 3 approves.')){
+        approveBtn.disabled = true;
+        approveDeliveryChangeL1(dealId)
+          .catch(err=>{ console.error('Delivery change approval failed', err); alert('Approval failed: ' + err.message); })
+          .finally(()=>{ approveBtn.disabled = false; });
+      }
       return;
     }
     if(dealStatus === STATUS_PENDING_CHANGE_3){
