@@ -1502,9 +1502,10 @@ html.desk-nav-hidden #main-tabs{transform:translateX(-100%);visibility:hidden;}
 <div id="approve-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
   <div style="width:100%;max-width:420px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:10px;">
     <h2 style="margin:0;font-size:16px;">Approve Deal ID <span id="approve-modal-dealid"></span> — Level 2</h2>
-    <p style="margin:0;font-size:13px;color:var(--text-secondary);">Level 2 approval requires the signed agreement to be attached. Once approved, it becomes viewable to everyone from this deal's row. Max 10 MB.</p>
-    <label style="margin:4px 0 0;">Agreement file (required)</label>
-    <input type="file" id="approve-modal-file" accept=".pdf,.doc,.docx"/>
+    <p style="margin:0;font-size:13px;color:var(--text-secondary);">Level 2 approval requires the signed agreement to be attached — you can attach more than one file. Once approved, they become viewable to everyone from this deal's row. Max 10 MB per file.</p>
+    <label style="margin:4px 0 0;">Agreement file(s) (at least 1 required — you can select several)</label>
+    <input type="file" id="approve-modal-file" accept=".pdf,.doc,.docx" multiple/>
+    <div id="approve-modal-file-list" style="font-size:12px;color:var(--text-secondary);"></div>
     <div id="approve-modal-transfer-fields" style="display:flex;flex-direction:column;gap:8px;"></div>
     <div id="approve-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
@@ -1560,9 +1561,10 @@ html.desk-nav-hidden #main-tabs{transform:translateX(-100%);visibility:hidden;}
 <div id="asset-approve-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(43,42,40,.45);z-index:1100;align-items:center;justify-content:center;padding:16px;">
   <div style="width:100%;max-width:420px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:10px;">
     <h2 style="margin:0;font-size:16px;">Approve Asset ID <span id="asset-approve-modal-id"></span> — Level 2</h2>
-    <p style="margin:0;font-size:13px;color:var(--text-secondary);">Level 2 approval requires the signed agreement to be attached. Once approved, it becomes viewable to everyone from this agreement's row. Max 10 MB.</p>
-    <label style="margin:4px 0 0;">Agreement file (required)</label>
-    <input type="file" id="asset-approve-modal-file" accept=".pdf,.doc,.docx"/>
+    <p style="margin:0;font-size:13px;color:var(--text-secondary);">Level 2 approval requires the signed agreement to be attached — you can attach more than one file. Once approved, they become viewable to everyone from this agreement's row. Max 10 MB per file.</p>
+    <label style="margin:4px 0 0;">Agreement file(s) (at least 1 required — you can select several)</label>
+    <input type="file" id="asset-approve-modal-file" accept=".pdf,.doc,.docx" multiple/>
+    <div id="asset-approve-modal-file-list" style="font-size:12px;color:var(--text-secondary);"></div>
     <div id="asset-approve-modal-error" style="display:none;font-size:12px;color:#8a2d1f;background:#fdecea;border:1px solid #e2a49a;border-radius:6px;padding:8px 10px;"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
       <button type="button" class="secondary" id="asset-approve-modal-cancel">Cancel</button>
@@ -2960,6 +2962,12 @@ const REVERT_STATUS_INFO = {
   [STATUS_REVERTED_2]: {level:2, standing:'Level 1\'s approval stays in place', resubmitTo:'Level 2'},
   [STATUS_REVERTED_3]: {level:3, standing:'Level 1 and Level 2\'s approvals stay in place', resubmitTo:'Level 3'}
 };
+// Email address of the BD in-charge chosen on a deal (row values v); falls back
+// to the original submitter only if that BD's email can't be resolved. Used for
+// every "back to the owner" notification on the RECs / Carbon Credit tabs.
+function chosenBdEmail(v){
+  return bdInChargeEmail(v[MC.salesPic]) || String(v[MC.submittedBy] || '').trim();
+}
 async function notifySubmitter(status, dealId, submitterEmail, reason){
   const email = (submitterEmail || '').trim();
   if(!email) {
@@ -4829,6 +4837,18 @@ async function deleteTableRow(tableName, rowIndex){
    in sequential Content-Range chunks — same approach as
    uploadRedemptionDocument below. */
 const AGREEMENT_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
+// A deal can have several agreement files. They live in the same two columns
+// (Agreement File Name / Agreement File URL), one per line, so no new column is
+// needed and a single-file deal reads exactly as before.
+const AGREEMENT_FILE_SEP = '\n';
+function splitAgreementUrls(v){
+  return String(v || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+}
+// "📄 View agreement" for one file, "📄 Agreement 1", "📄 Agreement 2"… for several.
+function agreementLinksHtml(urlValue, sep){
+  const urls = splitAgreementUrls(urlValue);
+  return urls.map((u, i) => '<a href="'+escapeHtml(u)+'" target="_blank" rel="noopener">📄 ' + (urls.length > 1 ? 'Agreement ' + (i+1) : 'View agreement') + '</a>').join(sep || ' &nbsp;·&nbsp; ');
+}
 const AGREEMENT_SIMPLE_UPLOAD_MAX_BYTES = 4 * 1024 * 1024; // Graph's own ceiling for PUT .../content
 const AGREEMENT_UPLOAD_CHUNK_BYTES = 5 * 1024 * 1024; // must be a multiple of 320 KiB per Graph's docs
 async function uploadAgreementFile(dealId, file, targetDriveId, folderName){
@@ -5321,7 +5341,7 @@ async function resubmitRedemptionDocs(dealId, tableName){
 async function notifyRedemptionReturned(dealId, rows, returnerEmail, comment){
   const v = rows[0].values[0];
   const seen = new Set();
-  const toEmails = [String(v[MC.submittedBy] || '').trim(), bdInChargeEmail(v[MC.salesPic])]
+  const toEmails = deliveryChangeRecipients(v, '')
     .filter(e => e && !seen.has(e.toLowerCase()) && seen.add(e.toLowerCase()));
   if(!toEmails.length){ console.warn('No submitter/BD in-charge email — skipping Redemption return email for Deal ID ' + dealId); return; }
   const displayId = friendlyDealId(dealId);
@@ -5352,7 +5372,7 @@ async function notifyRedemptionReadyForConfirm(dealId, rows, uploaderEmail, isRe
 async function notifyRedemptionConfirmed(dealId, rows, confirmerEmail){
   const v = rows[0].values[0];
   const seen = new Set();
-  const toEmails = [String(v[MC.submittedBy] || '').trim(), bdInChargeEmail(v[MC.salesPic])]
+  const toEmails = deliveryChangeRecipients(v, '')
     .filter(e => e && !seen.has(e.toLowerCase()) && seen.add(e.toLowerCase()));
   if(!toEmails.length) return;
   const displayId = friendlyDealId(dealId);
@@ -5441,7 +5461,7 @@ async function requestRedemptionDocs(dealId, tableName, selection){
 async function notifyRedemptionRequested(dealId, rows, requesterEmail, removedNums){
   const v = rows[0].values[0];
   const seen = new Set();
-  const toEmails = [String(v[MC.submittedBy] || '').trim(), bdInChargeEmail(v[MC.salesPic])]
+  const toEmails = deliveryChangeRecipients(v, '')
     .filter(e => e && !seen.has(e.toLowerCase()) && seen.add(e.toLowerCase()));
   if(!toEmails.length){
     console.warn('No submitter/BD in-charge email on file — skipping Redemption Docs request email for Deal ID ' + dealId);
@@ -6103,6 +6123,8 @@ async function saveConfirmationToHistory(includeBD, dealId, submittedDateIso){
    click; superadmin's only difference is which levels canActOnStatus() lets
    them act on (any pending level, vs. admin1/2/3's own single level). */
 async function approveDeal(dealId, file, transferOverrides){
+  // `file` may be one File or an array of Files (Level 2 allows several).
+  const agreementFiles = Array.isArray(file) ? file : (file ? [file] : []);
   if(!dealId) return;
   await ensureFreshWorkbookSession();
   const rows = await getCanonicalTableRows(dealLogTableName());
@@ -6120,7 +6142,7 @@ async function approveDeal(dealId, file, transferOverrides){
     if(isL2Overdue(matching[0].values[0], currentStatus) && !l2DelayInfo(matching[0].values[0])){
       throw new Error('This deal has been waiting more than ' + L2_DELAY_THRESHOLD_DAYS + ' days since Level 1 approval. Please select and save a Level 2 delay reason in the Approval queue before approving.');
     }
-    if(!file) throw new Error('Please attach the signed agreement before approving at Level 2.');
+    if(!agreementFiles.length) throw new Error('Please attach the signed agreement before approving at Level 2.');
     // Apply whatever was typed into the modal's Receiving Account inputs
     // before checking for gaps — this is the only place left to fill that
     // field in once a deal is submitted (the whole form locks permanently),
@@ -6182,8 +6204,12 @@ async function approveDeal(dealId, file, transferOverrides){
   // Uses the real Deal ID (if one was just assigned this call) so the
   // uploaded file is named after it rather than the placeholder.
   let agreementInfo = null;
-  if(file){
-    agreementInfo = await uploadAgreementFile(assignedDealId || dealId, file);
+  if(agreementFiles.length){
+    const uploaded = [];
+    for(const f of agreementFiles){
+      uploaded.push(await uploadAgreementFile(assignedDealId || dealId, f));
+    }
+    agreementInfo = { name: uploaded.map(u => u.name).join(AGREEMENT_FILE_SEP), webUrl: uploaded.map(u => u.webUrl).join(AGREEMENT_FILE_SEP) };
   }
   // ---- Re-check right before writing ----
   // Guards against two admins at the SAME level both passing the
@@ -6273,7 +6299,7 @@ async function approveDeal(dealId, file, transferOverrides){
     // The creator gets an email the moment their Deal ID exists — but,
     // per policy, no separate email when the deal later reaches final
     // (Level 3) approval; notifySubmitter() only ever covers Rejected.
-    await notifyDealIdAssigned(assignedDealId, matching[0].values[0][MC.submittedBy]);
+    await notifyDealIdAssigned(assignedDealId, chosenBdEmail(matching[0].values[0]));
   }
   await loadHistory();
   if(approvedListErrors.length){
@@ -6338,7 +6364,7 @@ async function rejectDeal(dealId, reason){
     // (dead-end) deal, same reasoning as the Approved path in approveDeal().
     await updateCanonicalTableRow(dealLogTableName(), r.index, values);
   }
-  await notifySubmitter(STATUS_REJECTED, dealId, matching[0].values[0][MC.submittedBy], trimmedReason);
+  await notifySubmitter(STATUS_REJECTED, dealId, chosenBdEmail(matching[0].values[0]), trimmedReason);
   await loadHistory();
 }
 /* Replaces rejectDeal() at every stage of the main 3-level chain (Pending
@@ -6392,7 +6418,7 @@ async function revertDeal(dealId, comment){
     values[MC.rejectReason] = trimmedComment;
     await updateCanonicalTableRow(dealLogTableName(), r.index, values);
   }
-  await notifySubmitter(revertedStatus, dealId, matching[0].values[0][MC.submittedBy], trimmedComment);
+  await notifySubmitter(revertedStatus, dealId, chosenBdEmail(matching[0].values[0]), trimmedComment);
   await loadHistory();
 }
 /* ---- BD cancellation request (Pending Level 1 or Pending Level 2) ----
@@ -6586,7 +6612,7 @@ async function notifyOtherLevelCancellation(dealId, stage, step, justification, 
 async function notifyCancellationOutcome(dealId, stage, confirmed, requestedBy, submittedBy, salesPic, justification, comment){
   const seen = new Set();
   const toEmails = [];
-  [requestedBy, submittedBy, bdInChargeEmail(salesPic)].forEach(e=>{
+  (bdInChargeEmail(salesPic) ? [bdInChargeEmail(salesPic)] : [requestedBy, submittedBy]).forEach(e=>{
     const em = String(e || '').trim();
     if(!em || em.indexOf('@') === -1) return;
     const k = em.toLowerCase();
@@ -7067,7 +7093,7 @@ async function approveBdMatchChange(dealId){
   if(!matching.length) throw new Error('This deal is not awaiting a change approval.');
   if(!canActOnStatus(STATUS_PENDING_CHANGE_3)) throw new Error('You are not able to approve this change.');
   const nowIso = new Date().toISOString();
-  const submitterEmail = allMatching[0].values[0][MC.submittedBy];
+  const submitterEmail = chosenBdEmail(allMatching[0].values[0]);
   // ---- Re-check right before writing ----
   // Same guard as in approveDeal(): if two Level 3 admins both open this
   // change request at nearly the same time, re-read the live status
@@ -7260,7 +7286,7 @@ async function rejectBdMatchChange(dealId, reason){
   if(!matching.length) throw new Error('This deal is not awaiting a change approval.');
   if(!canActOnStatus(STATUS_PENDING_CHANGE_3)) throw new Error('You are not able to reject this change.');
   const nowIso = new Date().toISOString();
-  const submitterEmail = allMatching[0].values[0][MC.submittedBy];
+  const submitterEmail = chosenBdEmail(allMatching[0].values[0]);
   // Audit trail: record what was discarded, captured before pending* is cleared.
   const sortedAllRej = allMatching.slice().sort((a,b)=> a.index - b.index);
   const rejAuditLines = [];
@@ -7359,7 +7385,7 @@ async function approveDeliveryChangeL1(dealId){
     '\n\nApproved by Admin Level 1: ' + (currentAccount.username || '') + (note ? '\n\nNote: ' + note : '');
   await notifyNextApprover(STATUS_PENDING_CHANGE_3, dealId, desc, summary);
   await notifyAdmin3OfBdChange(dealId, desc, auditLines, note, 'pending', false);
-  await notifyDeliveryChangeSubmitter(dealId, allMatching[0].values[0][MC.submittedBy], 'l1-approved', '');
+  await notifyDeliveryChangeSubmitter(dealId, deliveryChangeRecipients(allMatching[0].values[0], requestedBy), 'l1-approved', '');
   await loadHistory();
 }
 async function rejectDeliveryChangeL1(dealId, reason){
@@ -7384,7 +7410,7 @@ async function rejectDeliveryChangeL1(dealId, reason){
     if(!requestedBy && v[MC.pendingRequestedBy]) requestedBy = v[MC.pendingRequestedBy];
   });
   const stored = 'Level 1 declined the short-notice delivery date change: ' + trimmed +
-    ' — please use “Request edit” to choose a Delivery Start Date more than ' + DELIVERY_NOTICE_DAYS + ' days from today.';
+    ' — use “Request edit” to choose a Delivery Start Date more than ' + DELIVERY_NOTICE_DAYS + ' days from today, or resubmit a date within ' + DELIVERY_NOTICE_DAYS + ' days with a reason for Level 1.';
   for(const r of matching){
     const values = r.values[0].slice();
     // Put the row back exactly where it was: approvedBy3 is untouched while a
@@ -7413,12 +7439,26 @@ async function rejectDeliveryChangeL1(dealId, reason){
     (requestedBy ? '\nRequested by ' + requestedBy : '') +
     '\nReason: ' + trimmed +
     (discarded.length ? '\nDiscarded: ' + discarded.join('\nDiscarded: ') : ''));
-  await notifyDeliveryChangeSubmitter(dealId, allMatching[0].values[0][MC.submittedBy], 'l1-rejected', trimmed);
+  await notifyDeliveryChangeSubmitter(dealId, deliveryChangeRecipients(allMatching[0].values[0], requestedBy), 'l1-rejected', trimmed);
   await loadHistory();
 }
-async function notifyDeliveryChangeSubmitter(dealId, submitterEmail, outcome, reason){
-  const email = (submitterEmail || '').trim();
-  if(!email) return;
+// The BD in-charge chosen on the deal; only if their email can't be resolved
+// does it fall back to whoever requested the change / submitted the deal.
+function deliveryChangeRecipients(v, requestedBy){
+  const bd = bdInChargeEmail(v[MC.salesPic]);
+  return bd ? [bd] : [requestedBy, v[MC.submittedBy]];
+}
+async function notifyDeliveryChangeSubmitter(dealId, recipients, outcome, reason){
+  // Recipients are resolved by deliveryChangeRecipients (BD in-charge first).
+  const seen = new Set(), toEmails = [];
+  [].concat(recipients || []).forEach(e=>{
+    const em = String(e || '').trim();
+    if(!em || em.indexOf('@') === -1) return;
+    const k = em.toLowerCase();
+    if(seen.has(k)) return;
+    seen.add(k); toEmails.push(em);
+  });
+  if(!toEmails.length){ console.warn('No BD email found — skipping delivery-change outcome notification for Deal ID ' + dealId); return; }
   const displayId = friendlyDealId(dealId);
   const link = dealDeepLink(dealId);
   const label = 'Deal ID <strong>' + escapeHtml(displayId) + '</strong>';
@@ -7426,10 +7466,14 @@ async function notifyDeliveryChangeSubmitter(dealId, submitterEmail, outcome, re
   const html = approved
     ? '<p>Admin Level 1 has approved your short-notice delivery date change for ' + label + '. It is now waiting on Admin Level 3 approval; the current delivery dates stay live until then.</p>'
     : '<p>Admin Level 1 has <strong>rejected</strong> your delivery date change for ' + label + ' because the new Delivery Start Date is within ' + DELIVERY_NOTICE_DAYS + ' days of today.</p>' +
-      '<p><strong>Reason:</strong> ' + escapeHtml(reason || '') + '</p>' +
-      '<p>The deal is unchanged. Please use “Request edit” to choose a Delivery Start Date <strong>more than ' + DELIVERY_NOTICE_DAYS + ' days from today</strong>.</p>';
+      '<p><strong>Level 1 comment:</strong> ' + escapeHtml(reason || '') + '</p>' +
+      '<p>The deal is unchanged and is back with you. Open it, press “Request edit”, and either:</p>' +
+      '<ol><li>choose a Delivery Start Date <strong>more than ' + DELIVERY_NOTICE_DAYS + ' days from today</strong> (no Level 1 approval needed, it goes to Level 3), or</li>' +
+      '<li>keep a date within ' + DELIVERY_NOTICE_DAYS + ' days and submit it again with a <strong>reason</strong> for Admin Level 1 approval.</li></ol>';
+  addNotification(toEmails, approved ? 'delivery_l1_approved' : 'delivery_l1_rejected', dealId,
+    displayId + (approved ? ': Level 1 approved your delivery date change; now with Level 3.' : ': Level 1 rejected your short-notice delivery date change. Choose a Start Date more than ' + DELIVERY_NOTICE_DAYS + ' days away or resubmit with a reason.'), {}).catch(()=>{});
   try{
-    await sendMailGraph([email], (approved ? 'Delivery date change approved by Level 1 — ' : 'Delivery date change rejected — ') + displayId,
+    await sendMailGraph(toEmails, (approved ? 'Delivery date change approved by Level 1 — ' : 'Action needed: delivery date change rejected — ') + displayId,
       html + '<p><a href="' + link + '">Open it in the Trade Confirmation app</a></p>');
   }catch(err){ console.error('Delivery-change outcome email failed', err); }
 }
@@ -8322,7 +8366,7 @@ function renderHistoryTable(el, groups, opts){
     const trail = approvalTrailText(v);
     const agreementUrl = v[MC.agreementFileUrl];
     const agreementLink = (agreementUrl
-      ? '<div style="font-size:11px;margin-top:2px;"><a href="'+escapeHtml(agreementUrl)+'" target="_blank" rel="noopener">📄 View agreement</a></div>'
+      ? '<div style="font-size:11px;margin-top:2px;">'+agreementLinksHtml(agreementUrl, '<br>')+'</div>'
       : '') + (v.__tcFile ? '<div style="font-size:11px;margin-top:2px;">'+tcFileLinkHtml(v.__tcFile)+'</div>' : '');
     const canRequestEdit = isOwnerOrAdmin && showRequestEdit && (status === STATUS_APPROVED || status === STATUS_PENDING_3);
     // Full details/products edit — available in the window right after
@@ -8753,7 +8797,7 @@ function openViewModal(dealId, html, agreementUrl, group, deliveryFilter){
   applyDeliveryFilterHighlight(viewTable, group, deliveryFilter);
   const viewTcUrl = (group && group[0] && group[0].values && group[0].values[0] && group[0].values[0].__tcFile) || '';
   document.getElementById('view-modal-agreement-link').innerHTML = (agreementUrl
-    ? '<a href="'+escapeHtml(agreementUrl)+'" target="_blank" rel="noopener">📄 View agreement</a>' : '') +
+    ? agreementLinksHtml(agreementUrl) : '') +
     (viewTcUrl ? (agreementUrl ? ' &nbsp;·&nbsp; ' : '') + tcFileLinkHtml(viewTcUrl) : '');
   // Copy table stays hidden until Level 1 approval assigns a real Deal ID —
   // same rule as the main Preview card's Copy button.
@@ -8832,6 +8876,7 @@ function openApproveModal(dealId){
   approveModalDealId = dealId;
   document.getElementById('approve-modal-dealid').textContent = friendlyDealId(dealId);
   document.getElementById('approve-modal-file').value = '';
+  document.getElementById('approve-modal-file-list').textContent = '';
   document.getElementById('approve-modal-error').style.display = 'none';
   // The whole form is locked forever once submitted (see lockSubmittedForm),
   // so this modal is the only remaining place anyone can fill in a missing
@@ -8857,18 +8902,34 @@ function closeApproveModal(){
   document.getElementById('approve-modal-transfer-fields').innerHTML = '';
   approveModalDealId = null;
 }
+document.getElementById('approve-modal-file').addEventListener('change', (e)=>{
+  const fs = Array.from(e.target.files || []);
+  document.getElementById('approve-modal-file-list').textContent = fs.length ? fs.length + ' file' + (fs.length === 1 ? '' : 's') + ' selected: ' + fs.map(f => f.name).join(', ') : '';
+});
 document.getElementById('approve-modal-cancel').addEventListener('click', closeApproveModal);
 document.getElementById('approve-modal-overlay').addEventListener('click', (e)=>{
   if(e.target.id === 'approve-modal-overlay') closeApproveModal();
 });
 document.getElementById('approve-modal-submit').addEventListener('click', async ()=>{
   const dealId = approveModalDealId;
-  const file = document.getElementById('approve-modal-file').files[0];
+  const files = Array.from(document.getElementById('approve-modal-file').files || []);
   const errEl = document.getElementById('approve-modal-error');
   const btn = document.getElementById('approve-modal-submit');
   errEl.style.display = 'none';
-  if(!file){
-    errEl.textContent = 'Please attach the signed agreement file.';
+  if(!files.length){
+    errEl.textContent = 'Please attach at least one signed agreement file.';
+    errEl.style.display = 'block';
+    return;
+  }
+  const dupName = files.find((f, i) => files.findIndex(g => g.name === f.name) !== i);
+  if(dupName){
+    errEl.textContent = 'Two of the selected files are both named "' + dupName.name + '" — please rename one so they don\'t overwrite each other.';
+    errEl.style.display = 'block';
+    return;
+  }
+  const tooBig = files.find(f => f.size > AGREEMENT_UPLOAD_MAX_BYTES);
+  if(tooBig){
+    errEl.textContent = '"' + tooBig.name + '" is larger than 10 MB — please compress it or upload a smaller file.';
     errEl.style.display = 'block';
     return;
   }
@@ -8879,7 +8940,7 @@ document.getElementById('approve-modal-submit').addEventListener('click', async 
   btn.disabled = true;
   btn.textContent = 'Uploading…';
   try{
-    await approveDeal(dealId, file, transferOverrides);
+    await approveDeal(dealId, files, transferOverrides);
     closeApproveModal();
   }catch(err){
     errEl.textContent = err.message;
@@ -12621,7 +12682,7 @@ function setPreviewDealIdLabel(dealId){
 function setPreviewAgreementLink(url){
   const el = document.getElementById('preview-agreement-link');
   if(!el) return;
-  el.innerHTML = url ? '<a href="'+escapeHtml(url)+'" target="_blank" rel="noopener">📄 View agreement</a>' : '';
+  el.innerHTML = url ? agreementLinksHtml(url) : '';
 }
 
 function cellStyle(align, extra, widthPx){
@@ -17439,13 +17500,15 @@ function patchAssetL3DetailsInHtml(html, d){
 
 async function approveAssetDeal(assetId, file, l3Details){
   if(!assetId) return;
+  // `file` may be one File or an array of Files (Level 2 allows several).
+  const agreementFiles = Array.isArray(file) ? file : (file ? [file] : []);
   await ensureFreshAssetWorkbookSession();
   const group = await findAssetRowGroupLive(assetId);
   if(!group) throw new Error('This asset agreement could not be found any more — please refresh the page.');
   const { type, tableName, mc, rows: matching } = group;
   const currentStatus = matching[0].values[0][mc.status];
   if(!canActOnStatus(currentStatus)) throw new Error('You are not able to approve this asset agreement at its current stage.');
-  if(currentStatus === STATUS_PENDING_2 && !file) throw new Error('Level 2 approval requires the signed agreement to be attached.');
+  if(currentStatus === STATUS_PENDING_2 && !agreementFiles.length) throw new Error('Level 2 approval requires the signed agreement to be attached.');
   let l3 = null;
   if(currentStatus === STATUS_PENDING_3){
     l3 = {};
@@ -17472,7 +17535,9 @@ async function approveAssetDeal(assetId, file, l3Details){
   // leaves the agreement advanced without its file.
   let uploaded = null;
   if(currentStatus === STATUS_PENDING_2){
-    uploaded = await uploadAgreementFile(assetId, file, assetDriveId);
+    const ups = [];
+    for(const f of agreementFiles) ups.push(await uploadAgreementFile(assetId, f, assetDriveId));
+    uploaded = { name: ups.map(u => u.name).join(AGREEMENT_FILE_SEP), webUrl: ups.map(u => u.webUrl).join(AGREEMENT_FILE_SEP) };
   }
   const approvedListErrors = [];
   let productNum = 0;
@@ -17515,7 +17580,7 @@ async function approveAssetDeal(assetId, file, l3Details){
     await notifyOtherApproversAtLevelAsset(approverRole, idForNotifications, remarksForNotify, currentAccount.username);
   }
   if(assignedAssetId){
-    await notifyAssetIdAssigned(assignedAssetId, matching[0].values[0][mc.submittedBy]);
+    await notifyAssetIdAssigned(assignedAssetId, bdInChargeEmail(matching[0].values[0][mc.bdInCharge]) || matching[0].values[0][mc.submittedBy]);
   }
   if(approvedListErrors.length){
     alert('This asset agreement was approved successfully, but copying ' + approvedListErrors.length + ' of ' + matching.length +
@@ -17548,7 +17613,7 @@ async function revertAssetDeal(assetId, comment){
   }
   await loadAllAssetLogTables();
   refreshAssetQueueAndHistoryUi();
-  await notifySubmitterAsset(revertedStatus, assetId, matching[0].values[0][mc.submittedBy], trimmedComment);
+  await notifySubmitterAsset(revertedStatus, assetId, bdInChargeEmail(matching[0].values[0][mc.bdInCharge]) || matching[0].values[0][mc.submittedBy], trimmedComment);
 }
 
 /* ---- "Edit & resend" after a Revert ---- */
@@ -17851,6 +17916,7 @@ function openAssetApproveModal(assetId){
   assetApproveModalId = assetId;
   document.getElementById('asset-approve-modal-id').textContent = friendlyAssetId(assetId);
   document.getElementById('asset-approve-modal-file').value = '';
+  document.getElementById('asset-approve-modal-file-list').textContent = '';
   document.getElementById('asset-approve-modal-error').style.display = 'none';
   document.getElementById('asset-approve-modal-overlay').style.display = 'flex';
 }
@@ -17858,25 +17924,32 @@ function closeAssetApproveModal(){
   document.getElementById('asset-approve-modal-overlay').style.display = 'none';
   assetApproveModalId = null;
 }
+document.getElementById('asset-approve-modal-file').addEventListener('change', (e)=>{
+  const fs = Array.from(e.target.files || []);
+  document.getElementById('asset-approve-modal-file-list').textContent = fs.length ? fs.length + ' file' + (fs.length === 1 ? '' : 's') + ' selected: ' + fs.map(f => f.name).join(', ') : '';
+});
 document.getElementById('asset-approve-modal-cancel').addEventListener('click', closeAssetApproveModal);
 document.getElementById('asset-approve-modal-overlay').addEventListener('click', (e)=>{
   if(e.target.id === 'asset-approve-modal-overlay') closeAssetApproveModal();
 });
 document.getElementById('asset-approve-modal-submit').addEventListener('click', async ()=>{
   const assetId = assetApproveModalId;
-  const file = document.getElementById('asset-approve-modal-file').files[0];
+  const files = Array.from(document.getElementById('asset-approve-modal-file').files || []);
   const errEl = document.getElementById('asset-approve-modal-error');
   const btn = document.getElementById('asset-approve-modal-submit');
   errEl.style.display = 'none';
-  if(!file){
-    errEl.textContent = 'Please attach the signed agreement file.';
+  const assetErr = !files.length ? 'Please attach at least one signed agreement file.'
+    : (files.find((f, i) => files.findIndex(g => g.name === f.name) !== i) ? 'Two of the selected files have the same name — please rename one so they don\'t overwrite each other.'
+    : (files.find(f => f.size > AGREEMENT_UPLOAD_MAX_BYTES) ? 'One of the files is larger than 10 MB — please compress it or upload a smaller file.' : ''));
+  if(assetErr){
+    errEl.textContent = assetErr;
     errEl.style.display = 'block';
     return;
   }
   btn.disabled = true;
   btn.textContent = 'Uploading…';
   try{
-    await approveAssetDeal(assetId, file);
+    await approveAssetDeal(assetId, files);
     closeAssetApproveModal();
   }catch(err){
     errEl.textContent = err.message;
@@ -18178,7 +18251,7 @@ function assetHistoryRowsHtml(groups, scope, showOwner, showDate){
       '<td style="padding:6px;">'+escapeHtml(startDates || '—')+'</td>' +
       '<td style="padding:6px;">'+statusBadge(status)+
         (trail ? '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">'+trail+'</div>' : '')+
-        (agreementUrl ? '<div style="font-size:11px;margin-top:2px;"><a href="'+escapeHtml(agreementUrl)+'" target="_blank" rel="noopener">📄 View agreement</a></div>' : '')+
+        (agreementUrl ? '<div style="font-size:11px;margin-top:2px;">'+agreementLinksHtml(agreementUrl, '<br>')+'</div>' : '')+
         (isTaggedViewer
           ? '<div style="font-size:11px;color:#4a2d63;margin-top:2px;">👁 You\'re tagged on this agreement — view only</div>'
           : (taggedBdName ? '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">Tagged: '+escapeHtml(taggedBdName)+' (view only)</div>' : ''))+
