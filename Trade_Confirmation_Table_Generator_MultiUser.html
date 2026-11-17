@@ -6735,7 +6735,7 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue, orderT
   // Volume change? (A volume change always goes to Level 3 — see below.)
   const rowSrcChanged = new Array(matching.length).fill(false);
   let volumeChangedAny = false;
-  // Delivery Start/End Date edits (RECs only — see STATUS_PENDING_DELIVERY_1).
+  // Delivery Start/End Date edits (RECs and Carbon Credit — see STATUS_PENDING_DELIVERY_1).
   // deliveryNeedsL1: a changed Delivery Start Date lands within
   // DELIVERY_NOTICE_DAYS of today, so Level 1 must approve (with BD's reason)
   // before this reaches Level 3.
@@ -6787,7 +6787,7 @@ async function requestBdMatchChange(dealId, edits, matchNote, tagBdValue, orderT
       lines.push((isCCTable ? 'Volume (VCUs): ' : 'Volume (RECs): ') + (String(rv[MC.volume] ?? '') || '(blank)') + ' \u2192 ' + (edit.volume||'(blank)'));
       volumeChangedAny = true;
     }
-    if(!isCCTable && edit.dlvStart !== undefined){
+    if(edit.dlvStart !== undefined){
       const oS = toDateInputValue(rv[MC.deliveryStart]), oE = toDateInputValue(rv[MC.deliveryEnd]);
       const nS = String(edit.dlvStart || '').trim(), nE = String(edit.dlvEnd || '').trim();
       const pLabel = matching.length > 1 ? 'Product ' + (i+1) : 'this product';
@@ -9519,7 +9519,7 @@ function openEditRequestModal(dealId){
     ? 'This deal is already Approved (Level 3 sign-off complete), so a BD source matching correction here needs no further approval — it\'s written to TradeDealLog as soon as you submit, and operations@saxonrenewables.com is emailed a summary of what changed. Exception: changing the Order Type, or a product\'s Volume or Registry, sends the whole request to Level 3 for approval first. Every change is recorded in the deal\'s Edit Change Summary.'
     : 'Level 2 has already approved this deal, so any correction here needs a fresh Level 3 sign-off before it takes effect. The current, live values stay in place everywhere until that happens. Every change is recorded in the deal\'s Edit Change Summary.';
   const isCC = dealLogTableName() === CC_LOG_TABLE_NAME;
-  if(!isCC){
+  {
     const introEl = document.getElementById('edit-request-modal-intro');
     introEl.textContent += ' Delivery dates: any change always needs Level 3 approval. If the new Delivery Start Date is within ' + DELIVERY_NOTICE_DAYS + ' days of today it needs Admin Level 1 approval first (with a reason); choose a date more than ' + DELIVERY_NOTICE_DAYS + ' days away to skip that step.';
   }
@@ -9565,9 +9565,9 @@ function openEditRequestModal(dealId){
     const label = group.length > 1 ? 'Product ' + (idx+1) : 'Product';
     const regTechHtml = editRequestRegistryTechHtml(idx, v[MC.registry]||'', v[MC.tech]||'', v[MC.rowUid]||'', isCC);
     const volumeHtml = editRequestVolumeHtml(idx, v[MC.volume]||'', v[MC.rowUid]||'', isCC);
-    // RECs only: Delivery Start/End Date (3-day rule — see STATUS_PENDING_DELIVERY_1).
+    // RECs and Carbon Credit: Delivery Start/End Date (3-day rule — see STATUS_PENDING_DELIVERY_1).
     const dStartIso = toDateInputValue(v[MC.deliveryStart]), dEndIso = toDateInputValue(v[MC.deliveryEnd]);
-    const deliveryHtml = isCC ? '' :
+    const deliveryHtml =
       '<div style="display:flex;flex-direction:column;gap:6px;">' +
         '<div style="display:flex;flex-wrap:wrap;gap:8px;">' +
           '<div style="flex:1 1 150px;"><label style="margin:0 0 4px;display:block;font-size:12px;">Delivery Start Date</label>' +
@@ -9615,7 +9615,7 @@ function openEditRequestModal(dealId){
       '<textarea id="edit-request-match-note" rows="3" placeholder="e.g. BD confirmed wrong buyer name was entered at submission"></textarea>' +
     '</div>' +
     // Shown only while a changed Delivery Start Date is within the 3-day window.
-    (isCC ? '' : '<div id="er-delivery-reason-box" style="display:none;border:1px solid #e8b88a;background:#fdf1e6;border-radius:8px;padding:12px;flex-direction:column;gap:8px;">' +
+    ('<div id="er-delivery-reason-box" style="display:none;border:1px solid #e8b88a;background:#fdf1e6;border-radius:8px;padding:12px;flex-direction:column;gap:8px;">' +
       '<label style="margin:0;font-size:13px;font-weight:600;color:#7a3b12;" for="er-delivery-reason">Reason for the short-notice Delivery Start Date (required)</label>' +
       '<p style="margin:0;font-size:12px;color:#7a3b12;">A Delivery Start Date within '+DELIVERY_NOTICE_DAYS+' days of today needs Admin Level 1 approval first (then Level 3). If Level 1 rejects it, the request comes back to you to choose a date more than '+DELIVERY_NOTICE_DAYS+' days from today — or you can choose such a date now and skip the Level 1 step.</p>' +
       '<textarea id="er-delivery-reason" rows="3" maxlength="1000" placeholder="e.g. Buyer needs the RECs before month-end for their reporting deadline"></textarea>' +
